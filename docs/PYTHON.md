@@ -164,6 +164,7 @@ dotnet test tests/CsCode.Dap.Tests --blame-hang-timeout 5m --filter "FullyQualif
 dotnet test tests/CsCode.Panels.Testing.Tests --filter "FullyQualifiedName~PythonProviderTests"
 dotnet test tests/CsCode.Platform.Tests --filter "FullyQualifiedName~PythonEnvironmentServiceTests"
 dotnet test tests/CsCode.App.Tests --blame-hang-timeout 5m --filter "FullyQualifiedName~PythonCompositionTests"
+dotnet test tests/CsCode.MemoryTests --blame-hang-timeout 10m --filter "FullyQualifiedName~PythonServersResponsivenessTests"
 ```
 
 Each real-tool test skips with its reason when its tool is missing. `PythonCompositionTests` checks the stage's "Done when" over the real
@@ -171,7 +172,40 @@ composition root: a `.venv` folder's interpreter, Pyright and Ruff diagnostics, 
 and debugpy stopping at a breakpoint with that interpreter. The same was seen by hand in the app window on macOS: F5 with no launch.json
 stops at a breakpoint, Cmd+S runs the save actions and Ruff's format, and the Test Explorer runs pytest's parametrized cases one by one.
 
-## 9. Limits
+## 9. UI budgets with Pyright, Ruff and debugpy running
+
+The brief binds the hostile-server budgets with all three running: dispatcher p99 ≤ 16 ms and max ≤ 50 ms, typing p99 ≤ 20 ms, the heap back
+within 64 MB and the UI queues drained within 3 s (`HostileMatrix`). `PythonServersResponsivenessTests` (tests/CsCode.MemoryTests) measures
+them in the real app, headless, the way the hostile matrix does: keys posted to the UI thread at input priority, frames rasterised off the UI
+thread, best of three attempts, every attempt in the test output and `.scratch/w6-budgets.log`.
+
+The scenario: a project with a `.venv`, Pyright and Ruff on its file, and a debugpy session running a program that prints 200 lines a second
+into the Debug Console. Three statements, `print(sys.argv, os.sep, missing); `, are typed at the end of the file: 102 keys, 50 ms apart, with a
+600 ms pause after each statement. Every key is a `didChange` to both servers, and `.` and `(` ask Pyright for completion and signature help. After
+the measured window the test checks that every key reached the buffer and that both servers reported on the typed text (Ruff's `F821` and
+Pyright's `reportUndefinedVariable`).
+
+| 2026-11-02, this Mac, load average 8.6 | Budget | Attempt 1 | Attempt 2 |
+|---|---|---|---|
+| Dispatcher p99 / max | ≤ 16 / ≤ 50 ms | **21.8** / 36.8 ms | 4.5 / 9.2 ms |
+| Typing p99 / max | ≤ 20 ms | 10.4 / 12.1 ms | 2.1 / 4.0 ms |
+| Heap after the run | ≤ +64 MB | +7.1 MB | +0.7 MB |
+| UI queues drained within 3 s | yes | yes | yes |
+| Diagnostics updates in the 7 s window | | 6 | 6 |
+| Debug output batches retained | | 384 | 389 |
+
+The first attempt in a fresh test process misses the dispatcher p99, in a second run too (24.1 ms; the second attempt 4.4 ms, max 14.0 ms, at
+load average 10.9). Its UI thread spent 671 ms (718 ms) in layout measure against 281 ms (283 ms) in the second attempt, which points at code
+running for the first time rather than at the servers. The matrix gives every row three attempts for the same reason. The second attempt is
+within every budget.
+
+Two things about typing into the app that the measurement depends on:
+
+* **Vim is on by default** (`vim.enable`), so keys typed into a new editor start in Normal mode. The test switches it off to type text.
+* **Ruff's diagnostics are pulled 250 ms after the last change**, and each key restarts that delay. At a steady key every 50 ms nothing is
+  pulled until the typing pauses, so the scenario pauses after each statement.
+
+## 10. Limits
 
 * Remote workspaces: interpreters are discovered on this machine only; bridged providers carry no server id for `editor.defaultFormatter`.
 * Attach by process id on macOS (§4). No auto-save in CsCode, so `"always"` code actions run only on explicit saves too.
