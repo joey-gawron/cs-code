@@ -38,6 +38,31 @@ public class BundledSnippetTests
 
     private static IEnumerable<string> Texts(IEnumerable<SnippetNode> nodes) => Flatten(nodes).OfType<TextNode>().Select(t => t.Text);
 
+    /// <summary>A body as inserted with every placeholder left at its default (tab stops and mirrors empty).</summary>
+    private static string Expand(IEnumerable<SnippetNode> nodes) => string.Concat(nodes.Select(n => n switch
+    {
+        TextNode t => t.Text,
+        PlaceholderNode p => Expand(p.Children),
+        _ => "",
+    }));
+
+    [Fact]
+    public void Cpp_gets_the_bundled_set_beside_vs_codes_region_snippets()
+    {
+        using var host = TestHost.Create(new ThreadAffinityUiThread());
+        using var svc = new SnippetService(host.Services);
+        var cpp = svc.GetSnippets("cpp");
+        Assert.True(cpp.Count >= 40, $"only {cpp.Count} C++ snippets");
+        string Inserted(string prefix) => Expand(SnippetParser.Parse(Assert.Single(cpp, s => s.Prefixes.Contains(prefix)).Body).Nodes);
+        Assert.Equal("for (const auto& item : items) {\n\t\n}", Inserted("foreach"));
+        Assert.Equal("TEST(Suite, Name) {\n\t\n}", Inserted("gtest"));
+        Assert.Equal("TEST_CASE(\"name\", \"[tag]\") {\n\t\n}", Inserted("testcaset"));
+        Assert.Equal("std::println(\"{}\", value);", Inserted("println")); // the escaped brace stays in the placeholder
+        Assert.Equal("std::cout << value << '\\n';", Inserted("cout"));
+        Assert.Contains("concept Name = requires (const & value) { value; };", Inserted("concept"), StringComparison.Ordinal);
+        Assert.Contains(cpp, s => s.Prefixes.Contains("#region")); // VS Code's own C++ snippets stay
+    }
+
     [Fact]
     public void Python_gets_the_bundled_set_and_a_user_snippet_replaces_the_built_in_one_with_its_prefix()
     {
