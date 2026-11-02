@@ -286,6 +286,85 @@ public sealed class RealGeneratorTests
     }
 
     [Fact]
+    public async Task With_uv_the_venv_is_made_by_uv_from_the_checked_interpreter()
+    {
+        Assert.SkipWhen(ToolLocator.Find("uv") is null, "uv is not installed (brew install uv); the python -m venv path is what runs");
+        using var temp = new TempDirectory();
+        var (dir, _, progress) = await CreateAsync(new PythonProjectGenerator(Runner), temp, "uv-py",
+            new() { [PythonProjectGenerator.TestsOption] = ProjectOption.False });
+        Assert.Contains(progress.Lines, l => l.StartsWith("> ", StringComparison.Ordinal) && l.Contains("venv --python", StringComparison.Ordinal));
+        Assert.Contains("uv = ", File.ReadAllText(Path.Combine(dir, ".venv", "pyvenv.cfg")), StringComparison.Ordinal);
+        var python = Path.Combine(dir, PythonProjectGenerator.VenvInterpreter);
+        var run = await Runner.RunAsync(new ToolRun(python, ["-m", "uv_py"], dir, new Dictionary<string, string> { ["PYTHONPATH"] = Path.Combine(dir, "src") }), null, TestContext.Current.CancellationToken);
+        Assert.Contains("Hello, world!", run.Output, StringComparison.Ordinal);
+    }
+
+    private static Dictionary<string, string> NoSample => new() { [GeneratorBase.SampleOption] = ProjectOption.False };
+
+    [Fact]
+    public async Task Without_sample_code_a_Python_app_still_runs_and_its_package_imports()
+    {
+        using var temp = new TempDirectory();
+        var (dir, result, _) = await CreateAsync(new PythonProjectGenerator(Runner), temp, "bare-py",
+            new(NoSample) { [PythonProjectGenerator.TestsOption] = ProjectOption.False });
+        Assert.Equal("src/bare_py/__main__.py", result.MainFile);
+        Assert.DoesNotContain("greet", File.ReadAllText(Path.Combine(dir, "src", "bare_py", "__init__.py")), StringComparison.Ordinal);
+        Assert.DoesNotContain("greet", File.ReadAllText(Path.Combine(dir, "src", "bare_py", "__main__.py")), StringComparison.Ordinal);
+        var python = Path.Combine(dir, PythonProjectGenerator.VenvInterpreter);
+        var run = await Runner.RunAsync(new ToolRun(python, ["-m", "bare_py"], dir, new Dictionary<string, string> { ["PYTHONPATH"] = Path.Combine(dir, "src") }), null, TestContext.Current.CancellationToken);
+        Assert.True(run.Succeeded, run.Output);
+        Assert.Equal("", run.Output.Trim());
+        // the test pytest would run, run by hand: pytest itself comes from PyPI
+        var version = await Runner.RunAsync(new ToolRun(python, ["-c", "from bare_py import __version__; print(__version__)"], dir, new Dictionary<string, string> { ["PYTHONPATH"] = Path.Combine(dir, "src") }), null, TestContext.Current.CancellationToken);
+        Assert.Equal("0.1.0", version.Output.Trim());
+    }
+
+    [Fact]
+    public async Task Without_sample_code_a_JavaScript_package_runs_and_its_test_passes()
+    {
+        using var temp = new TempDirectory();
+        var (dir, result, _) = await CreateAsync(new NodeProjectGenerator(Runner, typeScript: false), temp, "bare-js", NoSample);
+        Assert.Equal("src/index.js", result.MainFile);
+        Assert.False(File.Exists(Path.Combine(dir, "src", "greet.js")));
+        var node = ToolLocator.Find("node")!;
+        Assert.Equal("", (await RunAsync(dir, node, LaunchProgram(dir, "pwa-node"))).Trim());
+        Assert.Contains("pass 1", await RunAsync(dir, node, "--test"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Without_sample_code_a_TypeScript_package_builds_and_its_test_passes()
+    {
+        Network.RequireOrSkip("typescript and @types/node (from the npm registry)");
+        using var temp = new TempDirectory();
+        var (dir, _, _) = await CreateAsync(new NodeProjectGenerator(Runner, typeScript: true), temp, "bare-ts", NoSample);
+        Assert.False(File.Exists(Path.Combine(dir, "src", "greet.ts")));
+        Assert.Contains("pass 1", await RunAsync(dir, ToolLocator.Find("npm")!, "test"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Without_sample_code_the_static_site_has_no_greeting()
+    {
+        using var temp = new TempDirectory();
+        var (dir, _, _) = await CreateAsync(new StaticSiteGenerator(Runner), temp, "Bare Site", NoSample);
+        Assert.DoesNotContain("greeting", File.ReadAllText(Path.Combine(dir, "index.html")), StringComparison.Ordinal);
+        Assert.DoesNotContain("greeting", File.ReadAllText(Path.Combine(dir, "script.js")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Only_the_generators_that_write_their_own_code_offer_sample_code()
+    {
+        IProjectGenerator[] with = [new PythonProjectGenerator(Runner), new NodeProjectGenerator(Runner, true), new NodeProjectGenerator(Runner, false), new StaticSiteGenerator(Runner)];
+        IProjectGenerator[] without = [new RustProjectGenerator(Runner), new CMakeProjectGenerator(Runner, cpp: false), new ZigProjectGenerator(Runner), new EmptyProjectGenerator(Runner)];
+        foreach (var g in with)
+        {
+            var sample = Assert.Single(await g.GetOptionsAsync(TestContext.Current.CancellationToken), o => o.Id == GeneratorBase.SampleOption);
+            Assert.Equal((ProjectOptionKind.Toggle, ProjectOption.True, "Add sample code"), (sample.Kind, sample.DefaultValue, sample.Label));
+        }
+        foreach (var g in without)
+            Assert.DoesNotContain(await g.GetOptionsAsync(TestContext.Current.CancellationToken), o => o.Id == GeneratorBase.SampleOption);
+    }
+
+    [Fact]
     public void Generated_launch_configurations_use_the_adapters_types()
     {
         Assert.Equal("lldb", RustProjectGenerator.Launch("x", lib: false)["configurations"]![0]!["type"]!.GetValue<string>());

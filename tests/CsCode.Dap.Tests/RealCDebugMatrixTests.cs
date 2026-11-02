@@ -15,7 +15,8 @@ namespace CsCode.Dap.Tests;
 /// built-in factory, on one C program built with <c>cc -g -O0 -pthread</c>. Every row runs for both adapters; what the matrix decides on is
 /// asserted (stops, lines, the values a user reads, exit codes) and how each adapter renders the rest is recorded as evidence through
 /// <see cref="TestMetrics"/> (<c>CSCODE_DAP_TEST_METRICS=&lt;file&gt;</c>). Skips with the reason when an adapter, a C compiler or (macOS)
-/// Developer Mode is missing. The rows that need the Memory / Disassembly windows and data breakpoints are stage 2's and not here.
+/// Developer Mode is missing. The Memory, Disassembly and data-breakpoint rows use stage 2's native surface (<see cref="IDebugSessionNative"/>), as its
+/// windows do.
 /// </summary>
 [Trait("Category", RealAdapterSupport.Category)]
 [Collection(SerialCollection.Name)]
@@ -402,6 +403,108 @@ public sealed class RealCDebugMatrixTests
         Assert.StartsWith("worker", frames[0].Name, StringComparison.Ordinal);
         Assert.Contains(await rig.ValueAsync("id"), new[] { "1", "2" });
         rig.H.Breakpoints.Remove(bp.Id);
+        await SettleAsync();
+        await rig.ContinueAsync();
+        await rig.EndAsync();
+    }
+
+    // ------------------------------------------------------------------ native: Memory, Disassembly, data breakpoints (stage 2's surface)
+
+    /// <summary>The first word of a pointer's value ("0x000000016fdfe9a8"): what the Memory window's address box takes.</summary>
+    private static string PointerTarget(string value) => value.TrimStart().Split(' ')[0];
+
+    [Theory, MemberData(nameof(Adapters))]
+    public async Task The_memory_window_reads_an_array_and_the_data_behind_a_pointer(string type)
+    {
+        await using var rig = await RigAsync(type);
+        rig.H.Breakpoints.Add(rig.SourceUri, Line("@values"));
+        var session = await rig.StartAsync();
+        await rig.WaitForStopAsync(1);
+        IDebugSessionNative native = session;
+        var locals = await rig.LocalsAsync();
+        var numbers = locals["numbers"];
+        var ptr = locals["ptr"];
+        Note(type, $"memory references: numbers {numbers.MemoryReference}, ptr {ptr.MemoryReference} (value {ptr.Value})");
+
+        // View Binary Data on the array: its own storage, the four ints little-endian
+        Assert.NotNull(numbers.MemoryReference);
+        var array = await native.ReadMemoryAsync(numbers.MemoryReference!, 0, 16, Ct);
+        Assert.Equal([1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0], array.Data.ToArray());
+
+        // the pointer: the Memory window opened at the address it holds shows numbers[2] and numbers[3]. lldb-dap's value is that address;
+        // CodeLLDB shows a pointer to an int as the int ("3") and gives the pointee's address as the row's memory reference instead
+        var target = PointerTarget(ptr.Value).StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? PointerTarget(ptr.Value) : ptr.MemoryReference;
+        Assert.NotNull(target);
+        var pointee = await native.ReadMemoryAsync(target!, 0, 8, Ct);
+        Assert.Equal([3, 0, 0, 0, 4, 0, 0, 0], pointee.Data.ToArray());
+        if (ptr.MemoryReference is { } reference)
+        {
+            // evidence: what View Binary Data on the pointer row shows, its pointee or its own eight bytes
+            var at = await native.ReadMemoryAsync(reference, 0, 8, Ct);
+            var shows = at.Data.Span.SequenceEqual(pointee.Data.Span) ? "the pointee" : "the pointer's own storage";
+            Note(type, $"View Binary Data on ptr ({reference}) shows {shows}: {Convert.ToHexString(at.Data.Span)}");
+        }
+        await rig.ContinueAsync();
+        await rig.EndAsync();
+    }
+
+    [Theory, MemberData(nameof(Adapters))]
+    public async Task The_disassembly_shows_the_c_lines_and_an_instruction_step_moves_one_instruction(string type)
+    {
+        await using var rig = await RigAsync(type);
+        var bp = rig.H.Breakpoints.Add(rig.SourceUri, Line("@square"));
+        var session = await rig.StartAsync();
+        var stop = await rig.WaitForStopAsync(1);
+        rig.H.Breakpoints.Remove(bp.Id);
+        await SettleAsync();
+        IDebugSessionNative native = session;
+        Assert.True(session.Capabilities.SupportsDisassemble && native.SupportsSteppingGranularity && native.SupportsInstructionBreakpoints);
+        var frames = await session.GetStackTraceAsync(stop.ThreadId, 0, 3, Ct);
+        var ip = frames[0].InstructionPointerReference;
+        Assert.True(DebugAddress.TryParse(ip, out var pc), ip);
+        // the Disassembly window's first page: 64 instructions each side of the instruction pointer
+        var page = await native.DisassembleAsync(ip!, 0, -64, 128, Ct);
+        var here = page.First(i => i.Address == pc);
+        Note(type, $"ip {ip}: {page.Count} instructions ({page.Count(i => i.IsInvalid)} invalid); at pc '{here.Instruction}' ({here.Symbol}) "
+            + $"{here.Location?.Name}:{here.Line + 1}");
+        Assert.Contains(page, i => i.Location?.Path?.EndsWith("matrix.c", StringComparison.Ordinal) == true && i.Line == Line("@square"));
+
+        await native.StepAsync(DebugStepAction.Over, stop.ThreadId, instruction: true, Ct);
+        await rig.WaitForStopAsync(2);
+        var after = await session.GetStackTraceAsync(stop.ThreadId, 0, 1, Ct);
+        Assert.True(DebugAddress.TryParse(after[0].InstructionPointerReference, out var next));
+        Note(type, $"one instruction step: {DebugAddress.Format(pc)} -> {DebugAddress.Format(next)}, reason {rig.LastStop.Reason}, still line {after[0].Line + 1}");
+        Assert.True(next > pc && next - pc <= 16, $"{DebugAddress.Format(pc)} -> {DebugAddress.Format(next)}"); // the next instruction, not the next line's
+        Assert.StartsWith("square", after[0].Name, StringComparison.Ordinal);
+        await rig.ContinueAsync();
+        await rig.EndAsync();
+    }
+
+    [Theory, MemberData(nameof(Adapters))]
+    public async Task A_data_breakpoint_stops_when_the_variable_changes(string type)
+    {
+        await using var rig = await RigAsync(type);
+        var bp = rig.H.Breakpoints.Add(rig.SourceUri, Line("@loop"), condition: "i == 1");
+        var session = await rig.StartAsync();
+        var stop = await rig.WaitForStopAsync(1);
+        rig.H.Breakpoints.Remove(bp.Id); // only the data breakpoint stops from here on
+        await SettleAsync();
+        IDebugSessionNative native = session;
+        var scopes = await session.GetScopesAsync(stop.FrameId, Ct);
+        var info = await native.GetDataBreakpointInfoAsync(scopes.First(s => !s.Expensive).VariablesReference, "total", null, Ct);
+        Note(type, $"dataBreakpointInfo total: id {info.DataId}, '{info.Description}', access [{string.Join(", ", info.AccessTypes)}], canPersist {info.CanPersist}");
+        Assert.NotNull(info.DataId);
+        var data = rig.H.Breakpoints.AddData(info.DataId!, info.Description, session.Id, info.CanPersist);
+        await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(data.Id) is { Verified: true }, 20_000, "the data breakpoint verified");
+        Assert.Equal("0", await rig.ValueAsync("total"));
+
+        await rig.ContinueAsync();
+        var loc = await rig.WaitForStopAsync(2);
+        var total = await rig.ValueAsync("total");
+        Note(type, $"data breakpoint stop: reason {rig.LastStop.Reason} ('{rig.LastStop.Description}'), line {loc.Line + 1}, total 0 -> {total}, i {await rig.ValueAsync("i")}");
+        Assert.Equal("1", total); // square(1) added: the write that changed it
+        Assert.InRange(loc.Line, Line("@loop"), Line("@loop") + 1);
+        rig.H.Breakpoints.RemoveNative(data.Id);
         await SettleAsync();
         await rig.ContinueAsync();
         await rig.EndAsync();

@@ -3,12 +3,13 @@
 Stage 3 (C, `docs/briefs/lang-3-c.md`) adds the CMake integration, the CTest provider, `textDocument/documentLink`, the C launch templates and
 the C debugging matrix. Stage 4 (C++, `docs/briefs/lang-4-cpp.md`) adds the GoogleTest / Catch2 / doctest
 provider, clangd for Objective-C++ and CUDA and the C++ debugging matrix in sections 10–16. The two stages ran at the same time on separate
-branches and were merged in that order.
+branches and were merged in that order. Once every stage was merged, a follow-ups round (branch `claude/cpp-followups`) used the other stages'
+pieces: test executables from the CMake File API and a build before each run (section 10), the Memory and Disassembly rows (section 12),
+C++ snippets, a C++20 modules check and a vcpkg / Conan presets check (section 17), and a "Run All Tests" lens above fixtures (section 10).
 
-Stage 3 ran in parallel with stages 1 (Python) and 2 (Rust) instead of after them, so the pieces that build on theirs are **deferred**
-(section 8): CMake tasks through Rust's `ITaskProvider`, the clangd extension (Switch Header/Source, inactive regions, View AST, file status,
-the review of clangd's default arguments) on Rust's per-server extension pattern, the matrix rows that need the Memory / Disassembly windows
-and data breakpoints, and C snippets on Python's bundled-snippets mechanism.
+Stage 3 ran in parallel with stages 1 (Python) and 2 (Rust) instead of after them, so the pieces that build on theirs came after the merge
+(section 8): CMake tasks through Rust's `ITaskProvider`, the clangd extension on Rust's per-server extension pattern, the matrix rows for the
+Memory / Disassembly windows and data breakpoints, and C snippets on Python's bundled-snippets mechanism.
 
 Toolchain on this Mac (2026-11-01): Apple clang / clangd 21.0.0 (`/usr/bin`), CMake 3.31.12 (MacPorts, first on PATH; Homebrew's 4.4.2 is
 also installed), Ninja 1.13.2 (MacPorts), Apple lldb-dap (LLVM 21, `xcrun -f lldb-dap`), CodeLLDB v1.12.3 (`.scratch/tools/codelldb`). No
@@ -61,9 +62,32 @@ changes, and only then; a new directory restarts it once). `cscode.cmake.clangdC
 *Not Now*; Always and Never are saved to the user settings. `cmake.configureOnEdit` (default on) configures again when a CMakeLists.txt or
 `*.cmake` of a configured project is saved; saving a presets file re-reads the presets.
 
+**Configure when opened** (added for New Project, docs/NEW-PROJECT.md). `ICMakeService.ConfigureWhenOpenedAsync(sourceDirectory,
+configurePreset)` (a Core default method that does nothing; `CMakeService` implements it) records a request for a project the workspace has
+not opened yet. The detection that first finds the project selects that configure preset (remembered like a picked one), marks the project
+*Configuring* before it is published and starts the configure, so configure-on-open neither asks about it nor offers a preset, and does not
+configure it a second time (`CMakeService.ConfiguredOnRequest`, which `CMakeHost` checks). A project already open is configured at once; a preset
+the presets do not have leaves the project to the usual flow. Every other project keeps the question and the preset picker. New Project asks for
+`debug` just before it opens a C or C++ project it created (tests: `ConfigureWhenOpenedTests`).
+
 **Status bar** (left): `$(tools) CMake: [<configure preset | build type>]` (click: choose; a spinner while configuring, a warning after a
 failed configure), `$(gear) Build [target]` (click: build; while building `Building …` and a click cancels), `[launch target]` (click:
 choose), `$(debug-alt)` (Debug) and `$(play)` (Run in the terminal). The items follow the project of the active editor.
+
+**Tasks** (`CMakeTaskProvider`, an `ITaskProvider`): Run Task lists VS Code CMake Tools' tasks for the folder's project: **CMake: configure**,
+**CMake: build** (the selected default target; build group), **CMake: clean**, **CMake: clean rebuild** (`--clean-first`; build group),
+**CMake: install** and **CMake: test** (ctest in the build directory, `-C <config>`, `--output-on-failure`; test group). Each runs the command
+line the status bar's command runs (same directories, presets, build type, generator and `cmake.*` settings) in a task terminal; the build
+tasks use `$gcc`, which finds the files because the CMake generators hand the compiler absolute source paths (checked with a real build:
+`/…/src/main.c:2:12: error: …`). They are usable as `preLaunchTask` and in `dependsOn` by label. Their definitions are CMake Tools'
+(`{"type": "cmake", "command": "build" | "configure" | "clean" | "cleanRebuild" | "install" | "test", "targets", "preset", "args",
+"options": {"cwd", "environment"}}`), so a tasks.json written for VS Code customises them; an entry with targets, a preset, args or options
+runs as written, and CMake Tools' template preset `${command:cmake.activeBuildPresetName}` means the selected preset. `workflow` and `package`
+are not run (the runner reports the entry).
+
+**Configures outside CsCode.** The integration watches each build directory's File API reply directory: when cmake writes a new reply (a
+**CMake: configure** task, a terminal, or the re-run `cmake --build` starts after a CMakeLists.txt edit), it reads the new targets. Listing
+the tasks writes CsCode's File API query into the build directory, as configuring does, so a configure run as a task leaves a reply.
 
 **Threading.** All state lives on the integration's own dedicated lane (`CMakeLane`, a below-normal thread with its own synchronisation
 context); every public call only enqueues. cmake and the build run as tracked child processes under `nice -n 10` (which the compilers
@@ -110,11 +134,74 @@ cursor and opens on Ctrl/⌘+Click (a file in the editor, with VS Code's `#L12` 
 resolved first when the provider left the target out. A link wins over a definition on the same text. clangd 21 links every `#include` to the
 header it resolves (`RealClangdDocumentLinkTests`).
 
+## 3a. The clangd extension (`src/CsCode.Lsp/Extensions/Clangd`)
+
+Stage 2's per-server pattern (`LanguageServerExtension`, docs/LSP.md §7a), listed in `ServerExtensions.CreateBuiltins()`. Each method was
+checked against the installed Apple clangd 21.0.0 over stdio before it was written, then by `RealClangdExtensionTests`:
+
+| Feature | Protocol (as clangd 21 answers it) | In CsCode |
+|---|---|---|
+| Switch Between Source/Header | `textDocument/switchSourceHeader`; params are a bare `TextDocumentIdentifier` (`{"uri"}`: a `{"textDocument"}` wrapper is refused with -32602); answers the counterpart's URI or null | command `clangd.switchheadersource` (vscode-clangd's id and title); VS Code keymap Alt+O, ⌥⌘O on macOS (vscode-clangd's key); Visual Studio keymap Ctrl+K Ctrl+O, ⌘K ⌘O (Visual Studio's Toggle Header/Code File; ⌥⌘O already toggles Output there). No counterpart: a status-bar message |
+| Inactive preprocessor regions | the client offers `capabilities.textDocument.inactiveRegionsCapabilities.inactiveRegions`; clangd then advertises `inactiveRegionsProvider`, sends `textDocument/inactiveRegions` (`{textDocument:{uri}, regions: Range[]}`) after every parse, and stops colouring skipped code as comment tokens. The regions cover the skipped lines only, not the `#if 0` / `#endif` lines | additive Core `IInactiveRegionsProvider`; the editor's `InactiveRegionsFeature` draws those ranges at 55% opacity (vscode-clangd's `clangd.inactiveRegions.opacity` default), keeping each token's colour. Anchored, so they follow edits until the next report; a stopped server clears them. Bounded: 256 documents, 10,000 regions each |
+| Show AST | `textDocument/ast` with `{textDocument, range}`; `astProvider: true`; answers an `ASTNode` (`role`, `kind`, `detail`, `arcana`, `range`, `children`), the innermost node containing the range | command `clangd.ast` ("Show AST"), at the caret; the tree is shown as text in a read-only `cscode-virtual:` document (`main.ast [AST]`), labelled as vscode-clangd's AST view labels nodes (the kind alone for expressions, statements and declarations, else "kind role"), with the detail and 1-based lines; at most 20,000 nodes |
+| File status | `initializationOptions.clangdFileStatus: true` makes clangd send `textDocument/clangd.fileStatus` (`{uri, state}`: "parsing includes, running Update", "building AST", "idle") | status bar "clangd: &lt;state&gt;" for the active editor's file, as vscode-clangd shows it; nothing for files clangd has not reported; it goes when the server stops. The user's own `initializationOptions` are kept |
+
+Two hooks were added to the pattern for this, since the protocol model has no members for either: `AddClientCapabilities(capabilities)`
+(any capability outside `experimental`) and `AddInitializationOptions(options)`. With an extension, `initialize` is sent as JSON.
+
+### clangd's default arguments
+
+CsCode starts clangd with no arguments of its own (vscode-clangd's `clangd.arguments` is `[]` too), apart from `--compile-commands-dir` when
+the CMake integration points it at a build directory (§1). The defaults were checked with clangd 21 rather than taken from its `--help`, which
+does not print them:
+
+| Option | clangd 21's default | Kept because |
+|---|---|---|
+| `--background-index` | on | needed for workspace-wide references and symbols. The index goes next to the compilation database: `build/.cache/clangd/index/` with CMake (the source tree stays clean), or `.cache/clangd/index/` at the root of a project with its own `compile_commands.json` (worth a `.gitignore` line). It runs at `--background-index-priority=low`, and CsCode starts every server below normal priority already |
+| `--clang-tidy` | on | runs only the checks a `.clang-tidy` file (or `.clangd`'s `Diagnostics.ClangTidy`) enables: with no such file, no tidy check fires, and `--clang-tidy=false` silenced a configured one in the check |
+| `--header-insertion` | `iwyu` | completing a symbol from another header adds its `#include`, as in VS Code |
+| `--completion-style` | `detailed` | one item per overload. It only matters for C++; C has no overloads |
+
+### `.clang-format` and `.clang-tidy`
+
+Both are honoured with no setting (checked with clangd 21): a `.clang-format` with `IndentWidth: 7` made Format Document indent by 7 although
+the editor sent a tab size of 4, and a `.clang-tidy` enabling `readability-braces-around-statements` produced that diagnostic (source
+`clang-tidy`). Without a `.clang-format`, clangd formats in LLVM style (2 spaces) whatever the editor's tab size is.
+
+## 3b. C snippets
+
+`src/CsCode.Editor/Snippets/Builtin/c.json` on stage 1's bundled-snippets mechanism (a user snippet with the same prefix wins): `main`,
+`mainv`, `func`, `for`, `forr`, `while`, `do`, `if`, `ifelse`, `elseif`, `else`, `switch`, `case`, `struct`, `tstruct`, `enum`, `union`,
+`typedef`, `include`, `includes`, `define`, `ifdef`, `ifndef`, `if0` (wraps the selection), `guard` (an include guard named after the file:
+`MATHLIB_H` in `mathlib.h`), `externc`, `printf`, `eprintf` and `malloc` (with its null check). The prefixes are words, without `#`, so they
+complete as you type. clangd offers its own code patterns (`for`, `#include`) beside them, as it does next to cpptools' snippets in VS Code.
+
 ## 4. Projects without CMake
 
-Not done in this stage (SHOULD): the "Create compile_flags.txt" command, Build and Run Active File, and docs for bear / compiledb. clangd
-still works with a hand-written `compile_flags.txt` or `compile_commands.json`; the single-file launch template (section 5) builds the
-active file.
+clangd needs each file's compile flags. Without CMake there are three ways to give them, in the order clangd looks (from the file's
+directory upwards):
+
+* **`compile_commands.json`** from the real build, best for a Makefile project. Two tools write it; neither is installed on this Mac (they
+  wait for the user's go-ahead), so these lines are their documented use, not checked here:
+  * **Bear** (`brew install bear`; Linux packages): `bear -- make` runs the build and records every compiler call into
+    `compile_commands.json` in the current directory (Bear 3; Bear 2 wrote `bear make`). Run a clean build (`make clean` first) or it
+    records only what was rebuilt; `bear --append -- make` adds to an existing file.
+  * **compiledb** (`pip install compiledb`): `compiledb make` parses make's output, and `compiledb -n make` only pretends to build
+    (`make -n`), which is faster but misses commands that need the build to have happened.
+* **`compile_flags.txt`**, one flag per line, applied to every file below it: enough for a small project with one set of flags. **Create
+  compile_flags.txt** (`cscode.c.createCompileFlags`, palette category C/C++) writes one in the active file's workspace folder: `-xc`,
+  `-std=c17`, `-Wall`, `-Wextra`, `-I.`, `-Iinclude` (relative to the folder that holds compile_flags.txt, as `RealClangdDocumentLinkTests`
+  shows: `src/main.c` finds `include/mathlib.h`). It opens it, keeps an
+  existing one as it is, says when the folder also has a `compile_commands.json` (which clangd prefers), and offers to restart a running
+  clangd so open files get the flags. `-xc` makes clangd read `.h` headers as C, not C++.
+* **Nothing**: clangd guesses (`clang` with no flags), so headers outside the file's directory are not found.
+
+**Build and Run Active File** (`C_Cpp.BuildAndRunFile`, cpptools' id; palette category C/C++, for a C file) saves the file, compiles it on
+its own with `clang -g -O0 -Wall <file> -o <dir>/<name>` (`cc` on Linux) through the same tracked, below-normal-priority runner as cmake,
+writes the output to the **C** output channel and the compiler's problems to the Error List (source `clang`), and runs the program in an
+integrated terminal, so it can read stdin. A failed build says how many errors and does not run. The single-file launch template (section 5)
+does the same build as a pre-launch task and debugs the program. Checked with the real clang (`CFileCommandsTests`): an undeclared name is
+reported at its line, the fixed file builds and runs (output `hello`, exit code 3), and the next build clears the problem.
 
 ## 5. C launch templates
 
@@ -129,7 +216,7 @@ CodeLLDB's templates carry `"sourceLanguages": ["c"]`.
 ## 6. C debugging matrix on this Mac
 
 `tests/CsCode.Dap.Tests/RealCDebugMatrixTests.cs` runs every row against both adapters through the real `DebugService` on one C program built
-with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 20/20 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
+with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 26/26 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
 Developer Mode on). Line numbers below are the sample's (`RealCDebugMatrixTests.Program`).
 
 | Row | CodeLLDB (`lldb`) | lldb-dap | Evidence |
@@ -151,12 +238,15 @@ Developer Mode on). Line numbers below are the sample's (`RealCDebugMatrixTests.
 | pthreads | ✅ 3 threads listed at once | ✅ after a fix (below) | breakpoint in `worker` stops that thread; `id` is 1 or 2 |
 | Attach by pid (`"pid"` as text, as `${command:pickProcess}` gives it) | ✅ first stop ~0.5 s | ✅ first stop ~0.3 s | a running program stops at a breakpoint in `tick` with no password dialog; ending the session detaches and the program runs on |
 | stdin through the integrated terminal | see §7 | see §7 | |
-| Memory window from a pointer, Disassembly, data breakpoints | deferred (stage 2's windows) | deferred | |
+| Memory window | ✅ an array's row reads its four ints; View Binary Data on the pointer row shows the **pointee** (its memory reference is `&numbers[2]`) | ✅ the array the same; the pointer's memory reference is the pointer's **own storage**, and its value (`0x…`) is the address to type in the Memory window | `numbers` reads `01 00 00 00 02 00 00 00 …`; the pointee reads `03 00 00 00 04 00 00 00` in both |
+| Disassembly | ✅ 128 instructions around the pc, none invalid, each with its `matrix.c` line and symbol (`square`) | ✅ the same, without the symbol name | at the breakpoint in `square` (line 11) the pc is `ldr w8, [sp, #0xc]`; one instruction step moves 4 bytes (arm64) and stays on line 11 |
+| Data breakpoint (`total`, on write) | ✅ stop reason `data breakpoint` | ✅ stop reason `breakpoint`, description `watchpoint 1` | `dataBreakpointInfo` offers read / write / readWrite and cannot persist (an address); set at `i == 1`, the next stop is the write that makes `total` 1, on the loop's line |
 
 **Fixed:** Apple's lldb-dap answers the first `threads` request after a stop with the list it had while the program ran, so a pthread created
 since (the one that stopped) was missing from the Threads window; 200 ms later the answer is right. `DebugSession` now asks again (up to 5
-times, 100 ms apart) while the thread that stopped is not in the answer (`StaleThreadsTests`). Also fixed: `RealLldbDapTests`' C test
-continued within the breakpoint sync's 50 ms debounce after removing its breakpoint and hit it again; it now waits like a user would.
+times, 100 ms apart) while the thread that stopped is not in the answer (`StaleThreadsTests`). `RealLldbDapTests`' C test used to continue
+within the breakpoint sync's 50 ms debounce after removing its breakpoint and hit it again; stage 1's flush of pending breakpoint changes
+before every resume covers it now, so the test's delay went in the merge.
 
 **Attach by pid on macOS** works with both adapters (row above) with Developer Mode on (`DevToolsSecurity -status`; `sudo DevToolsSecurity
 -enable`), which this Mac has: no administrator dialog appears. With it off, macOS asks for an administrator in a dialog before the debugger
@@ -166,39 +256,56 @@ lldb-dap's generic templates include an "Attach to process" configuration with `
 
 ## 7. Seen in the real app
 
-**Not yet.** On 2026-11-01 the Mac's screen was locked (`ioreg -n Root -d1` reports `CGSSessionScreenIsLocked=Yes`), and CsCode cannot start
-without an active display: Avalonia.Native fails to create its render timer (`CVDisplayLink`, CoreVideo error -6661) and the app exits with a
-crash report. Everything above is proven by the tests in section 9 against the real cmake, ninja, ctest, clangd, CodeLLDB and lldb-dap; the
-window checks below remain to be done:
+`tests/CsCode.App.Tests/RealApp/CStageRealAppTests.cs` runs the real application (`RealAppHost`: every real module, CsCode's own settings
+in a temp `CSCODE_HOME`, a headless window) on the CMake C sample with the real cmake, ninja, clang, clangd, ctest and CodeLLDB, and saves
+what the window draws to `.scratch/screenshots/c-*.png`. It is the in-app evidence the Rust and C++ stages also use. This session has no
+desktop-control tools, so nothing was clicked in an on-screen window; on 2026-11-01 the screen was also locked (CoreVideo -6661). All three
+tests pass (2026-11-02):
 
-1. Open a CMake C project with one visible configure preset (with `cmake.configureOnOpen: true`, or answer *Configure*): the status bar shows
-   `CMake: [debug]`, `build/<preset>/compile_commands.json` appears, and clangd resolves `#include "mathlib.h"` (no diagnostic; hover works).
-2. Click `Build` in the status bar: the CMake output channel shows the build; a deliberate error lands in the Error List at its line.
-3. Choose the launch target, click the bug button: the debugger stops at a breakpoint in `main.c` and the Locals show values.
-4. Test Explorer: the CTest tests appear (with `subtracts [fast, math]`), Run All shows `fails` failed with its output, Debug on a test stops
-   at a breakpoint in `tests/math_tests.c`.
-5. ⌘+hover over `#include "mathlib.h"` underlines it; ⌘+Click opens `include/mathlib.h`.
-6. With `"terminal": "integrated"` in `cmake.debugConfig`, a program reading stdin gets the keys typed in the integrated terminal.
+1. **Preset configure and clangd** (`c-clangd-main.png`). Opening the folder configures it on open from its only preset (`CMake: [debug]`
+   in the status bar) and exports `build/debug/compile_commands.json`. clangd starts with `--compile-commands-dir=build/debug`; its link for
+   `#include "mathlib.h"` names `include/mathlib.h`, which only the compile commands put on the include path; `main.c` has no "not found"
+   problem; the `#if 0` body is faded; the status bar shows `clangd: idle`. Switch Between Source/Header goes from `src/mathlib.c` to
+   `include/mathlib.h`.
+2. **Build from the status bar** (`c-build-error.png`). The `Build` item's command reports `missing_value` in the Error List at its line of
+   `src/mathlib.c`; fixed, the next build succeeds and clears it.
+3. **Debug Target** (`c-debug-disassembly.png`, `c-debug-memory.png`). After choosing `app` as the launch target, the status bar's Debug
+   builds it and stops at the breakpoint in `main.c`. The Disassembly window marks the current instruction among `main.c`'s source lines
+   (141 rows, 8 of them source). View Binary Data on `total` (5) shows `05 00 00 00` in the Memory window. Found on the way: when View Binary
+   Data opens the Memory window from closed, the frame shows the top of its range rather than the target row; with the window already open
+   (the order the test now uses, as stage 2's test does) the target row is at the top. Reported to the windows' owner; not changed here.
+4. **CTest** (`c-ctest-explorer.png`, `c-ctest-debug.png`). The Test Explorer lists `adds`, `subtracts [fast, math]`, `fails` and `in_dir`
+   under `math_tests`; Run All marks `fails` failed (in the Error List at its `add_test` line) and the rest passed; Debug on `adds` stops at
+   the breakpoint in `tests/math_tests.c` under CodeLLDB, and after Continue the test is passed. The first run of this check showed every
+   test under "(no command)": ctest names no command before the first build, so discovery now builds once (docs/TESTING.md).
 
-## 8. Deferred (waited for other stages)
+Not checked in the app: Ctrl/⌘+Click itself (the editor's handling is `DocumentLinkTests`, with headless input, and the link is real above),
+and stdin through the integrated terminal (`"terminal": "integrated"` in `cmake.debugConfig`: a program reading stdin gets the keys typed
+in the terminal).
 
-Stages 1 (Python) and 2 (Rust) are merged into this branch, so the first four rows are open work now rather than blocked.
+## 8. Items that waited for other stages (done on the follow-up branch)
 
-| Item | Builds on | Note |
+Stage 3 first ran beside stages 1 and 2; once they were merged, the items that built on their pieces were done on `claude/c-followups`:
+
+| Item | Built on | Where |
 |---|---|---|
-| CMake tasks through `ITaskProvider` (`cmake: build`, … with `$gcc`) | `Core/Tasks/ITaskProvider.cs`; `Dap/Tasks/CargoTaskProvider.cs` is the example | `ICMakeService.BuildAsync` is what the provider will call |
-| clangd extension: Switch Header/Source, inactive `#if 0` regions, View AST, file status, default-argument review | `Lsp/Extensions/LanguageServerExtension` (docs/LSP.md §7a) | MUST 2 |
-| Matrix rows: Memory window from a pointer, Disassembly, data breakpoints | `Core/Debugging/DebugNative.cs` and the `debug.memory` / `debug.disassembly` windows | breakpoints at the physical path (`TempDirectory.PhysicalPath`) |
-| C snippets | `Editor/Snippets/Builtin/<language id>.json` | MUST 7 |
-| cmake-language-server, bear | the user's go-ahead | not installed; nothing asked yet |
+| CMake tasks through `ITaskProvider` (`CMake: build`, … with `$gcc`) | stage 2's `ITaskProvider` | §1 Tasks |
+| clangd extension: Switch Between Source/Header, inactive regions, Show AST, file status, default-argument review | stage 2's `LanguageServerExtension` (two hooks added) | §3a |
+| Matrix rows: Memory window, Disassembly, data breakpoints | stage 2's `IDebugSessionNative` | §6 |
+| C snippets | stage 1's bundled snippets | §3b |
+| SHOULD: Create compile_flags.txt, Build and Run Active File, bear / compiledb, `.clang-format` / `.clang-tidy` | | §4, §3a |
+| `cscode.testing.ctest.enabled` (CTest had JavaScript's switch) | | docs/TESTING.md |
+
+Still waiting for the user's go-ahead: installing cmake-language-server and bear (nothing was installed).
 
 ## 9. Tests
 
 ```
-dotnet test tests/CsCode.Build.CMake.Tests                                   # presets, File API, output parser, service, host; real cmake + ninja
+dotnet test tests/CsCode.Build.CMake.Tests                                   # presets, File API, output parser, service, host, tasks, reply watch,
+                                                                             # C file commands; real cmake + ninja + clang
 dotnet test tests/CsCode.Panels.Testing.Tests --filter CTestProviderTests     # CTest JSON / JUnit / debug config; real ctest
-dotnet test tests/CsCode.Lsp.Tests --filter RealClangdDocumentLinkTests       # documentLink against the real clangd
-dotnet test tests/CsCode.Editor.Tests --filter DocumentLinkTests              # Ctrl/⌘ hover and click
+dotnet test tests/CsCode.Lsp.Tests --filter "ClangdExtensionTests|RealClangd" # the clangd extension (fake and real), documentLink
+dotnet test tests/CsCode.Editor.Tests --filter "DocumentLinkTests|InactiveRegionsFeatureTests|BundledSnippetTests"
 dotnet test tests/CsCode.Dap.Tests --filter "CLaunchTemplateTests|StaleThreadsTests|RealCDebugMatrixTests"
 ```
 
@@ -210,10 +317,12 @@ The real-tool tests (`Category=RealTools`, `RealAdapter`) skip with their reason
 GoogleTest, Catch2 (v3; v2 without places) and doctest executables, in the Test Explorer with the other providers (docs/TESTING.md): listed with
 each test's file and line, run with results and failure locations (Error List, editor glyphs), debugged under CodeLLDB. Provider id `cpp`.
 
-**How to use it.** Build the tests (with CMake, `cmake --build build`, or anything else), then show the Test Explorer (or press Refresh after a
-rebuild). Executables named like tests under `build/` or `out/` are found with no setting; elsewhere, name them in
-`cscode.testing.cpp.executables` (`.vscode/settings.json`), for example `["build-*/tests/*_test", "bin/unit"]`. A workspace already set up for
-VS Code's C++ TestMate works as it is: its `testMate.cpp.test.executables` glob is read when ours is not set.
+**How to use it.** In a CMake project, configure it (the CMake integration asks when the folder opens) and show the Test Explorer: every
+executable target that links GoogleTest or Catch2 is listed, built or not, and running its tests builds it first. Without CMake, build the
+tests (`make`, anything), then show the Test Explorer (or press Refresh after a rebuild). Executables named like tests under `build/` or `out/`
+are found with no setting; elsewhere, name them in `cscode.testing.cpp.executables` (`.vscode/settings.json`), for example
+`["build-*/tests/*_test", "bin/unit"]`. A workspace already set up for VS Code's C++ TestMate works as it is: its
+`testMate.cpp.test.executables` glob is read when ours is not set.
 
 ### Finding the executables
 
@@ -228,14 +337,30 @@ VS Code's C++ TestMate works as it is: its `testMate.cpp.test.executables` glob 
   `testing::InitGoogleTest` (GoogleTest, also when it is linked as a shared library), `Catch2TestRun` (Catch2 v3's XML reporter) or
   `list-test-names-only` (v2), `list-test-cases` (doctest). **Executables are never run to be classified**: only those that carry a signature are
   ever started. The classification is cached by path, size and modification time (4,096 entries).
+* **CMake targets** (the CMake integration's File API view of each configured project under the folder, `ICMakeService.Projects[].Targets`):
+  an executable target is a test executable when its built artifact carries a framework's signature (as above), or, while it is not built yet,
+  when it links a framework: one of the project's own framework targets among its dependencies (`gtest`, `gtest_main`, `gmock`, `gmock_main`,
+  `Catch2`, `Catch2WithMain`, `doctest_with_main`, from `FetchContent` or `add_subdirectory`), or that library on its link line (an imported
+  `GTest::gtest_main` shows as `…/libgtest_main.a`; `-lgtest`, `gtest.lib`, `libgtest.so.1.17.0` and the `d` debug postfix count too;
+  `CppExecutables.FromTarget`). doctest is header-only, so a doctest target is found once built. A `FetchContent` dependency's own targets
+  (sources under the build directory, `_deps/googletest-src`) are left out, as the globs leave `_deps`. Targets are found whatever they are named
+  (no glob needed) and listed beside the globs' finds (one project per executable). A target not built yet is listed with "Not built yet:
+  running its tests builds gtest_tests." in place of its tests.
 * Each executable is one **project** in the explorer, named by its path in the folder (`build/math_tests`) with its framework beside it.
+* **When the projects change**: the provider tells the explorer when the CMake integration configured a project into new targets (its
+  `Generation`, or a project came or went) and after every build (`ICMakeService.BuildFinished`, from the integration's own Build, a CTest run
+  or a C++ run). The explorer then looks for the C++ executables again and lists each (`ITestProvider.ProjectsChanged`,
+  `TestController.RedetectAsync`; while a run is going, once it ends). Listings are cached by the executable's size and modification time, so
+  only an executable a build changed is run to list its tests again.
 * **Beside CTest** (section 2): an executable whose tests CTest already lists one by one is left to the CTest provider, so no test is listed
   twice. For each CMake project of the folder built with CTest (`CTestTestfile.cmake` in its build directory), detection reads
   `ctest --show-only=json-v1` (`CTestJson`) and skips the executables a CTest test runs with a single test's filter (`--gtest_filter=` from
   `gtest_discover_tests` or `gtest_add_tests`, `--test-case=` from `doctest_discover_tests`) or with arguments from a test that has no
   `add_test` line (the discovery modules, `catch_discover_tests` among them, add theirs from a generated file when ctest runs). An executable
-  CTest runs whole (`add_test(NAME all COMMAND math_tests)`) stays here, with its tests one by one. Paths are compared resolved (`/tmp` and
-  `/private/tmp` are one). When the CTest provider is turned off, every executable is listed here.
+  CTest runs whole (`add_test(NAME all COMMAND math_tests)`) stays here, with its tests one by one. Before a build, the discovery modules list
+  one placeholder per executable (`gtest_tests_NOT_BUILT`, Catch2's `catch_tests_NOT_BUILT-b12d07c`, no command): the target it names
+  (File API) is left to CTest too. Paths are compared resolved (`/tmp` and `/private/tmp` are one). When the CTest provider is turned off,
+  every executable is listed here.
 
 ### Listing (discovery)
 
@@ -260,6 +385,12 @@ VS Code's C++ TestMate works as it is: its `testMate.cpp.test.executables` glob 
   `--no-skip=true`).
 
 ### Running
+
+**Build first.** When a CMake project's target builds the executable (File API), a run or a debug run first builds that target alone through
+the CMake integration (`ICMakeService.BuildAsync(project, [target])`: configured first if it never was, its errors in the Error List and the
+"CMake" output), unless `cmake.buildBeforeRun` (the integration's setting) is `false`. A failed build ends the run with "The build of
+gtest_tests failed with 2 error(s) (see the Error List)." and runs nothing. After the build the executable is listed again only if the build
+changed it, and tests the explorer did not know yet join the tree as the run starts. Executables no CMake project builds run as they are.
 
 | Framework | Arguments | Results |
 |---|---|---|
@@ -300,6 +431,12 @@ VS Code's C++ TestMate works as it is: its `testMate.cpp.test.executables` glob 
 `Suite.Name`; `name - int` and `name<int>` of a template test case; `suite::name` of `name`; doctest's `  Scenario: x` of `Scenario: x`.
 Registered for `cpp`, `cuda-cpp` and `objective-cpp` documents.
 
+**Run All Tests | Debug All Tests** sit above a group of tests (`CppTestScanner.ScanGroups`, through the shared
+`ITestProvider.ScanGroups`, which the other providers leave empty): a GoogleTest fixture class (`class X : public ::testing::Test`,
+`TestWithParam<…>`) with its `TEST_F` / `TEST_P` / `TYPED_TEST` tests, a Catch2 `TEST_CASE_METHOD` or doctest `TEST_CASE_FIXTURE` class with
+the test cases that use it, and a doctest `TEST_SUITE("x") { … }` block (or `TEST_SUITE_BEGIN` … `TEST_SUITE_END`). The lens runs the group's
+tests the explorer knows, every instance of a parameterised one. A plain `TEST(Suite, Name)` suite declares no class, so it has no group lens.
+
 ### Settings
 
 | Key | Default | Meaning |
@@ -308,13 +445,13 @@ Registered for `cpp`, `cuda-cpp` and `objective-cpp` documents.
 | `cscode.testing.cpp.executables` | TestMate's default (above) | Globs naming the test executables. Left at its default, TestMate's `testMate.cpp.test.executables` is used when set. |
 | `cscode.testing.cpp.debugger` | `""` | `codelldb`, `lldb-dap`, `gdb`; empty: `cscode.cmake.debugger`, then CodeLLDB on macOS, GDB elsewhere. |
 | `cscode.testing.cpp.breakOnFailure` | `true` | Debugging stops at the failing assertion. |
+| `cmake.buildBeforeRun` (the CMake integration's) | `true` | Also builds a test executable's target before its tests run or are debugged. |
 
 ### Limits
 
-* **No build before a run** and no discovery through the CMake File API yet (section 15): build (CMake: Build), then Refresh. An executable
-  that a rebuild newly registers with CTest's discovery modules leaves the C++ provider at the next Refresh.
+* Outside CMake there is no build before a run: build, then Refresh.
 * A parameterised GoogleTest declaration (`TEST_P`, `TYPED_TEST`) has one glyph and one lens, for its first instance: its state and its Run
-  are that instance's (the explorer has each instance).
+  are that instance's (the explorer has each instance; the fixture's "Run All Tests" runs them all).
 * Catch2 v2: names only until a run (its listing has no places); its sections and v3's are not separate nodes (a failing section is named in
   the message). doctest subcases likewise.
 * Remote (ssh) folders are not searched, as for the other providers.
@@ -346,7 +483,7 @@ document's language id. Checked with Apple's clangd 21 (`RealClangdDialectTests`
 ## 12. C++ debugging matrix on this Mac
 
 `tests/CsCode.Dap.Tests/RealCppDebuggingTests.cs` runs each row against both adapters through the real `DebugService` on one C++20 program
-built with `clang++ -g -O0 -std=c++20` (libc++); evidence with `CSCODE_DAP_TEST_METRICS=<file>`. 8/8 pass (CodeLLDB v1.12.3, Apple lldb-dap /
+built with `clang++ -g -O0 -std=c++20` (libc++); evidence with `CSCODE_DAP_TEST_METRICS=<file>`. 12/12 pass (CodeLLDB v1.12.3, Apple lldb-dap /
 LLVM 21, macOS 27 arm64, Developer Mode on). Values are what the Locals window shows (value, type; children after `->`).
 
 | Row | CodeLLDB (`lldb`) | lldb-dap |
@@ -367,7 +504,8 @@ LLVM 21, macOS 27 arm64, Developer Mode on). Values are what the Locals window s
 | Stop on catch | ✅ after the fix: "Paused on exception: C++ catch", `__cxa_begin_catch` → `main` | ✅ "C++ Catch" |
 | `std::thread` | ✅ the body's breakpoint stops the worker (`main::$_2::operator()() const` over libc++'s `__thread_execute`), 2 threads listed | ✅ the same, once the threads answer is right (below) |
 | `std::jthread` | ✅ the same on a third thread | ✅ the same |
-| Memory window on a vector's data, Disassembly of an inlined function | open (section 15) | open |
+| Memory window on a `std::vector<int>`'s data | ✅ each element row has its memory reference (`[0]=1@0x1005FCA60`): View Binary Data reads `01 00 00 00 02 00 00 00 03 00 00 00`; in the Watch, `&numbers[0]` evaluates with a memory reference, `numbers.data()` and `numbers.__begin_` do not (CodeLLDB's simple expressions) | ✅ the same element references and bytes; `numbers.data()`, `&numbers[0]` and `numbers.__begin_` all evaluate to the address (no memory reference: type it in the Memory window's address box) |
+| Disassembly of an inlined function (`__attribute__((always_inline))`, `-O0`) | ✅ a breakpoint on the inlined body stops there: the stack shows `square(int)` over `main` at the same address; the instruction at the pc carries `square`'s line, the call site's line is around it, every instruction names `main` | ✅ the same stack, lines and call site; no symbol on the instructions |
 
 **Fixed:** CodeLLDB's "C++: on throw" / "C++: on catch" filters are LLDB breakpoints on `__cxa_throw` / `__cxa_begin_catch`, and their stops came
 as reason `breakpoint` with no description: the editor and the Exception window treated a throw as a breakpoint. `CodeLldbAdapterQuirks` now
@@ -400,6 +538,12 @@ is still worth doing.
   (`cpp-debug-locals.png`); Continue stops at the `throw` as an exception, the Exception window says "C++ exception: A C++ exception was
   thrown." (`cpp-debug-throw.png`); then `view.mm` and `kernel.cu` get clangd's diagnostics, the status bar says "CUDA C++" and the Error List
   shows the CUDA-installation errors (`cpp-clangd-cu.png`).
+* **Native windows on C++** (`CppDebugRealAppTests.A_vectors_buffer_shows_in_the_memory_window_and_an_inlined_function_in_the_disassembly_window`,
+  CodeLLDB): stopped in `main`, View Binary Data on `numbers[0]` opens the Memory window at "numbers[0] at 0x…" with
+  `01 00 00 00 02 00 00 00 03 00 00 00` (`cpp-memory-vector.png`); continued to the breakpoint in the inlined `square`, the Disassembly window's
+  current instruction sits under the source line `matrix.cpp:5 return x * x;` inside `main`'s code (`cpp-disassembly-inlined.png`).
+* **Run All Tests** above `class Param : public ::testing::TestWithParam<int>` in `gtest_tests.cpp` runs both instances (`/0` passed, `/1`
+  failed); the lens shows in `cpp-test-explorer.png`.
 * **Beside CTest** (`CppTestExplorerRealAppTests.Tests_that_ctest_discovers_are_listed_once_in_the_real_app`, after the merge with stage 3): the
   sample with `gtest_discover_tests` and `catch_discover_tests` (`CppTestSample.CTestDiscovery`) built, the folder opened, the Test Explorer
   shown: the CMake project (CTest) holds `gtest_tests`, `catch_tests` and `doctest_tests` (its one `doctest_all` test), and the C++ provider
@@ -409,7 +553,7 @@ is still worth doing.
 
 | Check | Status |
 |---|---|
-| A CMake C++ project with GoogleTest and Catch2 tests builds | built with `cmake --build` in the real-tool tests; CMake: Build (section 1) builds it in the app; the C++ provider does not build before a run yet (section 15) |
+| A CMake C++ project with GoogleTest and Catch2 tests builds | ✅ CMake: Build (section 1) in the app; a run builds its target first (section 10, `RealCppCTestTests.Targets_are_listed_from_the_file_api_before_a_build_and_a_run_builds_its_target`) |
 | … lists, runs and debugs both kinds of test, with results and failure locations | ✅ (section 13) |
 | Debugs a program, STL containers readable, stops on a thrown exception | ✅ (sections 12, 13) |
 | `.cu` and `.mm` files get clangd | ✅ (sections 11, 13) |
@@ -418,25 +562,23 @@ is still worth doing.
 
 ## 15. Open and not done
 
-Stages 1–3 are merged, so the first four rows no longer wait on anything: they are open work.
+Every item this section listed after stage 4 was done in the follow-ups round or checked (sections 10, 12, 13, 17). What is left:
 
-| Item | Builds on | Note |
-|---|---|---|
-| Executables from the CMake File API (targets linking `GTest::gtest`, `gtest_main`, Catch2, doctest) | `ICMakeService.Projects[].Targets[]` (`LinkLibraries`, `Dependencies`, `Artifacts`) | today: the globs (section 10) |
-| Build the target before a run, re-list after `ICMakeService.BuildFinished` | `ICMakeService.BuildAsync` | today: build, then Refresh |
-| Matrix rows: Memory window on a `std::vector`'s data, Disassembly of an inlined function | `Core/Debugging/DebugNative.cs`, the `debug.memory` / `debug.disassembly` windows | breakpoints at the physical path |
-| C++ snippets (MUST 5) | `Editor/Snippets/Builtin/<language id>.json` | |
-| SHOULD: "Run All Tests" lens above a GoogleTest fixture / Catch2 group | not done | shared Test Explorer code (`TestCodeLensProvider`); the scanner would report the groups |
-| SHOULD: C++20 modules with clangd 21 (`--experimental-modules-support`) | not checked | |
-| SHOULD: vcpkg / Conan through presets' `toolchainFile` | not checked | neither is installed; needs the user's go-ahead |
-| STRETCH: New Class, CMake target sources from the UI | not done | |
+| Item | Note |
+|---|---|
+| vcpkg and Conan themselves | their presets were checked with stand-in toolchain files (section 17); neither tool is installed here, and installing them needs the user's go-ahead |
+| C++ snippets for `cuda-cpp` and `objective-cpp` | the bundled set is keyed by language id; those two get none of `cpp.json`'s |
+| A parameterised test's glyph shows its first instance | section 10, Limits; the fixture's lens runs them all |
+| STRETCH: New Class, CMake target sources from the UI | not done |
 
 ## 16. Tests (C++)
 
 ```
 tools/fetch-cpp-test-frameworks.sh        # once: GoogleTest, Catch2, doctest into .scratch/tools/cpp-test-frameworks (asks no questions; network)
-dotnet test tests/CsCode.Panels.Testing.Tests --filter "FullyQualifiedName~Cpp"          # parsers on captured output, scanner, provider (scripted), real executables, beside CTest
-dotnet test tests/CsCode.Lsp.Tests --filter "RealClangdDialectTests|ManagerTests"       # clangd on .mm and .cu
+dotnet test tests/CsCode.Panels.Testing.Tests --filter "FullyQualifiedName~Cpp|FullyQualifiedName~TestController|FullyQualifiedName~TestingHost"   # parsers, scanner, provider (scripted), CMake targets, real executables, beside CTest, lenses
+dotnet test tests/CsCode.Lsp.Tests --filter "RealClangdDialectTests|ManagerTests"       # clangd on .mm and .cu, C++20 modules
+dotnet test tests/CsCode.Editor.Tests --filter "BundledSnippetTests"                     # C++ snippets
+dotnet test tests/CsCode.Build.CMake.Tests --filter "PackageManagerPresetsTests"        # vcpkg / Conan presets through the real cmake
 dotnet test tests/CsCode.Dap.Tests --filter "RealCppDebuggingTests|CppDebuggingQuirksTests" --blame-hang-timeout 5m
 dotnet test tests/CsCode.App.Tests --filter "CppTestExplorerRealAppTests|CppDebugRealAppTests" --blame-hang-timeout 6m
 ```
@@ -449,9 +591,49 @@ dotnet test tests/CsCode.App.Tests --filter "CppTestExplorerRealAppTests|CppDebu
   listing once per build; live results; a crash; a hanging listing stopped; Catch2 escaping and doctest filters; long filters dropped; debug
   configurations for CodeLLDB and lldb-dap with break on failure; GoogleTest's console from the session; executables CTest lists one by one
   (`--gtest_filter=`, `--test-case=`, no `add_test` line) left out, and kept when CTest is off; the debugger falling back to `cscode.cmake.debugger`.
+* `CppCMakeTargetsTests` (scripted CMake integration): link-line names, a target's framework from its dependencies and link line, CTest's
+  `_NOT_BUILT` placeholders, targets listed before a build and by signature after (one project when the globs find it too), a run building its
+  target first (the listing again only when the build changed the executable; a failed build runs nothing; `cmake.buildBeforeRun: false`), and
+  `ProjectsChanged` on new targets and builds only. `TestControllerTests.A_provider_whose_projects_changed_…`: only that provider is detected
+  again, after the run when one is going. `CppParserTests.Scanner_groups_…` and `TestingHostTests.A_group_…`: the groups and their lenses.
 * `RealCppTests` (`Category=RealTools`): the three real executables built with CMake (`CppTestSample`), listed, run, filtered, a disabled /
   hidden / skipped test run by itself. Skips without CMake, a C++ compiler or the fetched frameworks. `RealCppCTestTests`: the sample with
   `gtest_discover_tests` and `catch_discover_tests` under the real CMake integration and ctest: CTest lists those tests, the C++ provider
-  keeps only the doctest executable CTest runs whole.
+  keeps only the doctest executable CTest runs whole; and the sample configured (not built) by the real integration: the GoogleTest and Catch2
+  targets listed from the File API, a run of the GoogleTest one building that target alone, listing and running it.
 * `RealClangdDialectTests` (`RealTools`), `RealCppDebuggingTests` (`RealAdapter`; skips without the adapter, clang++ or, on macOS, Developer
   Mode), the three real-app tests above (screenshots in `.scratch/screenshots/cpp-*.png`).
+
+## 17. C++ snippets, C++20 modules, vcpkg and Conan (follow-ups round)
+
+**Snippets.** `src/CsCode.Editor/Snippets/Builtin/cpp.json` (Python's bundled-snippets mechanism; the user's snippets with the same prefix win):
+47 snippets beside VS Code's own `#region` / `#endregion`: loops (`for`, `forr`, `foreach`, `while`, `do`), branches (`if`, `ifelse`,
+`elseif`, `else`, `ifinit`, `switch`, `case`), `try`, `main`, `fn`, `lambda`, types (`class`, `struct`, `enum` as `enum class`,
+`namespace`, `template`, `concept`), includes and guards (`inc`, `incl`, `once`, `guard`, `ifdef`), helpers (`uptr`, `sptr`, `vec`,
+`scast`, `sassert`, `cout`, `cerr`, `println`), and tests: GoogleTest `gtest`, `gtestf`, `gfixture`, `gtestp`, `expect`, `assert`;
+Catch2 / doctest `testcase`, `testcaset`, `section`, `subcase`, `require`, `check`. `BundledSnippetTests` parses every body and inserts a few.
+
+**C++20 modules with clangd 21** (`RealClangdDialectTests.A_cpp20_module_resolves_with_clangds_modules_support_before_a_build`): a module
+(`export module math;`) and its importer (`import math;`), with a `compile_commands.json` as a build system writes it before building.
+
+| clangd | Without `--experimental-modules-support` | With it |
+|---|---|---|
+| Apple clangd 21.0.0 (`/usr/bin`) | "Module 'math' not found" | ✅ no errors; hover on `add` shows `int add(int a, int b)` (the test runs through CsCode's LSP client) |
+| Homebrew clangd 22.1.8 | after a CMake build: ✅ (reads the build's `.pcm`); before: "module file … not found" | ✅ before and after a build |
+
+* Turn it on with `"cscode.languageServers": { "clangd": { "args": ["--experimental-modules-support"] } }`; the CMake integration keeps the
+  user's arguments when it adds `--compile-commands-dir`.
+* Apple's clang driver passes `-fno-cxx-modules`, so with Apple's clangd `import` is not a keyword ("unknown type name 'import'") until the
+  compile command has `-fcxx-modules` (a `.clangd` with `CompileFlags: Add: [-fcxx-modules]` does it).
+* CMake builds C++20 modules (CMake 3.28+, `FILE_SET CXX_MODULES`, Ninja) only with a clang that has `clang-scan-deps`: Homebrew's LLVM
+  (checked with 22.1.8), not Apple's. A `.pcm` from clang 22 "uses a newer format" for clangd 21: with modules support clangd builds its own.
+
+**vcpkg and Conan presets** (`tests/CsCode.Build.CMake.Tests/PackageManagerPresetsTests.cs`, the real cmake): neither tool is installed here,
+so their toolchain files are stand-ins that do what theirs do for `find_package`, in the preset shapes the tools write.
+* vcpkg: `CMakePresets.json` with `"toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"` and the root in
+  `CMakeUserPresets.json`'s `environment` (vcpkg's documented setup): ✅ both presets listed, the user preset configures (the toolchain ran,
+  the package found) and builds.
+* Conan 2: `CMakeUserPresets.json` with `"include": ["build/Release/generators/CMakePresets.json"]` and the generated `conan-release`
+  configure / build / test presets with `"toolchainFile": "generators/conan_toolchain.cmake"` (relative: CMake looks in the build directory):
+  ✅ `conan-release` listed, configured into `build/Release` (Release) and built.
+* Not checked: vcpkg's manifest mode installing packages during configure, and `conan install` itself (both need the tools and the network).

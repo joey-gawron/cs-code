@@ -240,7 +240,8 @@ not abort the session: those breakpoints show unverified with the adapter's mess
     of the same label. Without a provider for its type, an entry behaves as before (a labelled one runs as a shell task, an unlabelled one is
     left out).
   * Remote folders: the server's runner asks the server's providers (the Dap module registers the same ones there), so the same tasks show.
-  * Built-in providers: cargo (`Tasks/CargoTaskProvider.cs`, below). Later stages add theirs the same way (CMake, `zig build`, `dotnet`).
+  * Built-in providers: cargo (`Tasks/CargoTaskProvider.cs`, below) and the .NET SDK's `dotnet` (`Tasks/DotnetTaskProvider.cs`, lang-5:
+    docs/CSHARP.md §6). Later stages add theirs the same way (CMake, `zig build`).
 
 ## Native debugging: memory, disassembly, instruction stepping, data and instruction breakpoints (lang-2)
 
@@ -420,7 +421,7 @@ Registers windows use it (docs/PANELS-DEBUG.md); C, C++ and Zig reuse it unchang
 * A socket directory survives only a CsCode that was killed outright (`kill -9`, a crash): it is removed the next time a js-debug session
   starts, not at app start.
 * Shell tasks quote arguments POSIX-style; VS Code's `quoting` options and `isBackground` task readiness are not implemented. Auto-detected
-  task providers are built in (`ITaskProvider`, above): cargo's ships; npm, tsc and the like are not written yet.
+  task providers are built in (`ITaskProvider`, above): cargo's and dotnet's ship; npm, tsc and the like are not written yet.
 * A flood beyond the 128 K-chars/16 ms window drops the *oldest* text by design; the console shows a dropped-characters marker. The history
   for late subscribers keeps the newest 5,000 lines (the oldest batch is cut, not dropped whole).
 * js-debug: function breakpoints are unsupported by the adapter; async parent frames have no variables; see docs/DEBUGGING-RUST-TS.md.

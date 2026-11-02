@@ -19,8 +19,9 @@ public sealed class TestingHostTests
         Assert.Equal("Test", rig.Commands.All.Single(c => c.Id == "testing.runAll").Category);
         Assert.Equal("Run All Tests", rig.Commands.All.Single(c => c.Id == "testing.runAll").Title);
         foreach (var key in new[] { TestingSettings.GutterEnabled, TestingSettings.DefaultGutterClickAction, TestingSettings.OpenTesting, TestingSettings.AutoDiscover,
-                     TestingSettings.DotNetEnabled, TestingSettings.RustEnabled, TestingSettings.JavaScriptEnabled })
+                     TestingSettings.DotNetEnabled, TestingSettings.RustEnabled, TestingSettings.JavaScriptEnabled, TestingSettings.CTestEnabled })
             Assert.Contains(rig.Config.Properties, p => p.Key == key && p.Description is { Length: > 0 });
+        Assert.Equal(TestingSettings.CTestEnabled, TestingSettings.EnabledKey("ctest")); // not JavaScript's switch
         var doc = new InMemoryTextDocument(new Uri("file:///w/calc/MathTests.cs"), "csharp", HostRig.MathSource);
         Assert.Same(rig.Host.Gutter, Assert.Single(rig.Features.GetProviders<ITestGutterProvider>(doc)));
         Assert.Empty(rig.Features.GetProviders<ITestGutterProvider>(new InMemoryTextDocument(new Uri("file:///w/x.md"), "markdown")));
@@ -173,6 +174,29 @@ public sealed class TestingHostTests
         Assert.Contains(null, changed);
         Assert.Null(await provider.ProvideCodeLensesAsync(doc, TestContext.Current.CancellationToken));
         Assert.Contains(rig.Config.Properties, p => p.Key == TestingSettings.CodeLens && p.Description is { Length: > 0 });
+    }
+
+    [Fact]
+    public async Task A_group_the_provider_scans_gets_run_all_and_debug_all_lenses_that_run_its_known_tests()
+    {
+        using var rig = new HostRig();
+        // the class line groups its two tests, and a test the explorer does not know is left out
+        rig.Provider.Groups = text => [new SourceTestGroup("MathTests", 2,
+            [.. rig.Provider.Scan(text), new SourceTest("Calc.MathTests.Unknown", 9, "Unknown")])];
+        await rig.DiscoveredAsync();
+        var doc = new InMemoryTextDocument(new Uri("file://" + HostRig.MathFile), "csharp", HostRig.MathSource);
+        var provider = Assert.Single(rig.Features.GetProviders<ICodeLensProvider>(doc));
+        var lenses = await provider.ProvideCodeLensesAsync(doc, TestContext.Current.CancellationToken);
+        Assert.Equal([(2, "Run All Tests"), (2, "Debug All Tests"), (4, "Run Test"), (4, "Debug Test"), (7, "Run Test"), (7, "Debug Test")],
+            lenses!.Select(l => (l.Range.Start.Line, l.Command!.Title)));
+
+        var all = lenses!.Single(l => l.Command!.Title == "Run All Tests").Command!;
+        Assert.True(rig.Commands.Has(all.CommandId));
+        await rig.Commands.ExecuteAsync(all.CommandId, [.. all.Arguments!.Select(a => (object?)a)]);
+        Assert.Equal(["Calc.MathTests.Adds", "Calc.MathTests.Subtracts"], rig.Provider.Runs.Last().TestIds);
+        var debugAll = lenses!.Single(l => l.Command!.Title == "Debug All Tests").Command!;
+        await rig.Commands.ExecuteAsync(debugAll.CommandId, [.. debugAll.Arguments!.Select(a => (object?)a)]);
+        Assert.Contains(rig.Window.Messages, m => m.Message.Contains("debugger", StringComparison.Ordinal));
     }
 
     [Fact]

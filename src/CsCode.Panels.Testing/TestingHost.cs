@@ -317,6 +317,8 @@ public sealed class TestingHost : IDisposable
         });
         Reg(TestCodeLensProvider.RunCommand, "Run Test (CodeLens)", inv => TestCodeLensProvider.RunAsync(Gutter, inv, debug: false));
         Reg(TestCodeLensProvider.DebugCommand, "Debug Test (CodeLens)", inv => TestCodeLensProvider.RunAsync(Gutter, inv, debug: true));
+        Reg(TestCodeLensProvider.RunAllCommand, "Run All Tests (CodeLens)", inv => TestCodeLensProvider.RunAllAsync(Gutter, inv, debug: false));
+        Reg(TestCodeLensProvider.DebugAllCommand, "Debug All Tests (CodeLens)", inv => TestCodeLensProvider.RunAllAsync(Gutter, inv, debug: true));
         Reg(CollapseAll, "Collapse All Tests", _ => { LiveExplorer?.CollapseAll(); return ValueTask.FromResult<object?>(null); });
     }
 

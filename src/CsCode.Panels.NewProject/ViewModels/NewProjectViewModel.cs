@@ -79,6 +79,9 @@ public sealed class NewProjectViewModel : ObservableObject, IDisposable
     /// <summary>Completes once the latest target check has answered (tests).</summary>
     public Task TargetChecked { get; private set; } = Task.CompletedTask;
 
+    /// <summary>Completes once the follow-ups of the project opened in this window have run (tests).</summary>
+    public Task FollowedUp { get; private set; } = Task.CompletedTask;
+
     public GeneratorItem? SelectedGenerator
     {
         get => _selected;
@@ -377,14 +380,14 @@ public sealed class NewProjectViewModel : ObservableObject, IDisposable
         var result = outcome.Result!;
         var warnings = result.Warnings.Count > 0 ? " " + string.Join(" ", result.Warnings) : "";
         await _s.Ui.InvokeAsync(() => Status = $"Created {result.Directory}.{warnings}").ConfigureAwait(true);
-        await OpenAsync(name, result).ConfigureAwait(true);
+        await OpenAsync(item.Id, name, result, channel).ConfigureAwait(true);
     }
 
     /// <summary>
     /// Opens the new project: in this window when it has no folder; otherwise the user chooses this window or a new window (a new session, where
     /// File ▸ New Window exists), or not to open it. The page closes once the project is opening, then the main file opens.
     /// </summary>
-    private async Task OpenAsync(string name, ProjectResult result)
+    private async Task OpenAsync(string generatorId, string name, ProjectResult result, IOutputChannel? channel)
     {
         if (_s.Workspace is not { } workspace) return;
         var main = result.MainFile is { } m ? Path.Combine(result.Directory, m.Replace('/', Path.DirectorySeparatorChar)) : null;
@@ -406,8 +409,12 @@ public sealed class NewProjectViewModel : ObservableObject, IDisposable
             await commands.ExecuteAsync(NewWindowCommand, main is null ? [result.Directory] : [result.Directory, main]).ConfigureAwait(true);
             return;
         }
+        // the page is gone by now: the follow-ups (CMake's first configure, the Python interpreter) report to the Output channel only
+        var progress = new Progress(this, channel);
+        var beforeOpen = _s.FollowUps?.BeforeOpenAsync(generatorId, result, progress) ?? Task.CompletedTask;
         await workspace.OpenFolderAsync(new Uri(Path.TrimEndingDirectorySeparator(result.Directory) + Path.DirectorySeparatorChar)).ConfigureAwait(true);
         if (main is not null && _s.Navigation is { } navigation) await navigation.OpenAsync(new Uri(main)).ConfigureAwait(true);
+        if (_s.FollowUps is { } followUps) FollowedUp = Task.WhenAll(beforeOpen, Task.Run(() => followUps.RunAsync(generatorId, result, progress)));
     }
 
     // ---- remembering ------------------------------------------------------------------------------------------------------------------------

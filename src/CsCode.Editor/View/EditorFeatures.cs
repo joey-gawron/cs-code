@@ -30,6 +30,7 @@ internal static class EditorFeatures
             new Features.InlayHintFeature(view),
             new Features.CodeLensFeature(view), // its zone generator goes first in the generator list (a zone opens its line)
             new Features.SemanticTokensFeature(view), // its colorizer goes right after the grammar's
+            new Features.InactiveRegionsFeature(view), // after every colorizer: it fades the colours they chose
             new Features.StickyScrollFeature(view), // after folding: it pins the headers of folding's regions
             new Features.TestGutterFeature(view), // before the debug feature: its breakpoint margin then goes left of the test glyphs
         };

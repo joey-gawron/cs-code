@@ -80,6 +80,18 @@ public class CppTestExplorerRealAppTests
         Assert.True(await RealAppHost.WaitFor(() => diagnostics.Get(new Uri(gtestSource)).Any(d => d.Source == "Test Explorer" && d.Range.Start.Line == 13)
             && diagnostics.Get(new Uri(catchSource)).Any(d => d.Source == "Test Explorer" && d.Range.Start.Line == 7), 10_000), "the failures in the Error List");
 
+        // "Run All Tests" above the parameterized fixture class runs every instance of its TEST_P
+        var gtestDocument = new InMemoryTextDocument(new Uri(gtestSource), "cpp", CppTestSample.GoogleTestSource);
+        var lensProvider = Assert.Single(host.Get<ILanguageFeatureRegistry>().GetProviders<ICodeLensProvider>(gtestDocument), p => p is not null && p.GetType().Name == "TestCodeLensProvider");
+        var lenses = await lensProvider.ProvideCodeLensesAsync(gtestDocument, TestContext.Current.CancellationToken);
+        var classLine = CppTestSample.GoogleTestSource.Split('\n').ToList().FindIndex(l => l.StartsWith("class Param", StringComparison.Ordinal));
+        var runAll = Assert.Single(lenses!, l => l.Command?.Title == "Run All Tests").Command!;
+        Assert.Equal(classLine, Assert.Single(lenses!, l => l.Command?.Title == "Run All Tests").Range.Start.Line);
+        await host.Get<Core.Platform.ICommandService>().ExecuteAsync(runAll.CommandId, [.. runAll.Arguments!.Select(a => (object?)a)]);
+        Assert.True(await RealAppHost.WaitFor(() => !testing.Controller.IsRunning && tree.FindTest("gtest_tests/Numbers/Param.IsPositive/1")?.Outcome == TestOutcome.Failed, 60_000),
+            "the fixture's tests ran; output: " + Output());
+        Assert.Equal(TestOutcome.Passed, tree.FindTest("gtest_tests/Numbers/Param.IsPositive/0")!.Outcome);
+
         // what the user sees: the explorer with the results, and the test file with its glyphs (failures marked) and lenses
         await host.Get<Core.Platform.INavigationService>().OpenAsync(new Uri(gtestSource), TextRange.At(11, 0));
         Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.EditorTabs.Any(t => t.Title == "gtest_tests.cpp" && t.Controller is not null)), "gtest_tests.cpp opened");

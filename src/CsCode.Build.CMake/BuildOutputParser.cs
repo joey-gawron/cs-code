@@ -11,7 +11,7 @@ namespace CsCode.Build.CMake;
 /// (Ninja runs the compiler there), then the source directory. Problems are published per run under one owner (cleared when the run starts),
 /// at most <see cref="MaxProblems"/>, in batches: <see cref="Flush"/> after a burst of lines and at the end. Not thread-safe: one run feeds it.
 /// </summary>
-internal sealed class BuildOutputParser(IDiagnosticService? diagnostics, string owner, string buildDir, string sourceDir)
+internal sealed class BuildOutputParser(IDiagnosticService? diagnostics, string owner, string buildDir, string sourceDir, string source = "cmake")
 {
     public const int MaxProblems = 2000;
     private const int MaxMessageLines = 20;
@@ -64,7 +64,7 @@ internal sealed class BuildOutputParser(IDiagnosticService? diagnostics, string 
             var row = Math.Max(0, int.Parse(m.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture) - 1);
             var col = m.Groups["col"].Success ? Math.Max(0, int.Parse(m.Groups["col"].Value, System.Globalization.CultureInfo.InvariantCulture) - 1) : 0;
             var (message, code) = SplitWarningFlag(m.Groups["msg"].Value);
-            Add(file, new Diagnostic(new TextRange(new TextPosition(row, col), new TextPosition(row, col)), message, sev, code, "cmake"));
+            Add(file, new Diagnostic(new TextRange(new TextPosition(row, col), new TextPosition(row, col)), message, sev, code, source));
         }
         catch (RegexMatchTimeoutException) { }
         catch (OverflowException) { }

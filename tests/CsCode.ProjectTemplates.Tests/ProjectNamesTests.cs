@@ -79,7 +79,27 @@ public sealed class ProjectNamesTests
     [InlineData("hello-zig", false)]
     [InlineData("fn", false)]
     [InlineData("a_very_long_package_name_beyond_32", false)]
+    [InlineData("exactly_thirty_two_characters_ab", true)]
+    [InlineData("_9lives", true)]
+    [InlineData("U8", true)]
+    [InlineData("_", false)]
+    [InlineData("u8", false)]
+    [InlineData("i007", false)]
+    [InlineData("u65536", false)]
+    [InlineData("usize", false)]
+    [InlineData("null", false)]
+    [InlineData("std", false)]
+    [InlineData("builtin", false)]
+    [InlineData("main", false)]
+    [InlineData("io", false)]
+    [InlineData("list", false)]
     public void Zig_takes_identifiers_up_to_32_bytes(string name, bool valid) => Assert.Equal(valid, ProjectNames.Zig(name) is null);
+
+    [Theory]
+    [InlineData("u8", "primitive")]
+    [InlineData("main", "zig init")]
+    [InlineData("fn", "keyword")]
+    public void Zig_says_why_a_name_does_not_build(string name, string reason) => Assert.Contains(reason, ProjectNames.Zig(name), StringComparison.Ordinal);
 
     [Theory]
     [InlineData("hello", true)]

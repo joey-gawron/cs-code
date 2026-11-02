@@ -41,6 +41,10 @@ public sealed class CMakeService : ICMakeService, IDisposable
     private readonly ICMakeProcesses _processes;
     private readonly IConfigurationService? _config;
     private readonly IWorkspaceService? _workspace;
+    private readonly IFileWatcher? _watcher;
+    private readonly object _watchGate = new();
+    // per source directory: the reply directory watched and its subscription
+    private readonly Dictionary<string, (string ReplyDir, IDisposable Watch)> _replyWatches = new(StringComparer.Ordinal);
     private readonly IStateStorage? _state;
     private readonly IDiagnosticService? _diagnostics;
     private readonly IOutputService? _outputs;
@@ -51,6 +55,8 @@ public sealed class CMakeService : ICMakeService, IDisposable
     private readonly Emitter<IReadOnlyList<CMakeProjectView>> _viewsChanged = new();
     private readonly Emitter<CMakeBuildFinished> _built = new();
     private readonly List<ProjectState> _projects = []; // lane only
+    private readonly List<PendingConfigure> _pending = []; // ConfigureWhenOpenedAsync's requests for projects not open yet (locked)
+    private readonly HashSet<string> _configuredOnRequest = new(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase); // locked
     private IReadOnlyList<CMakeProject> _snapshot = [];
     private IReadOnlyList<CMakeProjectView> _views = [];
     private readonly CancellationTokenSource _shutdown = new();
@@ -58,13 +64,17 @@ public sealed class CMakeService : ICMakeService, IDisposable
     private IOutputChannel? _channel;
     private volatile bool _disposed;
 
+    /// <param name="watcher">Watches the build directories' File API replies, so a configure run outside CsCode (a <c>CMake: configure</c> task,
+    /// a terminal, the re-run <c>cmake --build</c> starts after a CMakeLists.txt edit) updates the targets; null: only CsCode's own configures do.</param>
     public CMakeService(IWorkspaceService? workspace, IConfigurationService? config, IStateStorage? state, IDiagnosticService? diagnostics,
-        IOutputService? outputs, IDocumentManager? documents = null, IMemoryMonitor? memory = null, ILoggerFactory? loggers = null)
-        : this(workspace, config, state, diagnostics, outputs, documents, new CMakeProcesses(memory), loggers, null) { }
+        IOutputService? outputs, IDocumentManager? documents = null, IMemoryMonitor? memory = null, ILoggerFactory? loggers = null, IFileWatcher? watcher = null)
+        : this(workspace, config, state, diagnostics, outputs, documents, new CMakeProcesses(memory), loggers, null, watcher) { }
 
     internal CMakeService(IWorkspaceService? workspace, IConfigurationService? config, IStateStorage? state, IDiagnosticService? diagnostics,
-        IOutputService? outputs, IDocumentManager? documents, ICMakeProcesses processes, ILoggerFactory? loggers, Func<string, string?>? environment)
+        IOutputService? outputs, IDocumentManager? documents, ICMakeProcesses processes, ILoggerFactory? loggers, Func<string, string?>? environment,
+        IFileWatcher? watcher = null)
     {
+        _watcher = watcher;
         _workspace = workspace;
         _config = config;
         _state = state;
@@ -108,6 +118,31 @@ public sealed class CMakeService : ICMakeService, IDisposable
     public ValueTask<CMakeBuildResult> BuildAsync(CMakeProject project, IReadOnlyList<string>? targets = null, CancellationToken ct = default) =>
         new(OnLane(p => Enqueue(p, op => BuildCoreAsync(p, targets ?? [], op), ct), project.SourceDirectory, new CMakeBuildResult(null, Error: "The project is not open.")));
 
+    public ValueTask<CMakeProject?> ConfigureWhenOpenedAsync(string sourceDirectory, string configurePreset, CancellationToken ct = default)
+    {
+        if (_disposed) return ValueTask.FromResult<CMakeProject?>(null);
+        var pending = new PendingConfigure(Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceDirectory)), configurePreset,
+            new TaskCompletionSource<CMakeProject?>(TaskCreationOptions.RunContinuationsAsynchronously), ct);
+        // no await before the request is recorded: a detection queued after this call (the folder opening) must find it
+        _lane.Post(() =>
+        {
+            if (_disposed)
+            {
+                pending.Done.TrySetResult(null);
+                return;
+            }
+            if (Find(pending.SourceDir) is { } open)
+            {
+                if (!Claim(open, pending)) return;
+                Publish();
+                StartPending(open, pending);
+                return;
+            }
+            lock (_pending) _pending.Add(pending); // the next detection that finds it claims it
+        });
+        return new(pending.Done.Task.WaitAsync(ct));
+    }
+
     // ------------------------------------------------------------------------------------------------ for the host
 
     /// <summary>Every project with its presets and selections (any thread).</summary>
@@ -132,7 +167,15 @@ public sealed class CMakeService : ICMakeService, IDisposable
         return Task.FromResult(0);
     }, sourceDir, 0);
 
-    internal Task SelectConfigurePresetAsync(string sourceDir, string? preset) => Update(sourceDir, p =>
+    internal Task SelectConfigurePresetAsync(string sourceDir, string? preset) => Update(sourceDir, p => ChooseConfigurePreset(p, preset));
+
+    /// <summary>Whether the project was configured through <see cref="ConfigureWhenOpenedAsync"/>: configure-on-open leaves it alone (any thread).</summary>
+    internal bool ConfiguredOnRequest(string sourceDir)
+    {
+        lock (_configuredOnRequest) return _configuredOnRequest.Contains(Path.TrimEndingDirectorySeparator(sourceDir));
+    }
+
+    private bool ChooseConfigurePreset(ProjectState p, string? preset)
     {
         if (p.ConfigurePreset == preset) return false;
         p.ConfigurePreset = preset;
@@ -140,7 +183,7 @@ public sealed class CMakeService : ICMakeService, IDisposable
         if (p.BuildPreset is { } bp && p.Presets.Build.FirstOrDefault(b => b.Name == bp) is { } b && b.ConfigurePreset != preset) p.BuildPreset = null;
         Reload(p);
         return true;
-    });
+    }
 
     internal Task SelectBuildPresetAsync(string sourceDir, string? preset) => Update(sourceDir, p =>
     {
@@ -275,12 +318,66 @@ public sealed class CMakeService : ICMakeService, IDisposable
             Reload(existing);
             next.Add(existing);
         }
-        foreach (var gone in _projects.Except(next)) gone.Current?.Cancel();
+        foreach (var gone in _projects.Except(next))
+        {
+            gone.Current?.Cancel();
+            Unwatch(gone.SourceDir);
+        }
         _projects.Clear();
         _projects.AddRange(next);
-        Publish();
+        var claimed = ClaimPending(next);
+        Publish(); // a claimed project is first seen configuring: configure-on-open skips it
+        foreach (var (p, pending) in claimed) StartPending(p, pending);
         return Task.CompletedTask;
     });
+
+    // ------------------------------------------------------------------------------------------------ configure when opened
+
+    /// <summary>A <see cref="ConfigureWhenOpenedAsync"/> request: the project's source directory (full, no trailing separator) and preset.</summary>
+    private sealed record PendingConfigure(string SourceDir, string Preset, TaskCompletionSource<CMakeProject?> Done, CancellationToken Ct);
+
+    private List<(ProjectState, PendingConfigure)> ClaimPending(List<ProjectState> projects)
+    {
+        var claimed = new List<(ProjectState, PendingConfigure)>();
+        lock (_pending)
+            foreach (var pending in _pending.ToList())
+                if (projects.FirstOrDefault(p => PathsEqual(p.SourceDir, pending.SourceDir)) is { } p)
+                {
+                    _pending.Remove(pending);
+                    if (Claim(p, pending)) claimed.Add((p, pending));
+                }
+        return claimed;
+    }
+
+    /// <summary>Selects the request's preset (remembered) and marks the project configuring, before it is published (lane). False: dropped.</summary>
+    private bool Claim(ProjectState p, PendingConfigure pending)
+    {
+        if (pending.Ct.IsCancellationRequested)
+        {
+            pending.Done.TrySetCanceled(pending.Ct);
+            return false;
+        }
+        if (!p.UsePresets || p.Presets.Configure.All(c => c.Name != pending.Preset))
+        {
+            Write($"[cmake] {Name(p)} has no configure preset '{pending.Preset}': it is configured as any other project.");
+            pending.Done.TrySetResult(null);
+            return false;
+        }
+        ChooseConfigurePreset(p, pending.Preset);
+        Persist(p);
+        p.State = CMakeProjectState.Configuring;
+        p.Activity = "Configuring";
+        lock (_configuredOnRequest) _configuredOnRequest.Add(p.SourceDir);
+        return true;
+    }
+
+    private void StartPending(ProjectState p, PendingConfigure pending) =>
+        _ = Enqueue(p, op => ConfigureCoreAsync(p, op, fresh: false), pending.Ct).ContinueWith(t =>
+        {
+            if (t.IsCanceled) pending.Done.TrySetCanceled();
+            else if (t.Exception is { } ex) pending.Done.TrySetException(ex.InnerExceptions);
+            else pending.Done.TrySetResult(t.Result);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     /// <summary>Re-reads the presets, recomputes the build directory and reads an existing File API reply there (lane).</summary>
     private void Reload(ProjectState p)
@@ -300,12 +397,45 @@ public sealed class CMakeService : ICMakeService, IDisposable
             p.Reply = null;
             p.State = CMakeProjectState.NotConfigured;
         }
-        if (p.State != CMakeProjectState.Configuring && File.Exists(Path.Combine(p.BuildDir, "CMakeCache.txt")) && CMakeFileApi.Read(p.BuildDir, p.Configuration) is { } reply)
+        ReadReply(p);
+        WatchReply(p);
+    }
+
+    /// <summary>Reads the File API reply cmake left in the build directory, unless CsCode's own configure is running (lane).</summary>
+    private void ReadReply(ProjectState p)
+    {
+        if (p.State == CMakeProjectState.Configuring || !File.Exists(Path.Combine(p.BuildDir, "CMakeCache.txt")) || CMakeFileApi.Read(p.BuildDir, p.Configuration) is not { } reply) return;
+        if (p.Reply is null || !SameTargets(p.Reply, reply)) p.Generation++;
+        p.Reply = reply;
+        p.State = CMakeProjectState.Configured;
+    }
+
+    /// <summary>
+    /// Watches <paramref name="p"/>'s reply directory (it need not exist yet): cmake writes the reply's index file last, so the change that
+    /// brings it reads the whole new reply. A configure CsCode runs reads it itself at the end (<see cref="ReadReply"/> skips it meanwhile).
+    /// </summary>
+    private void WatchReply(ProjectState p)
+    {
+        if (_watcher is null || _disposed) return;
+        var replyDir = CMakeFileApi.ReplyDirectory(p.BuildDir);
+        lock (_watchGate)
         {
-            if (p.Reply is null || !SameTargets(p.Reply, reply)) p.Generation++;
-            p.Reply = reply;
-            p.State = CMakeProjectState.Configured;
+            if (_replyWatches.TryGetValue(p.SourceDir, out var known) && PathsEqual(known.ReplyDir, replyDir)) return;
+            known.Watch?.Dispose();
+            var watch = _watcher.Watch(new Uri(replyDir), false, null, _ => _lane.Post(() =>
+            {
+                if (_disposed || !_projects.Contains(p)) return;
+                ReadReply(p);
+                Publish();
+            }));
+            _replyWatches[p.SourceDir] = (replyDir, watch);
         }
+    }
+
+    private void Unwatch(string sourceDir)
+    {
+        lock (_watchGate)
+            if (_replyWatches.Remove(sourceDir, out var known)) known.Watch.Dispose();
     }
 
     private string? Generator(ProjectState p) =>
@@ -610,6 +740,16 @@ public sealed class CMakeService : ICMakeService, IDisposable
         if (_disposed) return;
         _disposed = true;
         _shutdown.Cancel(); // every running configure or build is linked to it: their process trees are killed
+        lock (_watchGate)
+        {
+            foreach (var (_, watch) in _replyWatches.Values) watch.Dispose();
+            _replyWatches.Clear();
+        }
+        lock (_pending)
+        {
+            foreach (var pending in _pending) pending.Done.TrySetResult(null);
+            _pending.Clear();
+        }
         _store.Dispose();
         _changed.Clear();
         _viewsChanged.Clear();

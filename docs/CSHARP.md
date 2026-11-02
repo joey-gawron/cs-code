@@ -9,8 +9,10 @@ and what is left. Brief: `docs/briefs/lang-5-csharp.md`.
 | Library and generated code | go to definition into the BCL / NuGet packages and into source generators' output opens **read-only virtual documents** (`String.cs [decompiled]`, `RegexGenerator.g.cs [generated]`), with highlighting, hover and go to definition inside | Core `VirtualDocuments.cs`, `CSharp/ExternalDocuments.cs` |
 | Test Explorer | xUnit v3, VSTest (as before), now also **Microsoft.Testing.Platform** projects (MSTest runner, NUnit runner, TUnit) and **F# / VB** test projects; run and debug | `src/CsCode.Testing/Providers/DotNet/` |
 | Debugging | netcoredbg; breakpoints now bind on macOS (they never did for a project behind a symbolic link) | `src/CsCode.Dap/Session/SourcePathAliases.cs` |
-| Tasks | the .NET tasks.json template has a **`watch`** task (`dotnet watch run`, hot reload) tracked through `$dotnet-watch` | `src/CsCode.Dap/Tasks/ProblemMatchers.cs` |
+| Code actions on save | `editor.codeActionsOnSave`'s `source.organizeImports` (**Organize Usings**: Roslyn's remove unnecessary usings, then its sort) and `source.fixAll` (**Fix All in Document**: each analyzer warning's document-wide fix all), built from Roslyn's own actions; also Shift+Alt+O and the palette | `src/CsCode.Lsp/CSharp/RoslynSourceActions.cs` |
+| Tasks | **detected `dotnet` tasks** (Run Task, `preLaunchTask`): build, test and clean of the solution and of each project, run and **watch** (`dotnet watch run`, hot reload, tracked through `$dotnet-watch`) of each program; the tasks.json template has `build` and `watch` | `src/CsCode.Dap/Tasks/DotnetTaskProvider.cs`, `ProblemMatchers.cs` |
 | NuGet | **NuGet: Add / Update / Remove Package…**, **NuGet: Restore Packages** | `src/CsCode.App/DotNet/` |
+| New items | **.NET: New Item…** (and **New .NET Item…** on an Explorer folder): the SDK's item templates (`dotnet new list --type item`, through the New Project page's listing), named and namespaced for the folder | `src/CsCode.App/DotNet/` |
 
 ## 1. The two servers
 
@@ -47,6 +49,33 @@ the download on 2026-11-01). Everything below was checked against that build: it
   `roslyn.client.fixAllCodeAction` ("Fix All: …": a pick of the scope among `FixAllFlavors`, then `codeAction/resolveFixAll`),
   `roslyn.client.completionComplexEdit` (override and partial-method completions: the edit, then the caret at `newOffset`).
   `roslyn.client.peekReferences` (code lens) was already mapped by the editor. **Toasts** (`window/_roslyn_showToast`) show as messages.
+* **Code actions on save** (`editor.codeActionsOnSave`, stage 1's will-save participant). Roslyn's code actions are only `quickfix`,
+  `refactor`, `refactor.extract` and `refactor.inline`, and it ignores `context.only`: neither `source.organizeImports` nor `source.fixAll`
+  matches anything it answers. CsCode builds both from Roslyn's own actions (`RoslynSourceActions.cs`), offered only when a source kind is
+  asked for (never in the light bulb):
+  * `source.organizeImports.roslyn`, **Organize Usings**: Roslyn's "Remove unnecessary usings" (the IDE0005 fix, which removes every
+    unnecessary using of the file), then its "Sort Usings" refactoring (System first unless `.editorconfig`'s
+    `dotnet_sort_system_directives_first` says otherwise), both asked over the using directives. IDE0005 needs no severity: Roslyn offers the
+    fix at its default (hidden) one. Also Organize Imports (Shift+Alt+O) and **C#: Organize Usings**.
+  * `source.fixAll.roslyn`, **Fix All in Document**: for each analyzer diagnostic of warning or error severity in the file (IDE…, CA…, a
+    NuGet analyzer's; not the compiler's CS…, which `dotnet format` leaves too, nor suggestions), one id after another in document order,
+    Roslyn's "Fix All:" of its fix for that diagnostic in the Document scope (`codeAction/resolveFixAll`). A rule is fixed on save by raising it
+    to a warning in `.editorconfig` (`dotnet_diagnostic.IDE0090.severity = warning`). Also **C#: Fix All in Document**.
+  * Each step is a round trip on the text the step before left, so each action is a command that runs its steps (Pyright's organize imports
+    is a command too). On save an edit is applied only before the participant's deadline (`editor.codeActionsOnSaveTimeout`, 750 ms) and only
+    to the text it was computed for. Measured on a small project (`RealCSharpServerTests`): organize 60–70 ms and a fix all of one id 175 ms;
+    the **first** organize after the solution loaded took 0.9–1 s (Roslyn loading its fixers), so the first save may remove the unnecessary
+    usings and leave the sorting to the next one, unless the timeout is raised.
+  * Found on the way: `codeAction/resolveFixAll` fails ("Sequence contains no elements") when its range also holds an action whose fix all
+    lacks the asked scope (Sort Usings' has only Project and Solution). So each fix all is resolved at its own diagnostic's range, and the
+    diagnostics are pulled from Roslyn for the current text before each id (`textDocument/diagnostic` without an identifier answers every
+    source).
+  * Sorting on format (VS Code's `dotnet.formatting.organizeImportsOnFormat`) is Roslyn's own setting in CsCode,
+    `"csharp|formatting.dotnet_organize_imports_on_format": true`: Roslyn's full-document formatting then sorts the usings (checked).
+
+  ```json
+  "[csharp]": { "editor.codeActionsOnSave": { "source.fixAll": "explicit", "source.organizeImports": "explicit" } }
+  ```
 
 ### csharp-ls (the alternative)
 
@@ -202,6 +231,25 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
 
 ## 6. Tasks and NuGet
 
+* **Detected `dotnet` tasks** (stage 2's `ITaskProvider`; `src/CsCode.Dap/Tasks/DotnetTaskProvider.cs`), listed by Run Task and usable as a
+  `preLaunchTask` or `dependsOn` without a tasks.json. The projects are the ones F5's launch.json picks from (`DotnetProjects.cs`, extracted from
+  the netcoredbg factory): the folder's own project, else what its solution lists, else the projects two levels down.
+  * `dotnet: build`, `dotnet: test`, `dotnet: clean` of the folder's solution (several: `dotnet: build - App.sln` each), or of its one project
+    when it has no solution;
+  * with more than one project, `dotnet: build - App` and `dotnet: clean - App` for each, and `dotnet: test - App.Tests` for each test project
+    (`IsTestProject`, the MSTest SDK, `EnableMSTestRunner`/`EnableNUnitRunner`, or a test framework's package in the project file);
+  * `dotnet: run - App` (`dotnet run --project`) and `dotnet: watch - App` (`dotnet watch run --project`, a background task) for each program
+    (OutputType Exe, the Web and Worker SDKs; a test project is none), without the name when there is one.
+
+  Build, test, clean and run use `$msCompile`, watch `$dotnet-watch`; build and clean pass `/property:GenerateFullPaths=true` and
+  `/consoleloggerparameters:NoSummary` like the template. Paths are relative to the folder, the task's working directory, so MSBuild sees the
+  physical paths a terminal's build sees (section 5). Under a global.json whose `test.runner` is `Microsoft.Testing.Platform`, `dotnet test`
+  gets `--project` (SDK 10 ignores a positional path in that mode). The definitions are `{"type": "dotnet", "command": "build", "project":
+  "src/App/App.csproj"}`: a tasks.json entry of that shape customises the detected task, and one with `args`, `env`, `cwd` or another SDK
+  command (`publish`, `pack`) runs `dotnet <command> <project> <args…>` as written. Checked with the real SDK (`DotnetTaskProviderTests`): a
+  console project builds, a compile error lands on its file, and `dotnet: watch` is ready once the program started, then stops on Terminate
+  Task. Without a task terminal (the Tasks output channel), MSBuild's summary repeats each error, so it is listed twice; a terminal's build
+  (the SDK's terminal logger) prints it once.
 * **`dotnet watch`.** The tasks.json template written with a new .NET launch.json has `build` and now `watch` (`dotnet watch run --project …`,
   `isBackground`, `"problemMatcher": "$dotnet-watch"`). `$dotnet-watch` is `$msCompile` plus dotnet watch's own error lines
   (`dotnet watch ❌ file(1,44): error CS1002: …`) with background patterns taken from SDK 10's real output: busy from the start; a cycle begins
@@ -213,6 +261,19 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
   as a task in a terminal. **Update Package…** picks among the project's references (`dotnet list package --format json`) and a version;
   **Remove Package…** runs `dotnet remove package`; **Restore Packages** runs `dotnet restore`. Sources that need credentials are not searched (no
   credential provider): they are listed in the NuGet output channel.
+* **.NET: New Item…** (`dotnet.newItem`; on an Explorer folder **New .NET Item…**, shown when a workspace folder has a project or solution at
+  its top or two levels down). The folder is the Explorer's, else the active file's, else the workspace folder; its nearest project gives the
+  language (`.fsproj` F#, `.vbproj` VB, else C#). The quick pick lists the SDK's item templates of that language and the language-free ones
+  (`dotnet new list --type item`, parsed by stage 7's `DotnetTemplates.ParseList`, kept for 5 minutes; SDK 10.0.403 has API/MVC controllers,
+  Razor components, pages and views, MSTest and NUnit test classes, protobuf, and config files: EditorConfig, global.json, nuget.config,
+  Directory.Build.props/targets, Directory.Packages.props…, but no plain class or interface item). It then asks for a name (a typed `.cs` is
+  dropped) unless the template writes a file of a fixed name (tags Config, MSBuild); passes `--language` to a template of several languages;
+  and passes `--namespace` (the project's `RootNamespace`, else its name, plus the folders below it, made identifiers) when the template's
+  `--help` lists it. A `--dry-run` comes first: it names the files to open afterwards, and an item that would replace a file (exit code 73) is
+  created with `--force` only after **Replace**. A template whose constraint fails because the project is not restored (the MSTest class)
+  offers **Restore and Create**; other constraints offer **Create Anyway**. `dotnet new` runs without a terminal; a failure shows its output.
+  Checked with the real SDK (`DotNetNewItemTests`): an API controller in `Controllers/` gets `namespace My.App.Controllers`, a second one asks
+  before replacing, an `.editorconfig` asks no name.
 
 ## 7. Seen in the real application (2026-11-01, macOS arm64)
 
@@ -232,16 +293,12 @@ The Test Explorer check found two things fixed on the way: a runner project that
 yet (the packages' props set it), so `EnableMSTestRunner` / `EnableNUnitRunner` / a TUnit reference count too; and a debugged MTP program
 printed the platform's telemetry banner (the debug launch now passes `TESTINGPLATFORM_TELEMETRY_OPTOUT` like runs do).
 
-## 8. Deferred (open after the merge of every stage)
+## 8. What is left
 
-* **`codeActionsOnSave` with Roslyn** — stage 1's (Python) participant is on main since the C# merge; wiring Roslyn to it is open. What was found for it: Roslyn's code action kinds are
-  only `quickfix`, `refactor`, `refactor.extract`, `refactor.inline`; it never returns `source.organizeImports` or `source.fixAll` and ignores
-  `context.only`. Organize usings on save is done in VS Code by `csharp|formatting.dotnet_organize_imports_on_format = true` plus formatting; fix
-  all on save has no server support. csharp-ls was not checked for it yet.
-* **`dotnet new`: New Project / New Item** — the brief's SHOULD item moved to stage 7 (the New Project page), which owns project creation and
-  the template listing (scope change, 2026-11-01). New Item can reuse that listing once stage 7 is merged.
-* **.NET tasks through `ITaskProvider`** (`dotnet build`, `test`, `run`, `clean` per project with `$msCompile`) — stage 2's (Rust) contract is on
-  main since the C# merge (`CargoTaskProvider` is the example); the .NET provider is open.
+* The brief's SHOULD items are all in since the follow-ups after the merge of every stage (2026-11-02): code actions on save (section 1), the
+  detected `dotnet` tasks, `dotnet watch`, NuGet and New Item (section 6). `dotnet new` New Project is stage 7's New Project page.
+* **STRETCH, not started** (each needs the user's go-ahead): a Solution view (projects, references and packages, after Visual Studio's
+  Solution Explorer); Razor and Blazor through Roslyn's Razor support.
 
 Stage 2's per-server extension pattern was cherry-picked from the Rust branch (its commits "Add the per-server LSP extension pattern…" and
 "Let server extensions answer server-to-client requests…", at the Rust session's suggestion) and Roslyn is built on it: `RoslynExtension`
@@ -255,6 +312,9 @@ fix with in-order delivery. Since the C# merge both stages run on main's copy of
 
 * Roslyn's `workspace/configuration` sections (`csharp|…`, `dotnet|…`) are answered from settings of the same name: VS Code's C# settings
   (`dotnet.*`) are not mapped, so Roslyn runs with its defaults (decompilation on). `--csharpDesignTimePath` is not passed.
+* By Roslyn's code, its `resolveFixAll` bug (section 1) also hits the light bulb: "Fix All: Remove unnecessary usings" → Document on a using line,
+  where Sort Usings is offered too, fails (not tried in the app; Project and Solution have no such neighbour). Code actions on save are
+  Roslyn's only: csharp-ls was not checked for source actions.
 * `workspace/textDocumentContent/refresh` is not handled (a generated document opened before its generator reruns is stale).
 * Razor and Blazor still have highlighting only (STRETCH, not started).
 * NuGet: no credential providers, no package icons or README, no "outdated" view.
@@ -263,11 +323,13 @@ fix with in-order delivery. Since the C# merge both stages run on main's copy of
 
 ```
 tools/fetch-roslyn-ls.sh                                                       # Roslyn into .scratch/tools/roslyn-ls (once)
-dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.RealCSharpServerTests      # both servers, real
+dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.RealCSharpServerTests      # both servers, real; Roslyn's on-save source actions
 dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.CSharpServerTests          # no server
 CSCODE_CSHARP_EVAL=1 dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.Tests.dll -class CsCode.Lsp.Tests.CSharpServerEvaluation
 dotnet tests/CsCode.Panels.Testing.Tests/bin/Debug/net10.0/CsCode.Panels.Testing.Tests.dll -class CsCode.Panels.Testing.Tests.Providers.RealTestingPlatformTests
 dotnet tests/CsCode.Dap.Tests/bin/Debug/net10.0/CsCode.Dap.Tests.dll -class CsCode.Dap.Tests.RealNetCoreDbgMatrixTests -class CsCode.Dap.Tests.RealNetCoreDbgTests
+dotnet tests/CsCode.Dap.Tests/bin/Debug/net10.0/CsCode.Dap.Tests.dll -class CsCode.Dap.Tests.DotnetTaskProviderTests                # dotnet tasks; a real build and dotnet watch
+dotnet tests/CsCode.App.Tests/bin/Debug/net10.0/CsCode.App.Tests.dll -class CsCode.App.Tests.DotNet.DotNetNewItemTests               # New Item; real dotnet new
 dotnet tests/CsCode.Panels.Debug.Tests/bin/Debug/net10.0/CsCode.Panels.Debug.Tests.dll -class CsCode.Panels.Debug.Tests.RealDebuggerEndToEndTests
 dotnet tests/CsCode.App.Tests/bin/Debug/net10.0/CsCode.App.Tests.dll -class CsCode.App.Tests.RealApp.CSharpRealAppTests       # the real-app checks
 ```

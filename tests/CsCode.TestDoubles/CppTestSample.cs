@@ -124,16 +124,22 @@ public static class CppTestSample
         return null;
     }
 
+    /// <summary>Writes the sample's CMakeLists.txt and sources into <paramref name="folder"/> (with <see cref="CTestDiscovery"/> when <paramref name="ctest"/>).</summary>
+    public static void Write(string folder, bool ctest = false)
+    {
+        File.WriteAllText(Path.Combine(folder, "CMakeLists.txt"), ctest ? CMakeLists + "\n" + CTestDiscovery + "\n" : CMakeLists);
+        File.WriteAllText(Path.Combine(folder, "gtest_tests.cpp"), GoogleTestSource);
+        File.WriteAllText(Path.Combine(folder, "catch_tests.cpp"), Catch2Source);
+        File.WriteAllText(Path.Combine(folder, "doctest_tests.cpp"), DoctestSource);
+    }
+
     /// <summary>
     /// Writes the sample into <paramref name="folder"/> (with <see cref="CTestDiscovery"/> when <paramref name="ctest"/>) and builds it into
     /// <c>build/</c> (Debug); returns the build's output when it fails.
     /// </summary>
     public static async Task<string?> WriteAndBuildAsync(string folder, CancellationToken ct, bool ctest = false)
     {
-        File.WriteAllText(Path.Combine(folder, "CMakeLists.txt"), ctest ? CMakeLists + "\n" + CTestDiscovery + "\n" : CMakeLists);
-        File.WriteAllText(Path.Combine(folder, "gtest_tests.cpp"), GoogleTestSource);
-        File.WriteAllText(Path.Combine(folder, "catch_tests.cpp"), Catch2Source);
-        File.WriteAllText(Path.Combine(folder, "doctest_tests.cpp"), DoctestSource);
+        Write(folder, ctest);
         var cmake = FindCMake()!;
         List<string> configure = ["-S", folder, "-B", Path.Combine(folder, "build"), "-DCMAKE_BUILD_TYPE=Debug", "-DCMAKE_PREFIX_PATH=" + FindPrefixPath()];
         if (FindNinja() is { } ninja) configure.AddRange(["-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=" + ninja]);

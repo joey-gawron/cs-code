@@ -116,6 +116,26 @@ public sealed class NewProjectViewModelTests
         Assert.Single(rig.Window.Messages);
         Assert.Empty(rig.Workspace.Opened);
         Assert.Equal([rig.Temp.Combine("other"), Path.Combine(rig.Temp.Combine("other"), "main.txt")], newWindowArgs);
+        Assert.Empty(rig.Python.Picks); // the new window's own settings pick the interpreter
+    }
+
+    [Fact]
+    public async Task A_project_opened_here_runs_its_follow_ups_after_the_page_closed()
+    {
+        using var rig = new Rig();
+        var generator = new FakeGenerator(ProjectTemplates.Generators.PythonProjectGenerator.GeneratorId, 0)
+        {
+            ExtraFiles = [ProjectTemplates.Generators.PythonProjectGenerator.VenvInterpreter],
+        };
+        using var vm = await ReadyAsync(new NewProjectViewModel(rig.Services(generator)));
+        vm.Name = "py";
+        vm.CreateGitRepository = false;
+        await vm.TargetChecked.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await vm.CreateAsync();
+        await vm.FollowedUp.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var target = rig.Temp.Combine("py");
+        Assert.Equal(Path.Combine(target, ProjectTemplates.Generators.PythonProjectGenerator.VenvInterpreter), rig.Python.Picks[new Uri(target + Path.DirectorySeparatorChar)]);
+        Assert.Contains("== Selected the interpreter 3.14.0 ('.venv': venv)", rig.Output.Text(NewProjectViewModel.OutputChannel), StringComparison.Ordinal);
     }
 
     [Fact]

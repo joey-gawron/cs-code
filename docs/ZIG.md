@@ -2,7 +2,7 @@
 
 Stage 6 of the language stages (`docs/briefs/lang-6-zig.md`, overview `docs/briefs/languages.md`). User request (2026-11-01): *"Lets break
 this up into stages/languages: … 6. Zig"*. The stage ran in parallel with stages 1 and 2 (the user's choice), so what needs their shared pieces
-waited; main now has them, and the items still open are listed in [Open items](#open-items-their-pieces-are-on-main-since-stages-1-and-2-merged).
+waited; main now has them, and those items are done: see [What waited](#what-waited-for-stages-1-and-2-done-since-they-merged).
 
 Toolchain used for everything below: **Zig 0.17.0** and **zls 0.17.0** (`tools/fetch-zig.sh`: pinned tarballs from ziglang.org and the zls
 GitHub release, SHA-256 checked, into `.scratch/tools/zig/0.17.0/`; the user chose these over Homebrew), CodeLLDB v1.12.3 (LLDB 22.1.8, Python
@@ -14,8 +14,8 @@ GitHub release, SHA-256 checked, into `.scratch/tools/zig/0.17.0/`; the user cho
 | zls | already the built-in server; **new**: build-on-save on by default, one clear zig/zls version-mismatch message; real-server tests run on this Mac |
 | Debugging | **new**: `zig` in CodeLLDB's and lldb-dap's languages, `build.zig` templates and tasks, Zig values by value; matrix below |
 | Test Explorer | **new**: `ZigTestProvider` |
-| Tasks | **new**: the `$zig` problem matcher; the `zig build` task provider is open (on stage 2's `ITaskProvider`) |
-| Snippets | open (stage 1's bundled snippets) |
+| Tasks | **new**: the `$zig` problem matcher; the `zig build` task provider (`zig build`, its steps from `zig build -l`) |
+| Snippets | **new**: `Snippets/Builtin/zig.json` (36: declarations, control flow, tests, allocators, containers, build.zig), checked against the real zig |
 
 ## Using it
 
@@ -80,8 +80,10 @@ The sample (`RealZigDebuggingTests.Source`) is built with `zig build-exe` (Debug
 | Watch / hover expressions | `some` → `42`, `numbers` → `len=3` | same |
 | Parameters passed by reference | `pair = <variable not available>` (a `Pair(i32)` struct parameter Zig passes by reference without a location) | same |
 | End to end on `zig init` (`RealZigProjectTests`) | Create launch.json → Run Task `zig: build` with a type error → Problems: `7:25 Error expected type 'u32', found '*const [4:0]u8'`; the `zig build` template builds through its preLaunchTask and stops in `zig-out/bin/hello`: `window = len=3`, `maybe = 7` | — |
-| **Memory window** | open: stage 2's window (the adapters advertise what it needs) | open |
-| **Disassembly window** | open: stage 2's window | open |
+| **Disassembly window** (stage 2's) | at the `inspect` breakpoint: a 128-instruction page around the instruction pointer with `main.inspect` and `main.zig:26` on its instructions; one instruction step moves `…96b8 → …96bc` (the next instruction, same line) | same page and step; lldb-dap names the symbol and file only on an instruction that starts a line |
+| **Memory window** (stage 2's) | View Binary Data on `numbers[0]` (memory reference `0x1001606AC`, CsCode's slice formatter keeps the elements' addresses) reads `02 00 00 00 03 00 00 00 04 00 00 00` | same reference and bytes |
+| **Registers window** | a `Registers` scope (scopes `Local`, `Static`, `Global`, `Registers`) | `Registers` (hint `registers`) |
+| **Data breakpoints** (Break When Value Changes) | on `var n` in `inspect`: `4 bytes at 16FDFD19C (n)`, verified; Continue stops (`data breakpoint`) with `n = 3` | same; the stop's reason is `breakpoint` |
 
 ## Test Explorer (`src/CsCode.Testing/Providers/Zig/`)
 
@@ -126,8 +128,17 @@ The sample (`RealZigDebuggingTests.Source`) is built with `zig build-exe` (Debug
 * `$zig` problem matcher (`src/CsCode.Dap/Tasks/ProblemMatchers.cs`): `file:line:col: error|note: message` (owner and source `zig`); paths
   relative to the task's folder (`${cwd}`) or absolute; notes are Information; test stack-trace lines (`file:line:col: 0x… in f (test)`) do not
   match.
-* The Zig **task provider** (`zig build`, `zig build run`, `zig build test` and the steps of `zig build -l`) on stage 2's `ITaskProvider` is
-  still open (see "Open items"). Until then Run Task shows what tasks.json has: Create launch.json in a build.zig folder writes `zig: build`.
+* The Zig **task provider** (`src/CsCode.Dap/Tasks/ZigTaskProvider.cs`, stage 2's `ITaskProvider`, registered beside cargo's): a folder with a
+  build.zig gets `zig: build` (the default step, build group) and `zig: build <step>` for every other step `zig build -l` lists (`run`,
+  `test` in the test group, `check` in the build group, `uninstall`, the project's own), each with `$zig` and the step's description under it in
+  Run Task. `zig build -l` compiles the build script: 0.1 s on a warm cache, 48 s on a cold one (measured, zig 0.17.0, `zig init`). So it runs
+  in the background (bounded at 3 minutes, its output at 256 KB and 200 steps); Run Task waits for it at most 4 s and lists `zig: build`,
+  `zig: build run` and `zig: build test` until it has answered, or when it fails (a build.zig that does not compile: the build task then shows
+  why in Problems). The answer is cached per folder until build.zig or build.zig.zon changes, or another zig is configured. tasks.json entries:
+  `{"type": "zig", "step": "run"}` customises a detected task; with `args` (after the step), `env` or `cwd` it runs `zig build [step] [args…]`
+  as written. Evidence: `ZigTaskProviderTests` (a real `zig init` project lists install's siblings, runs `zig: build test` and puts a compile
+  error of `zig: build` in Problems on its line). The launch templates' tasks.json still writes its own `zig: build` (a tasks.json label wins
+  over a detected one of the same label) and the per-file test-binary task, which needs `${file}`.
 
 ## zls (`src/CsCode.Lsp/Extensions/Zls/ZlsExtension.cs`)
 
@@ -149,17 +160,26 @@ pattern's `HandleShowMessage` hook (added for it: an extension may keep a server
   with a zig that reports 0.16.0 → exactly one version message (`ZlsExtensionTests.Real_zls_with_a_zig_of_another_version…`).
 * The real-server test (`RealZlsAndNilServerTests.Zls_…`: initialize, diagnostics, hover, formatting, shutdown) **passes on this Mac** with zig
   and zls on PATH.
-* Not checked (SHOULD items): what zls offers for `build.zig.zon` editing and its highlighting, and whether zls's inlay hints display.
+* **Inlay hints** (SHOULD): zls 0.17.0 answers `textDocument/inlayHint` with parameter names and inferred types; through CsCode's LSP client the
+  editor's provider gets, on `const total = add(1, 2);`, `: u32` (Type) after `total` and `first:` / `second:` (Parameter) before the
+  arguments, plus `fmt:` / `args:` on `std.debug.print` and `: type` on `const std` (`ZlsExtensionTests.Real_zls_gives_the_editor_inlay_hints…`).
+  The editor draws whatever that provider returns while `editor.inlayHints.enabled` is on (the default); seeing them drawn in the window is
+  the part not checked here (the tool shell cannot open an Avalonia window: RenderTimer -6661).
+* **build.zig.zon** (SHOULD): a `.zon` file is a `zig` document, so zls serves it. zls 0.17.0 reports its syntax errors on their line
+  (`expected expression, found ','`), formats it as `zig fmt` does and folds its `.{ … }` blocks; it answers no document symbols, hover or
+  completions in a ZON file (no field names for build.zig.zon) (`ZlsExtensionTests.Real_zls_reports_errors_formats_and_folds_zon_files`).
+  Highlighting is tree-sitter `zig`'s, and **not checked on this Mac**: there is no tree-sitter bundle here (building one runs
+  `tools/treesitter/fetch-grammars.sh`, a download this round did not ask for), so whether Zig's grammar reads a bare ZON expression without
+  an error node is open.
 
-## Open items (their pieces are on main since stages 1 and 2 merged)
+## What waited for stages 1 and 2 (done since they merged)
 
-| Item | Builds on |
-|---|---|
-| Zig task provider (`zig build`, `run`, `test`, `zig build -l` steps; bounded, cached until build.zig changes) | stage 2's `ITaskProvider` (Core `Tasks/ITaskProvider.cs`) |
-| Matrix rows: Memory window, Disassembly window (and data breakpoints) | stage 2's native debugging windows (CodeLLDB and lldb-dap already advertise the capabilities) |
-| Zig snippets | stage 1's bundled snippets (`src/CsCode.Editor/Snippets/Builtin/zig.json`) |
-
-Done in the merge with main: zls's handling moved onto stage 2's `LanguageServerExtension` pattern (above).
+* zls's handling on stage 2's `LanguageServerExtension` pattern (in the merge with main; above).
+* The `zig build` task provider on stage 2's `ITaskProvider` ("Tasks").
+* The Disassembly, Memory, Registers and data breakpoint rows of the matrix, with stage 2's windows ("Debugging").
+* Zig snippets on stage 1's bundled snippets (`src/CsCode.Editor/Snippets/Builtin/zig.json`): the default expansion of each parses
+  (`zig fmt --stdin`), and a project made of the `build`, `std`, `main`, `gpa`, `list`, `map`, `arena` and `test` snippets builds, runs and
+  tests with zig 0.17.0 (`BundledSnippetTests`). That check found `b.args`, which Zig 0.16 replaced with `addPassthruArgs()`.
 
 ## Limits
 

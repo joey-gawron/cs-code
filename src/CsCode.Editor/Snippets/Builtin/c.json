@@ -1,0 +1,288 @@
+{
+  "main": {
+    "prefix": "main",
+    "body": [
+      "int main(int argc, char *argv[])",
+      "{",
+      "\t$0",
+      "\treturn 0;",
+      "}"
+    ],
+    "description": "main function with arguments"
+  },
+  "main (void)": {
+    "prefix": "mainv",
+    "body": [
+      "int main(void)",
+      "{",
+      "\t$0",
+      "\treturn 0;",
+      "}"
+    ],
+    "description": "main function without arguments"
+  },
+  "function": {
+    "prefix": "func",
+    "body": [
+      "${1:void} ${2:name}(${3:void})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "function definition"
+  },
+  "for": {
+    "prefix": "for",
+    "body": [
+      "for (size_t ${1:i} = 0; $1 < ${2:count}; $1++)",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "for loop counting up"
+  },
+  "for (reverse)": {
+    "prefix": "forr",
+    "body": [
+      "for (size_t ${1:i} = ${2:count}; $1-- > 0;)",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "for loop counting down"
+  },
+  "while": {
+    "prefix": "while",
+    "body": [
+      "while (${1:condition})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "while loop"
+  },
+  "do while": {
+    "prefix": "do",
+    "body": [
+      "do",
+      "{",
+      "\t$0",
+      "} while (${1:condition});"
+    ],
+    "description": "do ... while loop"
+  },
+  "if": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "if statement"
+  },
+  "if else": {
+    "prefix": "ifelse",
+    "body": [
+      "if (${1:condition})",
+      "{",
+      "\t$2",
+      "}",
+      "else",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "if / else"
+  },
+  "else if": {
+    "prefix": "elseif",
+    "body": [
+      "else if (${1:condition})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "else if clause"
+  },
+  "else": {
+    "prefix": "else",
+    "body": [
+      "else",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "else clause"
+  },
+  "switch": {
+    "prefix": "switch",
+    "body": [
+      "switch (${1:expression})",
+      "{",
+      "case ${2:value}:",
+      "\t$0",
+      "\tbreak;",
+      "default:",
+      "\tbreak;",
+      "}"
+    ],
+    "description": "switch statement"
+  },
+  "case": {
+    "prefix": "case",
+    "body": [
+      "case ${1:value}:",
+      "\t$0",
+      "\tbreak;"
+    ],
+    "description": "case label"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:name}",
+      "{",
+      "\t$0",
+      "};"
+    ],
+    "description": "struct definition"
+  },
+  "typedef struct": {
+    "prefix": "tstruct",
+    "body": [
+      "typedef struct ${1:name}",
+      "{",
+      "\t$0",
+      "} ${2:$1};"
+    ],
+    "description": "typedef of a struct"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:name}",
+      "{",
+      "\t$0",
+      "};"
+    ],
+    "description": "enum definition"
+  },
+  "union": {
+    "prefix": "union",
+    "body": [
+      "union ${1:name}",
+      "{",
+      "\t$0",
+      "};"
+    ],
+    "description": "union definition"
+  },
+  "typedef": {
+    "prefix": "typedef",
+    "body": [
+      "typedef ${1:type} ${0:name};"
+    ],
+    "description": "typedef"
+  },
+  "#include \"\"": {
+    "prefix": "include",
+    "body": [
+      "#include \"${1:header}.h\"$0"
+    ],
+    "description": "#include of a project header"
+  },
+  "#include <>": {
+    "prefix": "includes",
+    "body": [
+      "#include <${1:stdio}.h>$0"
+    ],
+    "description": "#include of a system header"
+  },
+  "#define": {
+    "prefix": "define",
+    "body": [
+      "#define ${1:NAME} ${0:value}"
+    ],
+    "description": "#define"
+  },
+  "#ifdef": {
+    "prefix": "ifdef",
+    "body": [
+      "#ifdef ${1:MACRO}",
+      "$0",
+      "#endif /* $1 */"
+    ],
+    "description": "#ifdef ... #endif"
+  },
+  "#ifndef": {
+    "prefix": "ifndef",
+    "body": [
+      "#ifndef ${1:MACRO}",
+      "$0",
+      "#endif /* $1 */"
+    ],
+    "description": "#ifndef ... #endif"
+  },
+  "#if 0": {
+    "prefix": "if0",
+    "body": [
+      "#if 0",
+      "${0:$TM_SELECTED_TEXT}",
+      "#endif"
+    ],
+    "description": "#if 0 ... #endif: leave code out of the build"
+  },
+  "header guard": {
+    "prefix": "guard",
+    "body": [
+      "#ifndef ${1:${TM_FILENAME_BASE/(.*)/${1:/upcase}/}_H}",
+      "#define $1",
+      "",
+      "$0",
+      "",
+      "#endif /* $1 */"
+    ],
+    "description": "include guard named after the file"
+  },
+  "extern \"C\" guard": {
+    "prefix": "externc",
+    "body": [
+      "#ifdef __cplusplus",
+      "extern \"C\" {",
+      "#endif",
+      "",
+      "$0",
+      "",
+      "#ifdef __cplusplus",
+      "}",
+      "#endif"
+    ],
+    "description": "extern \"C\" block for a header used from C++"
+  },
+  "printf": {
+    "prefix": "printf",
+    "body": [
+      "printf(\"${1:%d}\\n\"${2:, ${3:value}});$0"
+    ],
+    "description": "printf with a newline"
+  },
+  "fprintf (stderr)": {
+    "prefix": "eprintf",
+    "body": [
+      "fprintf(stderr, \"${1:%s}\\n\"${2:, ${3:message}});$0"
+    ],
+    "description": "fprintf to stderr with a newline"
+  },
+  "malloc": {
+    "prefix": "malloc",
+    "body": [
+      "${1:int} *${2:p} = malloc(${3:count} * sizeof *$2);",
+      "if (!$2)",
+      "{",
+      "\t${0:return -1;}",
+      "}"
+    ],
+    "description": "malloc with a null check"
+  }
+}

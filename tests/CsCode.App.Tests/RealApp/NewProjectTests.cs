@@ -5,12 +5,15 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using CsCode.App.Menus;
+using CsCode.App.Notifications;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.App.Views;
+using CsCode.Core.Build;
 using CsCode.Core.Debugging;
 using CsCode.Core.Platform;
 using CsCode.Core.Projects;
+using CsCode.Core.Python;
 using CsCode.Dap.Adapters;
 using CsCode.Panels.NewProject;
 using CsCode.Panels.NewProject.ViewModels;
@@ -25,7 +28,7 @@ namespace CsCode.App.Tests.RealApp;
 /// The New Project page in the REAL application (<see cref="RealAppHost"/>: every real module, <c>CSCODE_HOME</c> in a temp directory, headless
 /// window): File ▸ New ▸ Project…, the palette command and the Welcome page's link open it; for each installed toolchain a project made on the page
 /// opens in the window with its main file, and F5 (its generated launch.json and tasks.json) builds it and stops at a breakpoint in that file,
-/// wherever that language's debugger is on main (CodeLLDB for Rust, C and C++; netcoredbg for C#). Each case skips with its reason when its
+/// wherever that language's debugger is on main (CodeLLDB for Rust, C, C++ and Zig; netcoredbg for C#; js-debug for JavaScript and TypeScript; debugpy for Python). Each case skips with its reason when its
 /// tool or debugger is missing.
 /// </summary>
 public class NewProjectTests
@@ -106,7 +109,7 @@ public class NewProjectTests
         return null;
     }
 
-    public static TheoryData<string> Generators => ["rust", "cmake-c", "cmake-cpp", "dotnet", "node-js", "python", "empty", "static-site"];
+    public static TheoryData<string> Generators => ["rust", "cmake-c", "cmake-cpp", "zig", "dotnet", "node-js", "node-ts", "python", "empty", "static-site"];
 
     [AvaloniaTheory(Timeout = 600_000)]
     [MemberData(nameof(Generators))]
@@ -115,6 +118,7 @@ public class NewProjectTests
         var codelldb = ScratchTool("codelldb", CodeLldbToolchain.PinnedVersion, "extension", "adapter", "codelldb");
         var netcoredbg = ScratchTool("netcoredbg", "netcoredbg");
         var jsDebug = ScratchTool("js-debug", "v1.140.0", "js-debug", "src", "dapDebugServer.js");
+        var debugpy = ScratchTool("debugpy", DebugpyInstaller.Version, "debugpy", "adapter", "__main__.py");
         await using var host = RealAppHost.Create(h =>
         {
             var settingsPath = h.Home.Combine("config", "settings.json");
@@ -122,6 +126,7 @@ public class NewProjectTests
             if (codelldb is not null) settings[CodeLldbAdapterFactory.SettingPath] = codelldb;
             if (netcoredbg is not null) settings[NetCoreDbgAdapterFactory.SettingPath] = netcoredbg;
             if (jsDebug is not null) settings[JsDebugAdapterFactory.SettingPath] = jsDebug;
+            if (debugpy is not null) settings[DebugpyAdapterFactory.SettingPath] = Path.GetDirectoryName(debugpy);
             File.WriteAllText(settingsPath, settings.ToJsonString());
         });
         await host.StartAsync();
@@ -131,12 +136,14 @@ public class NewProjectTests
         Assert.True(await RealAppHost.WaitFor(() => vm.Initialized.IsCompleted, 60_000), "the tool checks answered");
         var item = vm.Generators.Single(g => g.Id == generatorId);
         Assert.SkipUnless(item.IsAvailable, $"{item.DisplayName}: {item.ToolSummary}. {item.InstallHint}");
+        Assert.SkipWhen(generatorId == "node-ts" && Environment.GetEnvironmentVariable("CSCODE_TEST_DOWNLOADS") != "1",
+            "typescript and @types/node download from the npm registry; set CSCODE_TEST_DOWNLOADS=1 to run it (only with the user's go-ahead)");
 
         // The user picks the generator, a folder (the physical path: netcoredbg matches breakpoints to the PDB's path, which has no /var link) and a name.
         vm.SelectedGenerator = item;
         Assert.True(await RealAppHost.WaitFor(() => vm.OptionsLoaded.IsCompleted, 60_000), "the options loaded");
         vm.Location = TempDirectory.PhysicalPath(host.Files.Path);
-        vm.Name = generatorId switch { "dotnet" => "HelloApp", "node-js" => "hello-app", _ => "hello_app" };
+        vm.Name = generatorId switch { "dotnet" => "HelloApp", "node-js" or "node-ts" => "hello-app", _ => "hello_app" };
         foreach (var option in vm.Options)
             switch (generatorId, option.Id)
             {
@@ -157,21 +164,36 @@ public class NewProjectTests
         Assert.True(Directory.Exists(Path.Combine(target, ".git")), "the Git repository");
         Assert.True(File.Exists(Path.Combine(target, "README.md")), "the README");
 
+        // What runs once it opened: a Python project's .venv becomes its folder's interpreter.
+        await vm.FollowedUp.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+        if (generatorId == PythonProjectGenerator.GeneratorId)
+            Assert.Equal(Path.Combine(target, PythonProjectGenerator.VenvInterpreter),
+                (await host.Get<IPythonEnvironmentService>().GetActiveAsync(workspace.Folders[0], TestContext.Current.CancellationToken))?.Executable);
+        // ... and a C or C++ project is configured with its debug preset, without CMake asking whether to configure or which preset.
+        if (generatorId is CMakeProjectGenerator.CId or CMakeProjectGenerator.CppId)
+        {
+            var cmake = host.Get<ICMakeService>().ProjectFor(target);
+            Assert.Equal((CMakeProjectState.Configured, CMakeProjectGenerator.DebugPreset), (cmake?.State, cmake?.ConfigurePreset));
+            Assert.DoesNotContain(host.Get<NotificationCenter>().History, n => n.Message.Contains("Configure the CMake project", StringComparison.Ordinal));
+        }
+
         // F5 where the language's debugger is on main.
         var debugger = generatorId switch
         {
-            "rust" or "cmake-c" or "cmake-cpp" => codelldb is null ? "CodeLLDB is not in .scratch/tools (tools/fetch-codelldb.sh)" : null,
+            "rust" or "cmake-c" or "cmake-cpp" or "zig" => codelldb is null ? "CodeLLDB is not in .scratch/tools (tools/fetch-codelldb.sh)" : null,
             "dotnet" => netcoredbg is null ? "netcoredbg is not in .scratch/tools" : null,
-            "node-js" => jsDebug is null ? "js-debug is not in .scratch/tools" : null,
-            "python" => "debugpy arrives with the Python stage",
+            "node-js" or "node-ts" => jsDebug is null ? "js-debug is not in .scratch/tools" : null,
+            "python" => debugpy is null ? "debugpy is not in .scratch/tools (tools/fetch-debugpy.sh)" : null,
             _ => "an empty project has nothing to debug",
         };
-        if (generatorId is "python" or "empty" or "static-site") return; // the project made and opened is what this case checks
+        if (generatorId is "empty" or "static-site") return; // the project made and opened is what this case checks
         Assert.SkipWhen(debugger is not null, "F5 not checked: " + debugger);
         var debug = host.Get<IDebugService>();
         var lines = await File.ReadAllLinesAsync(main.LocalPath, TestContext.Current.CancellationToken);
         var line = Array.FindIndex(lines, l => l.Contains("println!", StringComparison.Ordinal) || l.Contains("puts(", StringComparison.Ordinal)
-            || l.Contains("std::cout", StringComparison.Ordinal) || l.Contains("Console.WriteLine", StringComparison.Ordinal) || l.Contains("console.log", StringComparison.Ordinal));
+            || l.Contains("std::cout", StringComparison.Ordinal) || l.Contains("std.debug.print(", StringComparison.Ordinal)
+            || l.Contains("Console.WriteLine", StringComparison.Ordinal) || l.Contains("console.log", StringComparison.Ordinal)
+            || l.TrimStart().StartsWith("print(", StringComparison.Ordinal));
         Assert.True(line >= 0, "the print line of " + main.LocalPath);
         debug.Breakpoints.Add(main, line);
         Assert.True(await RealAppHost.WaitFor(() => debug.Configurations.Selected is not null, 20_000), "launch.json read");

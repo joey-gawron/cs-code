@@ -37,7 +37,9 @@ Every command is in the palette under "Test:" (Ctrl+Shift+P). In the editor, the
 on a click and offers Run Test / Debug Test / Reveal in Test Explorer on right-click, and the "Run Test | Debug Test" code lens above it
 (`TestCodeLensProvider`, the same tests as the glyphs, through the editor's code lens: docs/EDITOR.md §7e; refreshed only when the
 tests of a file or their lines change, `TestGutterProvider.TestsChanged`, not on every result during a run) runs or debugs it
-(`testing.codeLens.run` / `testing.codeLens.debug` with the test's id). In the explorer: the toolbar's Run All, Run (the
+(`testing.codeLens.run` / `testing.codeLens.debug` with the test's id). Above a group of tests a provider scans (`ITestProvider.ScanGroups`;
+today the C++ provider's fixture classes and doctest suites) "Run All Tests | Debug All Tests" run the group's known tests
+(`testing.codeLens.runAll` / `testing.codeLens.debugAll` with their ids). In the explorer: the toolbar's Run All, Run (the
 selected node, else everything), Debug, Rerun Failed and Cancel; double-click or Enter opens a test's source; the context menu has Run, Debug,
 Go to Test, Go to Failure, Copy Name, Copy Message.
 
@@ -140,7 +142,9 @@ Linux install; GDB comes from the system).
 * **Discovery** configures the project when it never was, then reads `ctest --test-dir <build> --show-only=json-v1 [-C <config>]`
   (`CTestJson`): a test's id is its CTest name, its label carries its `LABELS`, it is grouped under the target whose executable it runs, and
   its location is the `add_test` line its backtrace names, so the glyphs sit in CMakeLists.txt (the source scan finds `add_test(NAME …)`). A
-  `DISABLED` test is shown skipped. A new configure (a saved CMakeLists.txt, another preset) re-discovers the project.
+  `DISABLED` test is shown skipped. A new configure (a saved CMakeLists.txt, another preset) re-discovers the project. ctest leaves a test's
+  command out while its executable is not built (right after the first configure): discovery then builds the project once, as cargo's
+  discovery builds its tests, and lists again, so each test sits under its executable from the start.
 * **Run.** The targets whose executables the requested tests run are built through the CMake integration (all targets when a test runs
   something else), then `ctest --test-dir <build> --output-on-failure --no-tests=ignore --output-junit <tmp> [-C <config>] [-R '^(a|b)$']`.
   Passes are reported as their console lines arrive; the JUnit file (CTest 3.21+, checked with `ctest --version`) gives the failures' output
@@ -148,23 +152,28 @@ Linux install; GDB comes from the system).
 * **Debug.** One test: its command from the JSON (program and arguments) under the C debugger (`cscode.cmake.debugger`: CodeLLDB on macOS,
   GDB elsewhere, `lldb-dap` on request) in its `WORKING_DIRECTORY` (default: the build directory of the CMakeLists.txt that added it), with its
   `ENVIRONMENT`; the result is the program's exit code.
+* **Off:** `cscode.testing.ctest.enabled: false` (on by default). The C++ provider then lists the executables CTest would have covered.
 
 ### C++ (`CppTestProvider`)
 
 GoogleTest, Catch2 and doctest executables, each a project. Full description in [C-CPP.md](C-CPP.md) section 10; in short:
 
 * **Detection.** Files matching `cscode.testing.cpp.executables` (else C++ TestMate's `testMate.cpp.test.executables`, else test-named files
-  under `build/` or `out/`) that are native executables carrying a framework's signature in their bytes (never run to be classified).
+  under `build/` or `out/`) that are native executables carrying a framework's signature in their bytes (never run to be classified), and the
+  executable targets of the folder's CMake projects (the integration's File API targets) that link GoogleTest or Catch2, listed before they are
+  built, or carry a signature once built. The provider's `ProjectsChanged` fires after a configure with new targets and after every build:
+  the explorer then detects the C++ projects again (cached listings keep that cheap).
 * **Discovery.** The framework's listing (GoogleTest's JSON listing, Catch2's and doctest's XML), with file and line; bounded (20 s, 16 MB),
   cached by the executable's size and modification time (listed again only after a rebuild). Ids are `<executable>/<runner name>`.
-* **Run.** The executable in its directory with the framework's filter; GoogleTest's console as it comes plus its JSON, Catch2's and doctest's
+* **Run.** A CMake target is built first through the CMake integration (`cmake.buildBeforeRun`); a failed build runs nothing. Then the
+  executable in its directory with the framework's filter; GoogleTest's console as it comes plus its JSON, Catch2's and doctest's
   XML report; a crash fails the test that was running. A disabled / hidden / skipped test runs when chosen by itself.
 * **Debug.** The same command under `cscode.testing.cpp.debugger` (empty: CTest's `cscode.cmake.debugger`; CodeLLDB on macOS, GDB
   elsewhere, or lldb-dap), stopping at a failed assertion (`cscode.testing.cpp.breakOnFailure`); results read when the session ends.
 * **Beside CTest.** An executable whose tests CTest lists one by one (`gtest_discover_tests`, `catch_discover_tests`,
   `doctest_discover_tests`, `gtest_add_tests`, read from `ctest --show-only=json-v1`) is left to the CTest provider while it is on, so no test
-  is listed twice; one CTest runs whole stays here.
-* Building first and discovery through the CMake File API are open (C-CPP.md section 15): build, then Refresh.
+  is listed twice; one CTest runs whole stays here. Before a build, CTest's `<target>_NOT_BUILT` placeholders count too.
+* **Lenses.** "Run All Tests | Debug All Tests" above a GoogleTest fixture class, a Catch2 / doctest fixture class and a doctest suite.
 
 ### Zig (`ZigTestProvider`, lang-6)
 
@@ -184,6 +193,10 @@ GoogleTest, Catch2 and doctest executables, each a project. Full description in 
   running per project, then get their results; tests a run did not report go back to "not run" (with the run's error, if any). A request that
   covers a whole project runs it unfiltered. Debug runs debug one project (the first). Cancel kills the tool's process tree, or stops the debug
   session. Rerun Failed takes the tests whose last result is failed; Repeat Last Run repeats the last request (run or debug as asked).
+* **A provider's projects changed** (`ITestProvider.ProjectsChanged`, none by default; the C++ provider's after a CMake configure or build):
+  `TestController.RedetectAsync` detects that provider's projects again in every folder and discovers each; projects it no longer finds leave
+  the tree, new ones join it, other providers' are untouched. While a run or a full discovery is going it waits for its end (a run's results
+  would land on replaced nodes). Nothing happens before the first discovery.
 * **Threading.** The tree is owned by the UI thread. Providers run on the thread pool and report through a sink that queues events and posts one
   flush at a time to the UI thread (at background priority); a flush applies every queued event, re-aggregates each affected group once
   (deepest first) and raises one change. A run of 500 tests reports to the UI in a handful of batches (asserted: under 100 change notifications
@@ -277,8 +290,8 @@ then Continue and the result comes back from the session — under CodeLLDB on m
 
 ## Known gaps / next steps
 
-* **Code lens.** "Run Test | Debug Test" only: no "Run All Tests" lens above a test class and no result in the lens text (the glyph shows the
-  result). rust-analyzer's own Run/Debug lenses show only on binaries and examples (its server extension drops them on tests in favour of these: docs/RUST.md).
+* **Code lens.** "Run All Tests" sits above C++ fixtures and doctest suites only: the other providers report no groups yet (a .NET test class
+  would be the next); no result in the lens text (the glyph shows the result). rust-analyzer's own Run/Debug lenses show only on binaries and examples (its server extension drops them on tests in favour of these: docs/RUST.md).
 * **Microsoft.Testing.Platform projects** (MSTest runner, NUnit runner, TUnit) and **F# / VB** test projects are handled since stage 5
   (C#): listing with `--list-tests json`, runs with `--filter-uid` and `--report-trx`, debugging by launching the test executable (no TRX: it
   moves the tests into a child host), F# discovery through the runner's listing. Details and what was checked: [CSHARP.md](CSHARP.md) §5.

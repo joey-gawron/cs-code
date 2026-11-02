@@ -91,7 +91,8 @@ public sealed class CMakeHostTests
         Assert.Contains(s.Status.Items, i => i.Id == "cmake.build" && i.CommandId == CMakeHost.Build);
         Assert.DoesNotContain(s.Status.Items, i => i.Id == "cmake.launchTarget"); // no target known before a configure
         foreach (var id in new[] { CMakeHost.Configure, CMakeHost.Build, CMakeHost.Clean, CMakeHost.SelectConfigurePreset, CMakeHost.SelectBuildPreset,
-            CMakeHost.SelectBuildType, CMakeHost.SelectLaunchTarget, CMakeHost.RunTarget, CMakeHost.DebugTarget, CMakeHost.LaunchTargetPath })
+            CMakeHost.SelectBuildType, CMakeHost.SelectLaunchTarget, CMakeHost.RunTarget, CMakeHost.DebugTarget, CMakeHost.LaunchTargetPath,
+            CFileCommands.BuildAndRunFile, CFileCommands.CreateCompileFlags })
             Assert.True(s.Commands.Has(id), id);
 
         var configured = await s.Commands.ExecuteAsync(CMakeHost.Configure);

@@ -15,6 +15,8 @@ public sealed class CMakeProjectGenerator(IToolRunner runner, bool cpp) : Genera
 {
     public const string CId = "cmake-c";
     public const string CppId = "cmake-cpp";
+    /// <summary>The configure preset the tasks, launch.json and New Project's first configure use.</summary>
+    public const string DebugPreset = "debug";
     public const string StandardOption = "standard";
     public const string KindOption = "kind";
     public const string TestsOption = "tests";

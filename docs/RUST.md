@@ -180,7 +180,48 @@ its type hints then come without locations, and resolving `: Vec<i32>` gives the
 (`RealRustAnalyzerTests.Inlay_hints_resolve_their_type_parts_to_the_types_definition`). In the editor a hint resolves when the pointer rests on
 it (its tooltip then shows) and Ctrl/⌘+click on a part goes to its location (docs/EDITOR.md).
 
-## 6. Deferred to after stage 1 (Python) merges
+## 6. Snippets (MUST 5)
 
-* **Rust snippets** (MUST 5): they go in stage 1's bundled-snippets mechanism, which is not on this branch.
-* **`codeActionsOnSave` with rust-analyzer** (SHOULD): checking organize imports needs stage 1's participant.
+`src/CsCode.Editor/Snippets/Builtin/rust.json`, in stage 1's bundled-snippets mechanism ([PYTHON.md](PYTHON.md) §6): 56 snippets, written for
+CsCode, standard library only.
+
+| Kind | Prefixes |
+|---|---|
+| Items | `fn`, `fnr` (with a return type), `pfn`, `afn`, `main`, `mainr` (returns `Result`), `new`, `struct`, `tstruct`, `enum`, `impl`, `implt`, `trait`, `mod`, `macro`, `const`, `static` |
+| Trait implementations | `display`, `default`, `from`, `iterator`, `drop`, `errortype` (an error enum with `Display` and `std::error::Error`) |
+| Attributes | `derive`, `allow`, `cfg` |
+| Tests | `test`, `tests` (a `#[cfg(test)]` module), `testpanic` (`#[should_panic]`), `docex` (a doc-comment example, which is a doc-test) |
+| Control flow | `if`, `ifelse`, `iflet`, `letelse`, `match`, `matcho` (`Option`), `matchr` (`Result`), `while`, `whilelet`, `loop`, `for`, `forr` (a range), `fore` (`enumerate`) |
+| Bindings and blocks | `let`, `letm`, `closure`, `unsafe` (with its `// SAFETY:` comment) |
+| Macros | `println`, `printd` (`{:?}` of a value, its name mirrored), `eprintln`, `format`, `vec`, `hashmap`, `assert`, `asserteq`, `spawn` |
+
+Bodies indent with tabs, which the editor turns into the file's indentation (four spaces for Rust), so an expanded snippet is already as
+rustfmt lays it out. rust-analyzer adds its own snippet and postfix completions; both show in the suggest list. A user snippet with the same
+prefix (or name) replaces CsCode's. Tests: `BundledSnippetTests` (every body parses, one snippet per prefix) and `RustSnippetTests` (the set
+is Rust's; `tests` and `printd` expand to rustfmt's layout).
+
+## 7. Organize imports on save (SHOULD)
+
+Checked through stage 1's `editor.codeActionsOnSave` participant with rust-analyzer 1.96.1 (2026-11-02):
+
+* **rust-analyzer has no organize-imports action.** Its `codeActionKinds` are `""`, `quickfix`, `refactor`, `refactor.extract`,
+  `refactor.inline` and `refactor.rewrite`. Asked for `only: ["source.organizeImports"]`, it answers with its unused-import quick fixes anyway
+  ("remove the whole `use` item", kind `quickfix`).
+* **The participant keeps only actions of the kind it asked for**, as VS Code does. So `"source.organizeImports": "explicit"` changes
+  nothing in a Rust file, and no import is removed behind the user's back.
+* **Sorting comes from rustfmt.** With `"editor.formatOnSave": true`, rust-analyzer's formatting runs rustfmt, whose `reorder_imports` (on by
+  default) sorts each group of `use` lines. Unused imports stay. To remove them, use the quick fix "Remove all unused imports" on a `use` line
+  (Ctrl+. / ⌘.); "Merge imports" is there too.
+
+So for Rust, `"[rust]": { "editor.formatOnSave": true }` is what organizes imports on save.
+
+Seen in the real app: `RealAppRustStageTests.Organize_imports_on_save_is_rustfmts_import_order_and_applies_none_of_rust_analyzers_quick_fixes`
+saves a `lib.rs` with three unsorted imports, two of them unused, under `codeActionsOnSave` `source.organizeImports` and `formatOnSave`. A
+recording provider shows the save asked for `source.organizeImports`. rust-analyzer offered its two quick fixes, and the saved file is
+rustfmt's: the imports sorted, both unused ones kept, the function reflowed. Frame: `.scratch/screenshots/rust-organize-imports-on-save.png`.
+If rust-analyzer gains `source.organizeImports`, the test fails at its first assertion, and this section needs updating.
+
+## 8. Not done
+
+The brief's STRETCH items: Cargo.toml dependency versions from the crates.io sparse index (that needs network approval) and a
+`rust-analyzer.cargo.features` quick pick.

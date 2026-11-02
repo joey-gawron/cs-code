@@ -12,7 +12,8 @@ namespace CsCode.Dap.Tests;
 /// The Zig debugging matrix (docs/ZIG.md) against the REAL debuggers through the real <see cref="CsCode.Dap.Service.DebugService"/>: a Zig
 /// program built by the real zig (<c>zig build-exe</c>, Debug), debugged under CodeLLDB (<c>lldb</c>, the default on macOS) and lldb-dap, each
 /// started by its built-in factory with the configuration a <c>build.zig</c> folder gets (Zig's and CsCode's formatters loaded through
-/// <c>initCommands</c>). Rows: slices, optionals, error unions, tagged unions, a generic function in the call stack, threads, a panic. Skips with
+/// <c>initCommands</c>). Rows: slices, optionals, error unions, tagged unions, a generic function in the call stack, threads, a panic, and stage 2's native
+/// windows (disassembly and an instruction step, memory, registers, a data breakpoint). Skips with
 /// its reason without zig (tools/fetch-zig.sh), CodeLLDB (tools/fetch-codelldb.sh), lldb-dap or (macOS) Developer Mode. Values a user reads are
 /// asserted; the rest is reported as evidence (<c>CSCODE_DAP_TEST_METRICS=&lt;file&gt;</c>).
 /// </summary>
@@ -223,6 +224,92 @@ public class RealZigDebuggingTests
         var watch = await loc.Session.EvaluateAsync("some", loc.FrameId, "watch", Ct);
         Note(type, $"watch 'some' = {watch.Result}; 'numbers' = {(await loc.Session.EvaluateAsync("numbers", loc.FrameId, "watch", Ct)).Result}");
         Assert.Equal("42", watch.Result);
+        await rig.EndAsync();
+    }
+
+    // ------------------------------------------------------------------ the native windows (stage 2's Disassembly, Memory, Registers, data breakpoints)
+
+    [Theory]
+    [MemberData(nameof(Debuggers))]
+    public async Task The_disassembly_around_the_instruction_pointer_has_zig_source_lines_and_an_instruction_step_moves_it(string type)
+    {
+        await using var rig = await RigAsync(type);
+        rig.H.Breakpoints.Add(rig.MainUri, Line("values"));
+        await rig.H.StartAsync(rig.Config());
+        var loc = await rig.WaitForStopAsync(1);
+        var session = (DebugSession)loc.Session;
+        IDebugSessionNative native = session;
+        Assert.True(session.Capabilities.SupportsDisassemble && native.SupportsSteppingGranularity);
+        var frames = await session.GetStackTraceAsync(loc.ThreadId, 0, 2, Ct);
+        var ip = frames[0].InstructionPointerReference;
+        Assert.True(DebugAddress.TryParse(ip, out var pc), ip);
+        // the Disassembly window's first page: 64 instructions each side of the instruction pointer
+        var page = await native.DisassembleAsync(ip!, 0, -64, 128, Ct);
+        var at = page.ToList().FindIndex(i => i.Address == pc);
+        Note(type, $"disassembly: ip {ip}; {page.Count} instructions, pc at {at}; " + string.Join(" | ", page.Skip(Math.Max(0, at - 2)).Take(4)
+            .Select(i => $"{i.AddressText} {i.Instruction} ({i.Symbol}) {i.Location?.Name}:{i.Line + 1}")));
+        Assert.True(at >= 0, "the instruction pointer is on the page");
+        Assert.Contains(page, i => i.Location?.Path?.EndsWith("main.zig", StringComparison.Ordinal) == true && i.Line == Line("values"));
+
+        await native.StepAsync(DebugStepAction.Over, loc.ThreadId, instruction: true, Ct);
+        await SessionHarness.Eventually(() => rig.H.Service.StopLocation is { Session.State: DebugSessionState.Stopped } l && !ReferenceEquals(l, loc), 30_000, "the step's stop");
+        var after = await session.GetStackTraceAsync(loc.ThreadId, 0, 1, Ct);
+        Assert.True(DebugAddress.TryParse(after[0].InstructionPointerReference, out var next));
+        Note(type, $"one instruction step: {DebugAddress.Format(pc)} -> {DebugAddress.Format(next)} (line {after[0].Line + 1})");
+        Assert.True(next > pc && next - pc <= 16, $"{DebugAddress.Format(pc)} -> {DebugAddress.Format(next)}"); // the next instruction, not the next line's
+        await rig.EndAsync();
+    }
+
+    [Theory]
+    [MemberData(nameof(Debuggers))]
+    public async Task A_slices_elements_read_from_memory_and_the_registers_are_a_scope(string type)
+    {
+        await using var rig = await RigAsync(type);
+        rig.H.Breakpoints.Add(rig.MainUri, Line("values"));
+        await rig.H.StartAsync(rig.Config());
+        var loc = await rig.WaitForStopAsync(1);
+        IDebugSessionNative native = (DebugSession)loc.Session;
+        var locals = await rig.LocalsAsync();
+        var elements = await loc.Session.GetVariablesAsync(locals["numbers"].VariablesReference, ct: Ct);
+        var first = elements.First(e => e.Name == "[0]");
+        Note(type, $"numbers[0] = {first.Value} (memoryReference {first.MemoryReference})");
+        // View Binary Data on an element opens the Memory window at it (both debuggers give the formatted elements their addresses)
+        Assert.NotNull(first.MemoryReference);
+        var address = first.MemoryReference!;
+        var block = await native.ReadMemoryAsync(address, 0, 12, Ct);
+        Assert.Equal([2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0], block.Data.ToArray()); // numbers[1..] of { 1, 2, 3, 4 } (i32, little-endian)
+
+        var scopes = await loc.Session.GetScopesAsync(loc.FrameId, Ct);
+        var registers = scopes.Where(s => s.VariablesReference > 0 && (s.PresentationHint == "registers" || s.Name.Contains("regist", StringComparison.OrdinalIgnoreCase))).ToList();
+        Note(type, "scopes: " + string.Join(", ", scopes.Select(s => $"{s.Name}({s.PresentationHint})")));
+        Assert.NotEmpty(registers); // the Registers window's rule (RegistersViewModel.ForRegisters)
+        Assert.NotEmpty(await loc.Session.GetVariablesAsync(registers[0].VariablesReference, ct: Ct));
+        await rig.EndAsync();
+    }
+
+    [Theory]
+    [MemberData(nameof(Debuggers))]
+    public async Task A_data_breakpoint_on_a_local_stops_when_its_value_changes(string type)
+    {
+        await using var rig = await RigAsync(type);
+        rig.H.Breakpoints.Add(rig.MainUri, Line("values"));
+        await rig.H.StartAsync(rig.Config());
+        var loc = await rig.WaitForStopAsync(1);
+        var session = (DebugSession)loc.Session;
+        IDebugSessionNative native = session;
+        rig.H.Breakpoints.RemoveAll(); // only the data breakpoint stops from here on
+        var scope = (await session.GetScopesAsync(loc.FrameId, Ct)).First(s => s.PresentationHint is "locals" || s.Name is "Local" or "Locals");
+        var info = await native.GetDataBreakpointInfoAsync(scope.VariablesReference, "n", null, Ct);
+        Note(type, $"dataBreakpointInfo n: id {info.DataId}, '{info.Description}', access [{string.Join(", ", info.AccessTypes)}]");
+        Assert.NotNull(info.DataId);
+        var bp = rig.H.Breakpoints.AddData(info.DataId!, info.Description, session.Id, info.CanPersist);
+        await SessionHarness.Eventually(() => rig.H.Breakpoints.GetStatus(bp.Id) is { Verified: true }, 20_000, "the data breakpoint verified");
+        await session.ContinueAsync(ct: Ct);
+        var now = await rig.WaitForStopAsync(2);
+        var n = (await session.EvaluateAsync("n", now.FrameId, "watch", Ct)).Result;
+        Note(type, $"stopped ({now.Reason}) at line {now.Line + 1}; n = {n}");
+        Assert.Equal("3", n); // numbers.len, the first value written
+        Assert.InRange(now.Line, Line("values"), Line("values") + 1); // on the write, or the line after it
         await rig.EndAsync();
     }
 

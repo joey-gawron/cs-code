@@ -243,7 +243,7 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             {
                 // StreamJsonRpc sends $/cancelRequest on cancellation but only completes the local task once the server answers:
                 // WaitAsync is what actually bounds the wait for a server that never does.
-                var call = rpc.InvokeWithParameterObjectAsync<JsonElement>(P.LspMethods.Initialize, initParams, initCts.Token);
+                var call = rpc.InvokeWithParameterObjectAsync<JsonElement>(P.LspMethods.Initialize, WithExtension(initParams), initCts.Token);
                 ObserveAbandoned(call);
                 raw = await call.WaitAsync(initCts.Token).ConfigureAwait(false);
             }
@@ -319,21 +319,37 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             RootPath = rootPath,
             RootUri = RootUri is null ? null : LspMapper.ToUriString(RootUri),
             InitializationOptions = LaunchVariables.Expand(Definition.InitializationOptions, RootFolder),
-            Capabilities = WithExperimental(ClientCapabilitiesFactory.Create(s.AutoPositionEncoding)),
+            Capabilities = ClientCapabilitiesFactory.Create(s.AutoPositionEncoding),
             Trace = s.Trace switch { LspTraceMode.Verbose => P.TraceValues.Verbose, LspTraceMode.Messages => P.TraceValues.Messages, _ => P.TraceValues.Off },
             WorkspaceFolders = WorkspaceFolders.Select(f => new P.WorkspaceFolder { Uri = LspMapper.ToUriString(f), Name = FolderName(f) }).ToArray(),
         };
     }
 
-    /// <summary>The extension's experimental client capabilities (rust-analyzer's hoverActions, serverStatusNotification…), when one applies.</summary>
-    private P.ClientCapabilities WithExperimental(P.ClientCapabilities capabilities)
+    /// <summary>
+    /// The <c>initialize</c> params with the extension's additions, when one applies: its experimental capabilities (rust-analyzer's
+    /// hoverActions, serverStatusNotification…), its other client capabilities and its initialization options (clangd's
+    /// inactiveRegionsCapabilities and clangdFileStatus). The protocol model has no members for the last two, so the params then go as JSON.
+    /// </summary>
+    private object WithExtension(P.InitializeParams initParams)
     {
-        if (Extension is not { } extension) return capabilities;
-        var experimental = capabilities.Experimental is { ValueKind: JsonValueKind.Object } e
-            ? System.Text.Json.Nodes.JsonNode.Parse(e.GetRawText())!.AsObject()
-            : new System.Text.Json.Nodes.JsonObject();
+        if (Extension is not { } extension) return initParams;
+        var node = JsonSerializer.SerializeToNode(initParams, P.LspJson.Options)!.AsObject();
+        if (node["capabilities"] is not System.Text.Json.Nodes.JsonObject capabilities) node["capabilities"] = capabilities = [];
+        if (capabilities["experimental"] is not System.Text.Json.Nodes.JsonObject experimental) capabilities["experimental"] = experimental = [];
         RunExtension("AddExperimentalCapabilities", () => extension.Extension.AddExperimentalCapabilities(experimental), extension.Extension);
-        return capabilities with { Experimental = JsonSerializer.SerializeToElement(experimental) };
+        RunExtension("AddClientCapabilities", () => extension.Extension.AddClientCapabilities(capabilities), extension.Extension);
+        switch (node["initializationOptions"])
+        {
+            case System.Text.Json.Nodes.JsonObject options:
+                RunExtension("AddInitializationOptions", () => extension.Extension.AddInitializationOptions(options), extension.Extension);
+                break;
+            case null:
+                var added = new System.Text.Json.Nodes.JsonObject();
+                RunExtension("AddInitializationOptions", () => extension.Extension.AddInitializationOptions(added), extension.Extension);
+                if (added.Count > 0) node["initializationOptions"] = added;
+                break;
+        }
+        return JsonSerializer.SerializeToElement(node);
     }
 
     /// <summary>Creates this session's extension view and lets the extension add its notification handlers (before the connection listens).</summary>

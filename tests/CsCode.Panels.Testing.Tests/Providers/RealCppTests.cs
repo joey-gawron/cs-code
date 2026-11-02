@@ -171,4 +171,43 @@ public sealed class RealCppCTestTests
         Assert.Equal(["build/catch_tests", "build/doctest_tests", "build/gtest_tests"],
             (await withoutCTest.DetectAsync(dir.Path, ct)).Select(p => p.Name).Order(StringComparer.Ordinal));
     }
+
+    /// <summary>
+    /// The sample configured (not built) by the real CMake integration: the File API's targets that link GoogleTest and Catch2 are listed
+    /// before a build (doctest, header-only, once built); running the GoogleTest one builds that target alone through the integration, lists
+    /// it and runs it, and the build says the projects changed.
+    /// </summary>
+    [Fact]
+    public async Task Targets_are_listed_from_the_file_api_before_a_build_and_a_run_builds_its_target()
+    {
+        Assert.SkipWhen(CppTestSample.SkipReason() is not null, CppTestSample.SkipReason() ?? "");
+        var ct = TestContext.Current.CancellationToken;
+        using var dir = new TempDirectory("cscode-cpp-fileapi-");
+        CppTestSample.Write(dir.Path);
+        var config = new TestConfigurationService();
+        config.Set("cmake.configureSettings", new Dictionary<string, object> { ["CMAKE_PREFIX_PATH"] = CppTestSample.FindPrefixPath()! });
+        var output = new InMemoryOutputService();
+        using var cmake = new CMakeService(new CTestProviderTests.Folder(dir.Path), config, null, null, output);
+        for (var i = 0; i < 200 && cmake.Projects.Count == 0; i++) await Task.Delay(50, ct);
+        var configured = await cmake.ConfigureAsync(Assert.Single(cmake.Projects), ct).AsTask().WaitAsync(TimeSpan.FromMinutes(2), ct);
+        Assert.True(configured is { State: Core.Build.CMakeProjectState.Configured }, output.Text(CMakeService.OutputChannelName));
+
+        var cpp = new CppTestProvider(new TestProviderContext(new ProcessRunner()), cmake: cmake);
+        var changes = 0;
+        using var changed = cpp.ProjectsChanged.Subscribe(_ => Interlocked.Increment(ref changes));
+        var projects = await cpp.DetectAsync(dir.Path, ct);
+        Assert.Equal([("build/catch_tests", "Catch2"), ("build/gtest_tests", "GoogleTest")], projects.Select(p => (p.Name, p.Framework)).Order());
+        var gtest = projects.Single(p => p.Name == "build/gtest_tests");
+        Assert.False(File.Exists(gtest.FilePath));
+
+        var sink = new RecordingSink();
+        var outcome = await cpp.RunAsync(new TestRunRequest(gtest, null), sink, ct).WaitAsync(TimeSpan.FromMinutes(4), ct);
+        Assert.True(outcome.Error is null, outcome.Error + "\n" + string.Join('\n', sink.Lines) + output.Text(CMakeService.OutputChannelName));
+        Assert.Contains(sink.DiscoveredTests, t => t.Id == "gtest_tests/MathTest.Adds" && t.Location?.Line == 5);
+        Assert.Equal(TestOutcome.Passed, sink.Result("gtest_tests/MathTest.Adds").Outcome);
+        Assert.Equal(TestOutcome.Failed, sink.Result("gtest_tests/MathTest.Fails").Outcome);
+        Assert.False(File.Exists(dir.Combine("build", "catch_tests"))); // that target alone was built
+        Assert.True(Volatile.Read(ref changes) >= 1);
+        Assert.Equal(["build/catch_tests", "build/gtest_tests"], (await cpp.DetectAsync(dir.Path, ct)).Select(p => p.Name).Order(StringComparer.Ordinal));
+    }
 }

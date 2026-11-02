@@ -56,14 +56,14 @@ says so.
 | Generator (id) | Tool | What runs | Options | Name rule |
 |---|---|---|---|---|
 | Empty Project (`empty`) | — | nothing | — | a portable folder name |
-| Python (`python`) | python3 3.14 | files written by CsCode, then `python -m venv .venv` (`uv venv .venv` when uv is installed), then `.venv/bin/python -m pip install pytest` | Application / Package; Create a virtual environment; pytest with `tests/` | PEP 508 project name whose package (normalised: `-` `_` `.` → `_`, lower case) is an identifier, not a keyword, not `test(s)` |
+| Python (`python`) | python3 3.14 (uv 0.13.6, Homebrew) | files written by CsCode, then `python -m venv .venv` (`uv venv --python <python3> .venv` when uv is installed: the interpreter the page checked, never one uv would fetch; uv's venvs have no pip), then `.venv/bin/python -m pip install pytest` (`uv pip install --python .venv/bin/python pytest`) | Application / Package; Create a virtual environment; pytest with `tests/`; Add sample code | PEP 508 project name whose package (normalised: `-` `_` `.` → `_`, lower case) is an identifier, not a keyword, not `test(s)` |
 | Rust (`rust`) | cargo 1.96.1 | `cargo init --bin\|--lib --edition E --vcs V --name N <dir>` (`init`: the page has made the folder) | Binary / Library; edition 2024, 2021, 2018, 2015; version control git, hg, pijul, fossil, none | cargo's: ASCII letters, digits, `-`, `_`, no leading digit, no keyword, not `test`/`std`/`core`/`alloc`/`proc_macro`/`build`/`deps`/… |
 | C (`cmake-c`), C++ (`cmake-cpp`) | CMake 4.4.2, Apple clang 21, Ninja 1.13 | files written by CsCode | C11 / C17 / C23 or C++17 / 20 / 23; Executable / Library; tests: CTest (C), GoogleTest / Catch2 / CTest only / none (C++) | letters, digits, `-`, `_`; not a target CMake reserves (`test`, `all`, `clean`, `install`, …) |
 | C# (`dotnet`) | .NET SDK 10.0.403 | `dotnet new sln --name N [--format slnx\|sln]`, `dotnet new <template> --name N --output src/N [--framework F]`, `dotnet sln add`, optionally `dotnet new xunit` in `tests/N.Tests` + `dotnet add … reference` + `dotnet sln add`, `dotnet new gitignore` | template (from `dotnet new list --type project --language C#`, console / classlib / webapi / xunit first); target framework (from the template's `--help`); solution format (when the SDK has `--format`); xUnit test project | dot-separated C# identifiers, no keyword |
-| Zig (`zig`) | zig (**not installed here**) | `zig init` in the folder | — | an identifier, no keyword, 32 bytes at most |
-| TypeScript (Node.js) (`node-ts`) | node 24, npm 11 | `npm init -y`, package.json completed, `npm install --save-dev typescript @types/node`, `tsc --init --rootDir src --outDir dist --sourceMap --types node` | — | npm's: lower case, digits, `-` `.` `_` `~`, no leading `.`/`_` |
-| JavaScript (Node.js) (`node-js`) | node 24, npm 11 | `npm init -y`, package.json completed (ES module, `start` and `test` scripts) | — | as TypeScript |
-| Static Website (`static-site`) | — | `index.html`, `styles.css`, `script.js` | — | a portable folder name |
+| Zig (`zig`) | zig 0.17.0 (Homebrew) | `zig init` in the folder (it takes the folder's name; its only flag is `--minimal`) | — | an identifier of 32 bytes at most that is not a keyword, not a primitive (`u8`, `i32`, `usize`, `bool`, `true`, `null`, …), not `_`, `std`, `builtin` or `root`, and not a name zig init's `src/main.zig` declares (`main`, `io`, `Io`, `init`, `args`, `list`, `context`, …) |
+| TypeScript (Node.js) (`node-ts`) | node 24, npm 11 | `npm init -y`, package.json completed, `npm install --save-dev typescript @types/node`, `tsc --init --rootDir src --outDir dist --sourceMap --types node` | Add sample code | npm's: lower case, digits, `-` `.` `_` `~`, no leading `.`/`_` |
+| JavaScript (Node.js) (`node-js`) | node 24, npm 11 | `npm init -y`, package.json completed (ES module, `start` and `test` scripts) | Add sample code | as TypeScript |
+| Static Website (`static-site`) | — | `index.html`, `styles.css`, `script.js` | Add sample code | a portable folder name |
 
 Details:
 
@@ -79,6 +79,10 @@ Details:
 * **C#:** templates are listed with `dotnet new list --type project --language C#` and parsed by the dash line's column widths; the target
   frameworks come from `dotnet new console --help` (`Type: choice` block); both are read off the UI thread and cached for 5 minutes. A template
   without `--framework` is not given one (its `--help` is checked first). CsCode owns this listing.
+* **Zig:** `zig init` never refuses a folder name: it rewrites it (`hello-zig` → `hello_zig`, `fn` → `foo`, `9lives` → `_9lives`, longer than 32
+  bytes → cut), so the executable would not be the `zig-out/bin/<name>` that launch.json runs; and with a name it keeps, its `src/main.zig`
+  (`const <name> = @import("<name>")`) does not build when the name is a primitive, a built-in module or one of that file's own names. The name
+  rule refuses all of these up front (each checked with zig 0.17.0: `zig init` then `zig build`).
 
 ## A good start
 
@@ -120,6 +124,16 @@ the page shows the error in red and brings the Output window to the front.
 * The window **has a folder**: CsCode asks *Open in This Window*, *Open in New Window* or *Don't Open*. *New Window* is offered where File ▸ New
   Window exists (session processes, docs/SESSIONS.md): it now takes absolute paths as arguments, so the new session opens the folder and the main file.
   A `--foreground` run has one window and offers *Open in This Window* / *Don't Open*. *Don't Open* leaves the page with "Created …".
+* **Follow-ups** (`ProjectFollowUps`, in ProjectTemplates; the page runs them around opening the folder in this window, after its own tab has
+  closed, and they report to the New Project Output channel):
+  * **C and C++:** just before the folder opens, `ICMakeService.ConfigureWhenOpenedAsync(dir, "debug")` (docs/C-CPP.md, *Configure when
+    opened*): the C stage's CMake integration configures the project with its `debug` preset as soon as it detects it, without asking whether to
+    configure or which preset ("Configured CMake: 3 targets in …/build/debug"). The CMake status bar, clangd's compile commands and the Test
+    Explorer have the targets at once. With GoogleTest or Catch2 this first configure fetches them.
+  * **Python:** once the folder is open, `.venv/bin/python` becomes its folder's interpreter through the Python stage's
+    `IPythonEnvironmentService.SetActiveAsync` ("Selected the interpreter 3.14.x ('.venv': venv)").
+  * A project opened in a **new window** gets the interpreter from its `.vscode/settings.json` (`python.defaultInterpreterPath`, which the
+    environment service reads; it prefers a folder's own `.venv` anyway), and the CMake integration's usual configure-on-open question there.
 
 ## Settings, state, commands
 
@@ -133,23 +147,22 @@ the page shows the error in red and brings the Output window to the front.
 
 * `src/CsCode.Core/Projects/ProjectGenerators.cs` (new).
 * `IViewActivator.CloseViewAsync(viewId)` with a default that closes nothing; `ShellViewActivator` closes the document view's tab.
+* `ICMakeService.ConfigureWhenOpenedAsync(sourceDirectory, configurePreset)` with a default that does nothing; `CMakeService` implements it (the
+  C stage's code, added with the coordinator's agreement; docs/C-CPP.md).
 * `workbench.action.newWindow` takes absolute paths (folder, then files) and passes them to the new session's `LaunchRequest.Targets`.
 * File ▸ New is a submenu (Project…, File); the Welcome page's Start list begins with "Create a new project".
 
-## Deferred (owned by stages not on `main` yet)
+## Still open
 
-* **Select the new `.venv`** with the Python stage's interpreter service: not on main. Until then the project writes VS Code's
-  `python.defaultInterpreterPath` into `.vscode/settings.json`, which that stage is expected to read.
-* **CMake configure** through the C stage's CMake integration (`ICMakeService.ConfigureAsync`, on branch `claude/lang-c-ba48e8`): not on main. The
-  first F5 or Ctrl+Shift+B configures through the `cmake: configure (debug)` task.
+* **A new window** (another session process) does not get the follow-ups: its CMake integration asks as for any project, and the first F5 or
+  Ctrl+Shift+B configures through the `cmake: configure (debug)` task.
 * **`dotnet restore`**: needs no hook: `dotnet new` restores each project as it creates it (the templates' default), so the first build is offline.
-* **Python F5:** `debugpy` arrives with the Python stage; the configuration is written now.
-* **Zig:** zig is not installed on this Mac; the generator, its `zig init` step and its files are untested against a real zig (its real-tool test
-  skips). `uv` is not installed either: the `uv venv` / `uv pip install` path is untested.
 
 ## Limits
 
-* No "sample code" check box (SHOULD): every generator writes a small greeting program and one test.
+* **Add sample code** (on by default) is offered by the generators that write their own code: Python, JavaScript, TypeScript and the static
+  website. Off, the project keeps its entry point and one test (Python: `__version__`; Node: `main()` runs) without the greeting example. Rust,
+  C#, Zig (their tools write the starter code) and C/C++ (the program and the tests are built around the sample library) do not offer it.
 * TypeScript needs the npm registry at creation (offline it fails, and the folder is removed); Python's pytest and C++'s GoogleTest/Catch2 also come
   from the network, the former at creation, the latter at the first configure.
 * Template options other than the target framework (`--aot`, `--use-program-main`, authentication…) are not offered.
@@ -162,14 +175,14 @@ the page shows the error in red and brings the Output window to the front.
 | Generator | Created with the real tool | Built and tested with its tasks' commands | Opened in the real app with its main file | F5 in the real app |
 |---|---|---|---|---|
 | Rust (bin, lib) | yes | `cargo build`, `cargo test`; the binary prints Hello, world! | yes | CodeLLDB stops at `main.rs:2` |
-| C (C11 exe, C17 lib, C23 exe) | yes | `cmake --preset debug`, `cmake --build --preset debug`, `ctest --preset debug` (100 %) | yes | CodeLLDB stops at `main.c:7` |
-| C++ (17 exe, 20 lib, 23 exe; GoogleTest; Catch2) | yes | as C; GoogleTest and Catch2 tests discovered and passing | yes | CodeLLDB stops at `main.cpp:6` |
+| C (C11 exe, C17 lib, C23 exe) | yes | `cmake --preset debug`, `cmake --build --preset debug`, `ctest --preset debug` (100 %) | yes, configured by the CMake integration with `debug`, nothing asked | CodeLLDB stops at `main.c:7` |
+| C++ (17 exe, 20 lib, 23 exe; GoogleTest; Catch2) | yes | as C; GoogleTest and Catch2 tests discovered and passing | yes, configured as C | CodeLLDB stops at `main.cpp:6` |
 | C# (console + xUnit, classlib in .sln) | yes | `dotnet build`, `dotnet test`; the program prints Hello, World! | yes | netcoredbg stops at `Program.cs:1` |
 | JavaScript | yes | `node --test` (1 pass); `node src/index.js` | yes | js-debug stops at `index.js:3` |
-| Python (app with .venv) | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest only with downloads allowed | yes | not on main (debugpy) |
+| Python (app with .venv; package with pytest), with `python -m venv` and with uv 0.13.6 | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest installed from PyPI into `.venv` (`pip`, or `uv pip install --python`), `python -m pytest` (1 passed) | yes, and its `.venv` is the folder's interpreter | debugpy (bundled 1.8.22) stops at `__main__.py:7`, also on a uv-made `.venv` |
 | Empty, Static Website | yes | — | yes | — |
-| TypeScript | needs the npm registry: not run | — | — | — |
-| Zig | zig not installed: not run | — | — | — |
+| TypeScript | yes (typescript and @types/node from the npm registry) | `npm test` (1 pass); `tsc` builds `dist/index.js`, which prints Hello, world! | yes | js-debug stops at `index.ts:3` through the source map |
+| Zig (zig 0.17.0, installed 2026-11-02) | yes | `zig build`, `zig build test` | yes | CodeLLDB stops at `main.zig:8` |
 
 Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `RealApp/NewProjectTests.Screenshots_of_the_page` into
 `.scratch/screenshots/new-project-*.png` (not committed).
@@ -182,7 +195,9 @@ Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `
 | `tests/CsCode.Panels.NewProject.Tests` | the view model (generators, validation, options and the VCS link, remembering, create/fail/cancel, opening here or in a new window) and the real view headless (keyboard only: Name focused, typing, Enter, arrows, Esc, Alt+L, Alt+G), `LeakAssert` for the view model and the view | `dotnet test tests/CsCode.Panels.NewProject.Tests` |
 | `tests/CsCode.App.Tests` (`RealApp/NewProjectTests`) | the real application (every module, `CSCODE_HOME` in a temp dir, headless window): the menu, the palette command and the Welcome link open the page; per installed toolchain a project made on the page opens with its main file and F5 builds it and stops at a breakpoint in it | `dotnet test tests/CsCode.App.Tests --blame-hang-timeout 12m --filter FullyQualifiedName~RealApp.NewProjectTests` |
 
-Results on this Mac: ProjectTemplates 87 passed, 3 skipped (zig; pytest and TypeScript downloads); Panels.NewProject 21 passed; RealApp
-NewProjectTests 11 passed (with the menu, Welcome and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
+Results on this Mac (2026-11-02, uv 0.13.6 installed): ProjectTemplates 116 passed, 3 skipped (pytest and two TypeScript downloads), and with
+`CSCODE_TEST_DOWNLOADS=1` the three download tests pass too (pytest through `uv pip install`); Panels.NewProject 22 passed; Build.CMake 23 passed (`ConfigureWhenOpenedTests`
+among them); RealApp NewProjectTests 13 passed with downloads on (F5 for Rust, C, C++, Zig, C#, JavaScript, TypeScript and Python; 12 passed and
+TypeScript skipped without); with the menu, Welcome, session and Python composition App tests: 51 passed, 6 skipped. Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
 `CSCODE_TEST_DOWNLOADS=1`; the C++ framework tests use the GoogleTest/Catch2 archives the C++ stage fetched into `.scratch/tools/cpp-test-frameworks`
-(`FETCHCONTENT_SOURCE_DIR_*`), and otherwise need the same variable. The F5 cases use CodeLLDB, netcoredbg and js-debug from `.scratch/tools`.
+(`FETCHCONTENT_SOURCE_DIR_*`), and otherwise need the same variable. The F5 cases use CodeLLDB, netcoredbg, js-debug and the bundled debugpy (`tools/fetch-debugpy.sh`) from `.scratch/tools`.
