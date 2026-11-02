@@ -79,6 +79,20 @@ public sealed partial class CTestProvider(TestProviderContext context, ICMakeSer
             ?? throw new TestDiscoveryException($"{project.Name} could not be configured: see the CMake output.");
         var tests = await ListAsync(p, log, ct).ConfigureAwait(false)
             ?? throw new TestDiscoveryException($"ctest could not list the tests of {project.Name}: see the Tests output.");
+        // ctest leaves a test's command out while its executable is not built (right after the first configure): build the project once, as
+        // cargo's discovery builds its tests, so each test is listed under the executable it runs and can be debugged from the start
+        if (tests.Any(t => t.Executable is null) && p.Targets.Any(t => t.Executable is { } exe && !File.Exists(exe)) && cmake is not null)
+        {
+            log.Status($"Building {project.Name} to list its tests…");
+            log.Output($"> Some tests' executables are not built yet: building {project.Name} (see the CMake output)");
+            var built = await cmake.BuildAsync(p, null, ct).ConfigureAwait(false);
+            if (built.Succeeded && cmake.Projects.FirstOrDefault(x => x.SourceDirectory == p.SourceDirectory) is { } now && await ListAsync(now, log, ct).ConfigureAwait(false) is { } again)
+            {
+                p = now;
+                tests = again;
+            }
+            else log.Output($"> The build did not succeed: the tests whose executables are missing are listed without them.");
+        }
         return [.. tests.Take(TestLimits.MaxTestsPerProject).Select(t => Discovered(t, p))];
     }
 
