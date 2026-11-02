@@ -1,0 +1,18 @@
+Running main() from /third_party/googletest/googletest/src/gtest_main.cc
+MathTest.
+  Adds
+  Fails
+  DISABLED_Later
+  Skips
+Fixture.
+  UsesValue
+Typed/0.  # TypeParam = int
+  DefaultIsZero
+Typed/1.  # TypeParam = long
+  DefaultIsZero
+NsTest.
+  Throws
+Numbers/Param.
+  IsPositive/0  # GetParam() = 1
+  IsPositive/1  # GetParam() = 2
+  IsPositive/2  # GetParam() = -3

@@ -4,6 +4,7 @@ using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Testing.Engine;
+using CsCode.Testing.Providers.Cpp;
 using CsCode.Testing.Providers.DotNet;
 using CsCode.Testing.Providers.JavaScript;
 using CsCode.Testing.Providers.Rust;
@@ -63,7 +64,7 @@ public sealed class TestingHost : IDisposable
 
     public TestingHost(IServiceProvider services) : this(services, null) { }
 
-    /// <summary>Tests pass their own providers (scripted processes); the app gets the built-in .NET, Rust and JavaScript ones.</summary>
+    /// <summary>Tests pass their own providers (scripted processes); the app gets the built-in .NET, Rust, JavaScript and C++ ones.</summary>
     public TestingHost(IServiceProvider services, IReadOnlyList<ITestProvider>? providers)
     {
         _sp = services;
@@ -74,7 +75,7 @@ public sealed class TestingHost : IDisposable
         _window = services.GetService<IWindowService>();
         _channel = services.GetService<IOutputService>()?.GetOrCreate(OutputChannelName);
         var context = new TestProviderContext(new ProcessRunner(services.GetService<Core.Diagnostics.IMemoryMonitor>()), key => _config?.Get<string>(key));
-        providers ??= [new DotNetTestProvider(context), new RustTestProvider(context), new JavaScriptTestProvider(context)];
+        providers ??= [new DotNetTestProvider(context), new RustTestProvider(context), new JavaScriptTestProvider(context), new CppTestProvider(context, key => _config?.GetRaw(key))];
         Controller = new TestController(providers, a => _ui.Post(a, UiPriority.Background), line => _channel?.AppendLine(line),
             id => _config?.Get<bool?>(TestingSettings.EnabledKey(id)) ?? true);
         if (services.GetService<IDebugService>() is { } debug) Controller.Debugger = new DebugLauncher(debug, _ui);
@@ -157,7 +158,7 @@ public sealed class TestingHost : IDisposable
         await Controller.SetFoldersAsync(folders).ConfigureAwait(true);
     }
 
-    /// <summary>A saved C# or JavaScript file rescans its project (cheap: a text scan); Rust needs a build, so only Refresh does that.</summary>
+    /// <summary>A saved C# or JavaScript file rescans its project (cheap: a text scan); Rust and C++ need a build, so only Refresh does that.</summary>
     private void OnSaved(Uri uri)
     {
         if (_disposed || !uri.IsFile) return;
@@ -165,7 +166,7 @@ public sealed class TestingHost : IDisposable
         foreach (var root in Controller.Tree.Projects)
         {
             var project = root.Project;
-            if (project.ProviderId == RustTestProvider.ProviderId || !StackTraces.IsUnder(path, project.Directory)) continue;
+            if (project.ProviderId is RustTestProvider.ProviderId or CppTestProvider.ProviderId || !StackTraces.IsUnder(path, project.Directory)) continue;
             var relevant = project.ProviderId == DotNetTestProvider.ProviderId ? path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) : JavaScriptTestProvider.IsTestFile(path);
             if (!relevant) continue;
             if (_pendingRediscovery.Remove(project.Key, out var old)) { old.Cancel(); old.Dispose(); }

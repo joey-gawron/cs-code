@@ -14,12 +14,14 @@ public static class TestingSettings
     public const string DotNetEnabled = "cscode.testing.dotnet.enabled";
     public const string RustEnabled = "cscode.testing.rust.enabled";
     public const string JavaScriptEnabled = "cscode.testing.javascript.enabled";
+    public const string CppEnabled = "cscode.testing.cpp.enabled";
 
     /// <summary>The provider id → its "enabled" setting.</summary>
     public static string EnabledKey(string providerId) => providerId switch
     {
         "dotnet" => DotNetEnabled,
         "rust" => RustEnabled,
+        "cpp" => CppEnabled,
         _ => JavaScriptEnabled,
     };
 
@@ -38,5 +40,12 @@ public static class TestingSettings
         P(DotNetEnabled, true, "Find .NET test projects (xUnit v3 run directly, xUnit v2 / NUnit / MSTest through dotnet test).", """{"type":"boolean"}"""),
         P(RustEnabled, true, "Find cargo packages and their #[test] functions.", """{"type":"boolean"}"""),
         P(JavaScriptEnabled, true, "Find JavaScript / TypeScript packages that use Jest or Vitest.", """{"type":"boolean"}"""),
+        P(CppEnabled, true, "Find C++ test executables built with GoogleTest, Catch2 or doctest (see cscode.testing.cpp.executables).", """{"type":"boolean"}"""),
+        P(CsCode.Testing.Providers.Cpp.CppTestProvider.ExecutablesSetting, CsCode.Testing.Providers.Cpp.CppExecutables.DefaultPatterns,
+            "Globs, relative to the workspace folder (or absolute), naming the C++ test executables; those built with GoogleTest, Catch2 or doctest are listed in the Test Explorer. Unset: C++ TestMate's testMate.cpp.test.executables when set, else its default (test-named files under build/ or out/).",
+            """{"type":"array","items":{"type":"string"}}"""),
+        P(CsCode.Testing.Providers.Cpp.CppTestProvider.DebuggerSetting, "", "The debugger for C++ tests: CodeLLDB, lldb-dap or GDB. Empty: CodeLLDB on macOS, GDB elsewhere.",
+            """{"type":"string","enum":["","codelldb","lldb-dap","gdb"],"enumDescriptions":["CodeLLDB on macOS, GDB elsewhere.","CodeLLDB (type lldb).","LLVM's lldb-dap.","GDB's own DAP (GDB 14+)."]}"""),
+        P(CsCode.Testing.Providers.Cpp.CppTestProvider.BreakOnFailureSetting, true, "Debugging a C++ test stops in the debugger at the assertion that fails (GoogleTest's --gtest_break_on_failure, Catch2's --break, doctest's breaks).", """{"type":"boolean"}"""),
     ];
 }
