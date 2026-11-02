@@ -2,7 +2,7 @@
 
 Stage 6 of the language stages (`docs/briefs/lang-6-zig.md`, overview `docs/briefs/languages.md`). User request (2026-11-01): *"Lets break
 this up into stages/languages: … 6. Zig"*. The stage ran in parallel with stages 1 and 2 (the user's choice), so what needs their shared pieces
-waited; main now has them, and the items still open are listed in [Open items](#open-items-their-pieces-are-on-main-since-stages-1-and-2-merged).
+waited; main now has them, and those items are done: see [What waited](#what-waited-for-stages-1-and-2-done-since-they-merged).
 
 Toolchain used for everything below: **Zig 0.17.0** and **zls 0.17.0** (`tools/fetch-zig.sh`: pinned tarballs from ziglang.org and the zls
 GitHub release, SHA-256 checked, into `.scratch/tools/zig/0.17.0/`; the user chose these over Homebrew), CodeLLDB v1.12.3 (LLDB 22.1.8, Python
@@ -15,7 +15,7 @@ GitHub release, SHA-256 checked, into `.scratch/tools/zig/0.17.0/`; the user cho
 | Debugging | **new**: `zig` in CodeLLDB's and lldb-dap's languages, `build.zig` templates and tasks, Zig values by value; matrix below |
 | Test Explorer | **new**: `ZigTestProvider` |
 | Tasks | **new**: the `$zig` problem matcher; the `zig build` task provider (`zig build`, its steps from `zig build -l`) |
-| Snippets | open (stage 1's bundled snippets) |
+| Snippets | **new**: `Snippets/Builtin/zig.json` (36: declarations, control flow, tests, allocators, containers, build.zig), checked against the real zig |
 
 ## Using it
 
@@ -162,13 +162,14 @@ pattern's `HandleShowMessage` hook (added for it: an extension may keep a server
   and zls on PATH.
 * Not checked (SHOULD items): what zls offers for `build.zig.zon` editing and its highlighting, and whether zls's inlay hints display.
 
-## Open items (their pieces are on main since stages 1 and 2 merged)
+## What waited for stages 1 and 2 (done since they merged)
 
-| Item | Builds on |
-|---|---|
-| Zig snippets | stage 1's bundled snippets (`src/CsCode.Editor/Snippets/Builtin/zig.json`) |
-
-Done in the merge with main: zls's handling moved onto stage 2's `LanguageServerExtension` pattern (above).
+* zls's handling on stage 2's `LanguageServerExtension` pattern (in the merge with main; above).
+* The `zig build` task provider on stage 2's `ITaskProvider` ("Tasks").
+* The Disassembly, Memory, Registers and data breakpoint rows of the matrix, with stage 2's windows ("Debugging").
+* Zig snippets on stage 1's bundled snippets (`src/CsCode.Editor/Snippets/Builtin/zig.json`): the default expansion of each parses
+  (`zig fmt --stdin`), and a project made of the `build`, `std`, `main`, `gpa`, `list`, `map`, `arena` and `test` snippets builds, runs and
+  tests with zig 0.17.0 (`BundledSnippetTests`). That check found `b.args`, which Zig 0.16 replaced with `addPassthruArgs()`.
 
 ## Limits
 

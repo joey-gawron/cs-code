@@ -1,0 +1,327 @@
+{
+  "import std": {
+    "prefix": "std",
+    "body": [
+      "const std = @import(\"std\");$0"
+    ],
+    "description": "const std = @import(\"std\");"
+  },
+  "import": {
+    "prefix": "import",
+    "body": [
+      "const ${1:name} = @import(\"${2:name.zig}\");$0"
+    ],
+    "description": "Import a file or module"
+  },
+  "main": {
+    "prefix": "main",
+    "body": [
+      "pub fn main(init: std.process.Init) !void {",
+      "\t${0:_ = init;}",
+      "}"
+    ],
+    "description": "main with std.process.Init: arguments, environment, allocators and I/O (Zig 0.16+)"
+  },
+  "main without arguments": {
+    "prefix": "mainv",
+    "body": [
+      "pub fn main() !void {",
+      "\t$0",
+      "}"
+    ],
+    "description": "main without arguments"
+  },
+  "function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2}) ${3:void} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Function"
+  },
+  "public function": {
+    "prefix": "pfn",
+    "body": [
+      "pub fn ${1:name}(${2}) ${3:void} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Public function"
+  },
+  "test": {
+    "prefix": "test",
+    "body": [
+      "test \"${1:name}\" {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Test block (zig test, zig build test, the Test Explorer)"
+  },
+  "expect": {
+    "prefix": "expect",
+    "body": [
+      "try std.testing.expect(${1:condition});$0"
+    ],
+    "description": "std.testing.expect"
+  },
+  "expectEqual": {
+    "prefix": "expecteq",
+    "body": [
+      "try std.testing.expectEqual(${1:expected}, ${2:actual});$0"
+    ],
+    "description": "std.testing.expectEqual"
+  },
+  "expectEqualStrings": {
+    "prefix": "expectstr",
+    "body": [
+      "try std.testing.expectEqualStrings(${1:expected}, ${2:actual});$0"
+    ],
+    "description": "std.testing.expectEqualStrings"
+  },
+  "expectError": {
+    "prefix": "expecterr",
+    "body": [
+      "try std.testing.expectError(${1:error.Name}, ${2:expression});$0"
+    ],
+    "description": "std.testing.expectError"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": [
+      "const ${1:Name} = struct {",
+      "\t$0",
+      "};"
+    ],
+    "description": "Struct type"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": [
+      "const ${1:Name} = enum {",
+      "\t${0:a},",
+      "};"
+    ],
+    "description": "Enum type"
+  },
+  "tagged union": {
+    "prefix": "union",
+    "body": [
+      "const ${1:Name} = union(enum) {",
+      "\t${0:a: u32},",
+      "};"
+    ],
+    "description": "Tagged union"
+  },
+  "error set": {
+    "prefix": "error",
+    "body": [
+      "const ${1:Error} = error{",
+      "\t${0:Failed},",
+      "};"
+    ],
+    "description": "Error set"
+  },
+  "if": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "if"
+  },
+  "if/else": {
+    "prefix": "ifelse",
+    "body": [
+      "if (${1:condition}) {",
+      "\t$2",
+      "} else {",
+      "\t$0",
+      "}"
+    ],
+    "description": "if / else"
+  },
+  "if optional": {
+    "prefix": "ifopt",
+    "body": [
+      "if (${1:optional}) |${2:value}| {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Unwrap an optional"
+  },
+  "if error union": {
+    "prefix": "iferr",
+    "body": [
+      "if (${1:result}) |${2:value}| {",
+      "\t$3",
+      "} else |${4:err}| {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Unwrap an error union or handle its error"
+  },
+  "while": {
+    "prefix": "while",
+    "body": [
+      "while (${1:condition}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "while"
+  },
+  "while with counter": {
+    "prefix": "whilei",
+    "body": [
+      "var ${1:i}: usize = 0;",
+      "while ($1 < ${2:n}) : ($1 += 1) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "while with a counter and a continue expression"
+  },
+  "for": {
+    "prefix": "for",
+    "body": [
+      "for (${1:items}) |${2:item}| {",
+      "\t$0",
+      "}"
+    ],
+    "description": "for over a slice or array"
+  },
+  "for with index": {
+    "prefix": "fori",
+    "body": [
+      "for (${1:items}, 0..) |${2:item}, ${3:i}| {",
+      "\t$0",
+      "}"
+    ],
+    "description": "for with the index"
+  },
+  "for range": {
+    "prefix": "forr",
+    "body": [
+      "for (${1:0}..${2:n}) |${3:i}| {",
+      "\t$0",
+      "}"
+    ],
+    "description": "for over a range"
+  },
+  "switch": {
+    "prefix": "switch",
+    "body": [
+      "switch (${1:value}) {",
+      "\t${2:.a} => ${3:{\\}},",
+      "\telse => ${0:{\\}},",
+      "}"
+    ],
+    "description": "switch"
+  },
+  "catch": {
+    "prefix": "catch",
+    "body": [
+      "catch |${1:err}| {",
+      "\t${0:return $1;}",
+      "}"
+    ],
+    "description": "catch with the error (after an expression)"
+  },
+  "defer": {
+    "prefix": "defer",
+    "body": [
+      "defer ${0:expression};"
+    ],
+    "description": "defer"
+  },
+  "errdefer": {
+    "prefix": "errdefer",
+    "body": [
+      "errdefer ${0:expression};"
+    ],
+    "description": "errdefer"
+  },
+  "print": {
+    "prefix": "print",
+    "body": [
+      "std.debug.print(\"${1}\\n\", .{${2}});$0"
+    ],
+    "description": "std.debug.print to stderr"
+  },
+  "log": {
+    "prefix": "log",
+    "body": [
+      "std.log.${1|info,debug,warn,err|}(\"${2}\", .{${3}});$0"
+    ],
+    "description": "std.log"
+  },
+  "debug allocator": {
+    "prefix": "gpa",
+    "body": [
+      "var ${1:gpa}: std.heap.DebugAllocator(.{}) = .init;",
+      "defer _ = $1.deinit();",
+      "const ${2:allocator} = $1.allocator();$0"
+    ],
+    "description": "std.heap.DebugAllocator (reports leaks at deinit)"
+  },
+  "arena allocator": {
+    "prefix": "arena",
+    "body": [
+      "var ${1:arena} = std.heap.ArenaAllocator.init(${2:std.heap.page_allocator});",
+      "defer $1.deinit();",
+      "const ${3:allocator} = $1.allocator();$0"
+    ],
+    "description": "std.heap.ArenaAllocator"
+  },
+  "ArrayList": {
+    "prefix": "list",
+    "body": [
+      "var ${1:list}: std.ArrayList(${2:u8}) = .empty;",
+      "defer $1.deinit(${3:allocator});$0"
+    ],
+    "description": "std.ArrayList (unmanaged: methods take the allocator)"
+  },
+  "StringHashMap": {
+    "prefix": "map",
+    "body": [
+      "var ${1:map}: std.StringHashMapUnmanaged(${2:u32}) = .empty;",
+      "defer $1.deinit(${3:allocator});$0"
+    ],
+    "description": "std.StringHashMapUnmanaged"
+  },
+  "as": {
+    "prefix": "as",
+    "body": [
+      "@as(${1:u32}, ${2:value})$0"
+    ],
+    "description": "@as type coercion"
+  },
+  "build.zig": {
+    "prefix": "build",
+    "body": [
+      "const std = @import(\"std\");",
+      "",
+      "pub fn build(b: *std.Build) void {",
+      "\tconst target = b.standardTargetOptions(.{});",
+      "\tconst optimize = b.standardOptimizeOption(.{});",
+      "\tconst exe = b.addExecutable(.{",
+      "\t\t.name = \"${1:app}\",",
+      "\t\t.root_module = b.createModule(.{",
+      "\t\t\t.root_source_file = b.path(\"${2:src/main.zig}\"),",
+      "\t\t\t.target = target,",
+      "\t\t\t.optimize = optimize,",
+      "\t\t}),",
+      "\t});",
+      "\tb.installArtifact(exe);",
+      "",
+      "\tconst run = b.addRunArtifact(exe);",
+      "\trun.addPassthruArgs(); // zig build run -- arg1 arg2",
+      "\tb.step(\"run\", \"Run the app\").dependOn(&run.step);",
+      "",
+      "\tconst tests = b.addTest(.{ .root_module = exe.root_module });",
+      "\tb.step(\"test\", \"Run the tests\").dependOn(&b.addRunArtifact(tests).step);$0",
+      "}"
+    ],
+    "description": "build.zig with an executable and its run and test steps (Zig 0.16+ build API)"
+  }
+}
