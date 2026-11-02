@@ -101,8 +101,8 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
     {
         var dir = Path.GetDirectoryName(projectFile)!;
         var json = await MsbuildAsync(projectFile, dir,
-            ["-getProperty:IsTestProject", "-getProperty:IsTestingPlatformApplication", "-getProperty:TargetPath", "-getProperty:TargetFramework",
-                "-getProperty:TargetFrameworks", "-getProperty:Language", "-getItem:PackageReference"], ct).ConfigureAwait(false);
+            ["-getProperty:IsTestProject", "-getProperty:IsTestingPlatformApplication", "-getProperty:EnableMSTestRunner", "-getProperty:EnableNUnitRunner",
+                "-getProperty:TargetPath", "-getProperty:TargetFramework", "-getProperty:TargetFrameworks", "-getProperty:Language", "-getItem:PackageReference"], ct).ConfigureAwait(false);
         var parsed = json is null ? null : ParseEvaluation(json);
         if (parsed is null || !parsed.IsTestProject) return null;
         var targetPath = parsed.TargetPath;
@@ -163,7 +163,9 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
     /// <summary>
     /// The evaluation's answer (<c>-getProperty</c>/<c>-getItem</c> JSON), or null when it is not JSON. A test project has <c>IsTestProject</c> or
     /// <c>IsTestingPlatformApplication</c> true (MSTest with <c>EnableMSTestRunner</c> and NUnit with <c>EnableNUnitRunner</c> set only the latter;
-    /// xUnit v3 and TUnit set both); which MTP framework it is comes from its package references.
+    /// xUnit v3 and TUnit set both); which MTP framework it is comes from its package references. The packages' props set
+    /// <c>IsTestingPlatformApplication</c>, so a project never restored (a fresh clone) does not have it yet: <c>EnableMSTestRunner</c>,
+    /// <c>EnableNUnitRunner</c> (the project's own) or a TUnit reference also make it an MTP test project.
     /// </summary>
     internal static Evaluation? ParseEvaluation(string json)
     {
@@ -174,8 +176,7 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
             using var doc = JsonDocument.Parse(json[start..]);
             var props = doc.RootElement.TryGetProperty("Properties", out var p) ? p : default;
             string P(string name) => props.ValueKind == JsonValueKind.Object && props.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
-            var mtp = string.Equals(P("IsTestingPlatformApplication"), "true", StringComparison.OrdinalIgnoreCase);
-            var isTest = string.Equals(P("IsTestProject"), "true", StringComparison.OrdinalIgnoreCase) || mtp;
+            static bool True(string v) => string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
             var tfm = P("TargetFramework");
             if (tfm.Length == 0 && P("TargetFrameworks").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() is { } first) tfm = first;
             var packages = doc.RootElement.TryGetProperty("Items", out var items) && items.TryGetProperty("PackageReference", out var refs) && refs.ValueKind == JsonValueKind.Array
@@ -183,6 +184,9 @@ public sealed partial class DotNetTestProvider(TestProviderContext context) : IT
                 : [];
             bool Has(Func<string, bool> match) => packages.Any(match);
             var xunitV3 = Has(n => n.Equals("xunit.v3", StringComparison.OrdinalIgnoreCase) || n.StartsWith("xunit.v3.core", StringComparison.OrdinalIgnoreCase));
+            var mtp = True(P("IsTestingPlatformApplication")) || True(P("EnableMSTestRunner")) || True(P("EnableNUnitRunner"))
+                || Has(n => n.StartsWith("TUnit", StringComparison.OrdinalIgnoreCase));
+            var isTest = True(P("IsTestProject")) || mtp;
             var framework = Has(n => n.StartsWith("MSTest", StringComparison.OrdinalIgnoreCase)) ? MtpFramework.MSTest
                 : Has(n => n.Equals("NUnit3TestAdapter", StringComparison.OrdinalIgnoreCase) || n.Equals("NUnit", StringComparison.OrdinalIgnoreCase)) ? MtpFramework.NUnit
                 : Has(n => n.StartsWith("TUnit", StringComparison.OrdinalIgnoreCase)) ? MtpFramework.TUnit

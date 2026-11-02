@@ -143,6 +143,19 @@ public sealed class TestingPlatformTests
     }
 
     [Fact]
+    public void A_runner_project_that_was_never_restored_is_a_testing_platform_test_project()
+    {
+        // before a restore the packages' props have not set IsTestingPlatformApplication: the project's own EnableNUnitRunner says it
+        var nunit = DotNetTestProvider.ParseEvaluation("""{"Properties":{"IsTestProject":"","IsTestingPlatformApplication":"","EnableMSTestRunner":"","EnableNUnitRunner":"true","TargetPath":"/n/Nu.dll","TargetFramework":"net10.0","TargetFrameworks":"","Language":"C#"},"Items":{"PackageReference":[{"Identity":"NUnit"},{"Identity":"NUnit3TestAdapter"}]}}""");
+        Assert.True(nunit!.IsTestProject);
+        Assert.True(nunit.Mtp);
+        Assert.Equal(MtpFramework.NUnit, nunit.MtpFramework);
+        var tunit = DotNetTestProvider.ParseEvaluation("""{"Properties":{"IsTestProject":"","TargetPath":"/t/T.dll","TargetFramework":"net10.0","TargetFrameworks":""},"Items":{"PackageReference":[{"Identity":"TUnit.Engine"}]}}""");
+        Assert.True(tunit!.Mtp && tunit.IsTestProject);
+        Assert.False(DotNetTestProvider.ParseEvaluation("""{"Properties":{"IsTestProject":"","TargetPath":"/l.dll","TargetFramework":"net10.0","TargetFrameworks":""},"Items":{"PackageReference":[]}}""")!.IsTestProject);
+    }
+
+    [Fact]
     public async Task A_project_that_only_sets_IsTestingPlatformApplication_is_a_test_project()
     {
         using var dir = new TempDirectory();

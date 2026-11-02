@@ -97,7 +97,8 @@ internal sealed class RoslynDocumentSource : IExternalDocumentSource
     {
         if (serverUri.StartsWith(SourceGeneratedScheme + ":", StringComparison.OrdinalIgnoreCase))
             return (VirtualDocumentKinds.Generated, ExternalDocuments.LastSegment(serverUri));
-        if (!Uri.TryCreate(serverUri, UriKind.Absolute, out var uri) || !uri.IsFile) return null;
+        // every location of a references answer passes here: only a path through Roslyn's directory is looked at further
+        if (!serverUri.Contains(MetadataDirectory, StringComparison.OrdinalIgnoreCase) || !Uri.TryCreate(serverUri, UriKind.Absolute, out var uri) || !uri.IsFile) return null;
         var path = uri.LocalPath;
         var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
         var at = Array.FindIndex(parts, p => string.Equals(p, MetadataDirectory, StringComparison.OrdinalIgnoreCase));

@@ -103,7 +103,7 @@ internal sealed class RoslynSession
 
     /// <summary>
     /// The solution to open for <paramref name="root"/>: the only one there, the one chosen before for this root, else the user's pick among
-    /// them (remembered). Null: none there (the projects are opened instead) or the pick was dismissed with more than one.
+    /// them (remembered). Null: none there, or "every project" was chosen for the root (the projects are opened instead).
     /// </summary>
     private async Task<string?> ChooseSolutionAsync(string root)
     {
@@ -116,7 +116,8 @@ internal sealed class RoslynSession
         if (_client.Services.Window is not { } window) return solutions[0];
         var items = solutions.Select(s => new QuickPickItem(Path.GetFileName(s), Path.GetRelativePath(root, Path.GetDirectoryName(s)!) is "." ? null : Path.GetDirectoryName(s), Tag: s)).ToArray();
         var picked = await window.ShowQuickPickAsync(items, new QuickPickOptions("C#: Open Solution", $"{solutions.Count} solutions in {Path.GetFileName(root)}: which one should the C# server load?")).ConfigureAwait(false);
-        var chosen = picked?.Tag as string ?? solutions[0];
+        // dismissed: the first one this time, asked again next time
+        if (picked?.Tag is not string chosen) return solutions[0];
         if (state is not null)
         {
             var updated = new Dictionary<string, string>(remembered ?? new(), StringComparer.Ordinal) { [root] = chosen };

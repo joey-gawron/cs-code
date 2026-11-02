@@ -108,6 +108,8 @@ public sealed partial class SessionWindowController
             var doc = tab.Doc;
             var dirty = tab.IsDirty;
             if (doc.IsUntitled && !dirty) continue; // nothing to restore
+            // library and generated code (cscode-virtual:): named by a language server for its running session, nothing to reopen it from
+            if (Core.Text.VirtualDocumentUri.IsVirtual(tab.Uri)) continue;
             var uri = tab.Uri.ToString();
             string? backupId = null;
             if (dirty && includeBackups)
