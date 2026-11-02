@@ -186,7 +186,7 @@ CodeLLDB's templates carry `"sourceLanguages": ["c"]`.
 ## 6. C debugging matrix on this Mac
 
 `tests/CsCode.Dap.Tests/RealCDebugMatrixTests.cs` runs every row against both adapters through the real `DebugService` on one C program built
-with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 20/20 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
+with `cc -g -O0 -pthread` (evidence: `CSCODE_DAP_TEST_METRICS=<file>`). 26/26 pass (CodeLLDB v1.12.3, Apple lldb-dap / LLVM 21, macOS 27 arm64,
 Developer Mode on). Line numbers below are the sample's (`RealCDebugMatrixTests.Program`).
 
 | Row | CodeLLDB (`lldb`) | lldb-dap | Evidence |
@@ -208,12 +208,15 @@ Developer Mode on). Line numbers below are the sample's (`RealCDebugMatrixTests.
 | pthreads | ✅ 3 threads listed at once | ✅ after a fix (below) | breakpoint in `worker` stops that thread; `id` is 1 or 2 |
 | Attach by pid (`"pid"` as text, as `${command:pickProcess}` gives it) | ✅ first stop ~0.5 s | ✅ first stop ~0.3 s | a running program stops at a breakpoint in `tick` with no password dialog; ending the session detaches and the program runs on |
 | stdin through the integrated terminal | see §7 | see §7 | |
-| Memory window from a pointer, Disassembly, data breakpoints | deferred (stage 2's windows) | deferred | |
+| Memory window | ✅ an array's row reads its four ints; View Binary Data on the pointer row shows the **pointee** (its memory reference is `&numbers[2]`) | ✅ the array the same; the pointer's memory reference is the pointer's **own storage**, and its value (`0x…`) is the address to type in the Memory window | `numbers` reads `01 00 00 00 02 00 00 00 …`; the pointee reads `03 00 00 00 04 00 00 00` in both |
+| Disassembly | ✅ 128 instructions around the pc, none invalid, each with its `matrix.c` line and symbol (`square`) | ✅ the same, without the symbol name | at the breakpoint in `square` (line 11) the pc is `ldr w8, [sp, #0xc]`; one instruction step moves 4 bytes (arm64) and stays on line 11 |
+| Data breakpoint (`total`, on write) | ✅ stop reason `data breakpoint` | ✅ stop reason `breakpoint`, description `watchpoint 1` | `dataBreakpointInfo` offers read / write / readWrite and cannot persist (an address); set at `i == 1`, the next stop is the write that makes `total` 1, on the loop's line |
 
 **Fixed:** Apple's lldb-dap answers the first `threads` request after a stop with the list it had while the program ran, so a pthread created
 since (the one that stopped) was missing from the Threads window; 200 ms later the answer is right. `DebugSession` now asks again (up to 5
-times, 100 ms apart) while the thread that stopped is not in the answer (`StaleThreadsTests`). Also fixed: `RealLldbDapTests`' C test
-continued within the breakpoint sync's 50 ms debounce after removing its breakpoint and hit it again; it now waits like a user would.
+times, 100 ms apart) while the thread that stopped is not in the answer (`StaleThreadsTests`). `RealLldbDapTests`' C test used to continue
+within the breakpoint sync's 50 ms debounce after removing its breakpoint and hit it again; stage 1's flush of pending breakpoint changes
+before every resume covers it now, so the test's delay went in the merge.
 
 **Attach by pid on macOS** works with both adapters (row above) with Developer Mode on (`DevToolsSecurity -status`; `sudo DevToolsSecurity
 -enable`), which this Mac has: no administrator dialog appears. With it off, macOS asks for an administrator in a dialog before the debugger
