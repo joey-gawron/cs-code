@@ -98,7 +98,7 @@ public sealed partial class DebugSession
         var gen = _handles.FrameGeneration;
         var resp = DapJson.Deserialize<DapStackTraceResponse>(await RequestAsync("stackTrace", args, ct)) ?? new DapStackTraceResponse();
         IEnumerable<DapStackFrame> frames = delayed ? resp.StackFrames : resp.StackFrames.Skip(startFrame);
-        var mapped = frames.Take(take).Select(f => _quirks.MapFrame(DapMapping.ToCore(f, _positions))).ToArray();
+        var mapped = frames.Take(take).Select(f => _quirks.MapFrame(WithEditorPath(DapMapping.ToCore(f, _positions)))).ToArray();
         if (gen == _handles.FrameGeneration) foreach (var f in mapped) _handles.RegisterFrame(f);
         return mapped;
     }
@@ -423,6 +423,16 @@ public sealed partial class DebugSession
         BreakMode = info.BreakMode,
         Details = new DapExceptionDetails { Message = info.Message, TypeName = info.TypeName, StackTrace = info.StackTrace },
     }, DapJson.Options);
+
+    /// <summary>
+    /// A frame whose source path the adapter reports physically (links resolved) under a directory whose breakpoints were sent that way, with the
+    /// path as the editor opened it (<see cref="DebugAdapterQuirks.BindsPhysicalSourcePaths"/>): the Call Stack, the stop location and the
+    /// editor's current-line marker then name the open document, not a second copy of it under /private/var.
+    /// </summary>
+    private DebugStackFrame WithEditorPath(DebugStackFrame frame) =>
+        _sourcePaths is { } aliases && frame.Source is { Path: { Length: > 0 } path } source && Path.IsPathFullyQualified(path) && aliases.FromAdapter(path) is { } logical
+            ? frame with { Source = source with { Path = logical } }
+            : frame;
 
     /// <summary>Maps an adapter source to a document URI: a real path → <c>file:</c>, adapter-only content → <c>debug:/session/ref/name</c>.</summary>
     public Uri? ResolveSourceUri(DebugSource? source)

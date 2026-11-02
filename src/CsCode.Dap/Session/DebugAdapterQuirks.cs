@@ -116,4 +116,13 @@ public class DebugAdapterQuirks
     /// The session then reads each thread's frames once per stop and serves every request from them, so a frame keeps one id while stopped.
     /// </summary>
     public virtual bool RenumbersFramesPerRequest => false;
+
+    /// <summary>
+    /// The adapter binds a source breakpoint only when its path is, character for character, the path the compiler recorded in the debug
+    /// symbols, which is the build's physical directory (symbolic links resolved). netcoredbg compares the two as strings: on macOS a project
+    /// under the temporary directory (<c>/var/folders/…</c>, a link to <c>/private/var/folders/…</c>) or opened through any linked folder never
+    /// stopped at its breakpoints. The session then sends breakpoint paths with their links resolved and maps the adapter's physical paths back
+    /// to the folders as the editor opened them (<see cref="SourcePathAliases"/>).
+    /// </summary>
+    public virtual bool BindsPhysicalSourcePaths => false;
 }

@@ -364,8 +364,8 @@ public sealed partial class NetCoreDbgAdapterFactory : IDebugAdapterFactory, IDe
     /// </summary>
     public static IEnumerable<BuiltinDebugAdapter> Builtins(NetCoreDbgAdapterFactory factory) =>
     [
-        new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", Languages, factory, factory),
-        new BuiltinDebugAdapter("netcoredbg", ".NET (legacy 'netcoredbg' type)", Languages, factory, factory) { IsAlias = true },
+        new BuiltinDebugAdapter("coreclr", ".NET (netcoredbg)", Languages, factory, factory) { Quirks = NetCoreDbgAdapterQuirks.Instance },
+        new BuiltinDebugAdapter("netcoredbg", ".NET (legacy 'netcoredbg' type)", Languages, factory, factory) { Quirks = NetCoreDbgAdapterQuirks.Instance, IsAlias = true },
     ];
 
     public static readonly IReadOnlyList<string> Languages = ["csharp", "fsharp", "vb"];
