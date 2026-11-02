@@ -19,6 +19,9 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
     public const string VenvOption = "venv";
     public const string TestsOption = "pytest";
 
+    /// <summary>The virtual environment's interpreter, relative to the project folder.</summary>
+    public static string VenvInterpreter => OperatingSystem.IsWindows() ? ".venv\\Scripts\\python.exe" : ".venv/bin/python";
+
     public override string Id => GeneratorId;
     public override string DisplayName => "Python";
     public override string Description => "pyproject.toml (src layout, Ruff), .venv and pytest";
@@ -37,6 +40,7 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
         ]),
         ProjectOption.Toggle(VenvOption, "Create a virtual environment (.venv)", true, "python -m venv .venv (uv venv when uv is installed)"),
         ProjectOption.Toggle(TestsOption, "pytest, with a tests/ folder", true, "pytest is installed into .venv from PyPI"),
+        SampleCode("greet(), a program that prints a greeting, and its test"),
     ]);
 
     public override async ValueTask<ProjectToolCheck> CheckToolsAsync(CancellationToken ct)
@@ -55,6 +59,7 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
         var app = request.Option(KindOption, "app") == "app";
         var venv = request.Flag(VenvOption, true);
         var tests = request.Flag(TestsOption, true);
+        var sample = request.Flag(SampleOption, true);
         var package = ProjectNames.PythonPackage(request.Name);
         var version = ParseVersion(await ToolLocator.VersionAsync(Runner, python, ct).ConfigureAwait(false)) ?? new Version(3, 10);
         var warnings = new List<string>();
@@ -62,12 +67,12 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
         var files = new ProjectWriter(request.Directory);
         progress.Step("Writing pyproject.toml and the package");
         await files.WriteAsync("pyproject.toml", PyProject(request.Name, package, app, tests, version), ct).ConfigureAwait(false);
-        await files.WriteAsync($"src/{package}/__init__.py", InitPy(request.Name), ct).ConfigureAwait(false);
-        if (app) await files.WriteAsync($"src/{package}/__main__.py", MainPy(package), ct).ConfigureAwait(false);
-        if (tests) await files.WriteAsync($"tests/test_{package}.py", TestPy(package), ct).ConfigureAwait(false);
+        await files.WriteAsync($"src/{package}/__init__.py", InitPy(request.Name, sample), ct).ConfigureAwait(false);
+        if (app) await files.WriteAsync($"src/{package}/__main__.py", MainPy(package, sample), ct).ConfigureAwait(false);
+        if (tests) await files.WriteAsync($"tests/test_{package}.py", TestPy(package, sample), ct).ConfigureAwait(false);
         await files.WriteAsync(".gitignore", CommonFiles.GitIgnore(CommonFiles.PythonIgnore), ct).ConfigureAwait(false);
         await files.WriteAsync(".editorconfig", CommonFiles.EditorConfig(), ct).ConfigureAwait(false);
-        var venvPython = OperatingSystem.IsWindows() ? ".venv\\Scripts\\python.exe" : ".venv/bin/python";
+        var venvPython = VenvInterpreter;
         var shellPython = venv ? venvPython : Path.GetFileName(python);
         await files.WriteAsync("README.md", CommonFiles.Readme(request.Name, app ? "A Python application." : "A Python package.",
         [
@@ -81,7 +86,7 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
         {
             var uv = ToolLocator.Find("uv");
             await StepAsync(progress, "Creating the virtual environment (.venv)", uv is not null
-                ? new ToolRun(uv, ["venv", ".venv"], request.Directory)
+                ? new ToolRun(uv, ["venv", "--python", python, ".venv"], request.Directory) // the interpreter the page checked, never one uv would fetch
                 : new ToolRun(python, ["-m", "venv", ".venv"], request.Directory), ct).ConfigureAwait(false);
             if (tests)
             {
@@ -94,7 +99,8 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
                 var result = await Runner.RunAsync(install, progress.Output, ct).ConfigureAwait(false);
                 if (!result.Succeeded)
                 {
-                    var message = $"pytest could not be installed (offline?). Install it later with: {venvPython} -m pip install pytest";
+                    var later = uv is not null ? $"uv pip install --python {venvPython} pytest" : $"{venvPython} -m pip install pytest"; // uv's venvs have no pip
+                    var message = $"pytest could not be installed (offline?). Install it later with: {later}";
                     warnings.Add(message);
                     progress.Warning(message);
                 }
@@ -188,7 +194,7 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
             """;
     }
 
-    private static string InitPy(string name) => $$""""
+    private static string InitPy(string name, bool sample) => sample ? $$""""
         """{{name}}."""
 
         __version__ = "0.1.0"
@@ -198,9 +204,14 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
             """Return a greeting for *name*."""
             return f"Hello, {name}!"
 
+        """" : $$""""
+        """{{name}}."""
+
+        __version__ = "0.1.0"
+
         """";
 
-    private static string MainPy(string package) => $$""""
+    private static string MainPy(string package, bool sample) => sample ? $$""""
         """Entry point: python -m {{package}}."""
 
         from {{package}} import greet
@@ -213,14 +224,32 @@ public sealed partial class PythonProjectGenerator(IToolRunner runner) : Generat
         if __name__ == "__main__":
             main()
 
+        """" : $$""""
+        """Entry point: python -m {{package}}."""
+
+
+        def main() -> None:
+            """Run the program."""
+
+
+        if __name__ == "__main__":
+            main()
+
         """";
 
-    private static string TestPy(string package) => $$"""
+    private static string TestPy(string package, bool sample) => sample ? $$"""
         from {{package}} import greet
 
 
         def test_greet() -> None:
             assert greet("world") == "Hello, world!"
+
+        """ : $$"""
+        from {{package}} import __version__
+
+
+        def test_version() -> None:
+            assert __version__ == "0.1.0"
 
         """;
 

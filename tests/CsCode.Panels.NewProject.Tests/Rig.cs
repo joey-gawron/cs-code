@@ -45,6 +45,7 @@ internal sealed class FakeGenerator(string id, int order, bool available = true,
 {
     public bool Fail { get; set; }
     public TaskCompletionSource? Hold { get; set; }
+    public IReadOnlyList<string> ExtraFiles { get; set; } = [];
     public ConcurrentQueue<ProjectRequest> Requests { get; } = new();
 
     public string Id => id;
@@ -64,6 +65,12 @@ internal sealed class FakeGenerator(string id, int order, bool available = true,
         progress.Step("Writing main.txt");
         progress.Output("tool says hello");
         await File.WriteAllTextAsync(Path.Combine(request.Directory, "main.txt"), "hi", ct);
+        foreach (var extra in ExtraFiles)
+        {
+            var path = Path.Combine(request.Directory, extra);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, "", ct);
+        }
         if (Hold is { } hold) await hold.Task.WaitAsync(ct);
         if (Fail) throw new ProjectGenerationException("fake tool exited with code 3");
         return new ProjectResult(request.Directory, "main.txt");
@@ -136,10 +143,11 @@ internal sealed class Rig : IDisposable
     public TestConfigurationService Configuration { get; } = new();
     public InMemoryOutputService Output { get; } = new();
     public JsonStateStorage State { get; } = new();
+    public FakePythonEnvironments Python { get; } = new();
 
     public NewProjectServices Services(params IProjectGenerator[] generators) =>
         new NewProjectServices([.. generators], new ProjectCreator(new ToolRunner()), new ImmediateUiDispatcher(), Configuration, State, Workspace, Window, Commands,
-            Navigation, Output, Views) { Home = Temp.Path };
+            Navigation, Output, Views, new ProjectFollowUps(Python)) { Home = Temp.Path };
 
     public void Dispose() => Temp.Dispose();
 }

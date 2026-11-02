@@ -13,6 +13,7 @@ Each stage has its own brief. Read `docs/briefs/00-common.md` first (rules, thre
 | 4 | [lang-4-cpp.md](lang-4-cpp.md) | 3 | GoogleTest / Catch2 providers | GoogleTest and Catch2 for test fixtures (CMake `FetchContent` in test temp dirs) |
 | 5 | [lang-5-csharp.md](lang-5-csharp.md) | 1 (2 for tasks) | read-only virtual documents for decompiled / source-generated code | Roslyn language server |
 | 6 | [lang-6-zig.md](lang-6-zig.md) | 1, 2 | — | zig, zls |
+| 7 | [new-project.md](new-project.md) | 1–6 (their tools, debuggers, the Python interpreter service, CMake) | `IProjectGenerator` (Core; another module adds a generator by registering one), the `dotnet new` template listing (`DotnetTemplates`), `IViewActivator.CloseViewAsync`, `workbench.action.newWindow` with paths | zig (installed with Homebrew); typescript and @types/node, pytest (at creation, in the user's new project) |
 
 **Order.** The stages run in this order because each uses what the one before it built: 1 builds the formatter choice and code actions on
 save, which Ruff needs first and Rust, C# and Zig reuse. 2 builds the native debugging windows and task auto-detection that C, C++ and Zig

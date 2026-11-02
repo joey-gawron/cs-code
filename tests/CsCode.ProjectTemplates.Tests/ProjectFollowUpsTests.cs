@@ -1,0 +1,56 @@
+using CsCode.Core.Projects;
+using CsCode.ProjectTemplates.Engine;
+using CsCode.ProjectTemplates.Generators;
+using CsCode.TestDoubles;
+using Xunit;
+
+namespace CsCode.ProjectTemplates.Tests;
+
+public class ProjectFollowUpsTests
+{
+    private static string MakeVenv(TempDirectory temp)
+    {
+        var interpreter = Path.Combine(temp.Path, PythonProjectGenerator.VenvInterpreter);
+        Directory.CreateDirectory(Path.GetDirectoryName(interpreter)!);
+        File.WriteAllText(interpreter, "");
+        return interpreter;
+    }
+
+    private static Uri Folder(TempDirectory temp) => new(Path.TrimEndingDirectorySeparator(temp.Path) + Path.DirectorySeparatorChar);
+
+    [Fact]
+    public async Task A_Python_project_s_venv_becomes_its_folder_s_interpreter()
+    {
+        using var temp = new TempDirectory();
+        var interpreter = MakeVenv(temp);
+        var python = new FakePythonEnvironments();
+        var progress = new RecordingProgress();
+        await new ProjectFollowUps(python).RunAsync(PythonProjectGenerator.GeneratorId, new ProjectResult(temp.Path, null), progress, TestContext.Current.CancellationToken);
+        Assert.Equal(interpreter, python.Picks[Folder(temp)]);
+        Assert.Contains(progress.Steps, s => s.StartsWith("Selected the interpreter 3.14.0 ('.venv': venv)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Nothing_is_picked_without_a_venv_or_for_another_generator()
+    {
+        using var temp = new TempDirectory();
+        var python = new FakePythonEnvironments();
+        var followUps = new ProjectFollowUps(python);
+        await followUps.RunAsync(PythonProjectGenerator.GeneratorId, new ProjectResult(temp.Path, null), new RecordingProgress(), TestContext.Current.CancellationToken);
+        MakeVenv(temp);
+        await followUps.RunAsync(RustProjectGenerator.GeneratorId, new ProjectResult(temp.Path, null), new RecordingProgress(), TestContext.Current.CancellationToken);
+        Assert.Empty(python.Picks);
+        await new ProjectFollowUps().RunAsync(PythonProjectGenerator.GeneratorId, new ProjectResult(temp.Path, null), new RecordingProgress(), TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task A_failing_service_is_a_warning_not_an_exception()
+    {
+        using var temp = new TempDirectory();
+        MakeVenv(temp);
+        var progress = new RecordingProgress();
+        await new ProjectFollowUps(new FakePythonEnvironments { Throw = new IOException("state is read-only") })
+            .RunAsync(PythonProjectGenerator.GeneratorId, new ProjectResult(temp.Path, null), progress, TestContext.Current.CancellationToken);
+        Assert.Contains("warning: After creating the project: state is read-only", progress.Lines);
+    }
+}
