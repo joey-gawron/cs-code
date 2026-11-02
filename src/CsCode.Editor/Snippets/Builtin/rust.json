@@ -1,0 +1,515 @@
+{
+  "function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}($2) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "function"
+  },
+  "function returning a value": {
+    "prefix": "fnr",
+    "body": [
+      "fn ${1:name}($2) -> ${3:Type} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "function with a return type"
+  },
+  "public function": {
+    "prefix": "pfn",
+    "body": [
+      "pub fn ${1:name}($2) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "public function"
+  },
+  "async function": {
+    "prefix": "afn",
+    "body": [
+      "async fn ${1:name}($2) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "async function"
+  },
+  "main": {
+    "prefix": "main",
+    "body": [
+      "fn main() {",
+      "\t$0",
+      "}"
+    ],
+    "description": "main function"
+  },
+  "main returning Result": {
+    "prefix": "mainr",
+    "body": [
+      "fn main() -> Result<(), Box<dyn std::error::Error>> {",
+      "\t$0",
+      "\tOk(())",
+      "}"
+    ],
+    "description": "main function that can return an error with ?"
+  },
+  "constructor": {
+    "prefix": "new",
+    "body": [
+      "pub fn new($1) -> Self {",
+      "\tSelf { $0 }",
+      "}"
+    ],
+    "description": "new() constructor in an impl block"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "\t${2:field}: ${3:Type},$0",
+      "}"
+    ],
+    "description": "struct with named fields"
+  },
+  "tuple struct": {
+    "prefix": "tstruct",
+    "body": [
+      "struct ${1:Name}(${2:Type});$0"
+    ],
+    "description": "tuple struct"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} {",
+      "\t${2:Variant},$0",
+      "}"
+    ],
+    "description": "enum"
+  },
+  "impl": {
+    "prefix": "impl",
+    "body": [
+      "impl ${1:Type} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "impl block"
+  },
+  "impl trait": {
+    "prefix": "implt",
+    "body": [
+      "impl ${1:Trait} for ${2:Type} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "trait implementation"
+  },
+  "trait": {
+    "prefix": "trait",
+    "body": [
+      "trait ${1:Name} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "trait"
+  },
+  "impl Display": {
+    "prefix": "display",
+    "body": [
+      "impl std::fmt::Display for ${1:Type} {",
+      "\tfn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {",
+      "\t\twrite!(f, \"$2\")$0",
+      "\t}",
+      "}"
+    ],
+    "description": "Display implementation"
+  },
+  "impl Default": {
+    "prefix": "default",
+    "body": [
+      "impl Default for ${1:Type} {",
+      "\tfn default() -> Self {",
+      "\t\tSelf { $0 }",
+      "\t}",
+      "}"
+    ],
+    "description": "Default implementation"
+  },
+  "impl From": {
+    "prefix": "from",
+    "body": [
+      "impl From<${1:Source}> for ${2:Type} {",
+      "\tfn from(${3:value}: $1) -> Self {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ],
+    "description": "From conversion"
+  },
+  "impl Iterator": {
+    "prefix": "iterator",
+    "body": [
+      "impl Iterator for ${1:Type} {",
+      "\ttype Item = ${2:Item};",
+      "",
+      "\tfn next(&mut self) -> Option<Self::Item> {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ],
+    "description": "Iterator implementation"
+  },
+  "impl Drop": {
+    "prefix": "drop",
+    "body": [
+      "impl Drop for ${1:Type} {",
+      "\tfn drop(&mut self) {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ],
+    "description": "Drop implementation"
+  },
+  "error type": {
+    "prefix": "errortype",
+    "body": [
+      "#[derive(Debug)]",
+      "pub enum ${1:Error} {",
+      "\t${2:Variant},",
+      "}",
+      "",
+      "impl std::fmt::Display for $1 {",
+      "\tfn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {",
+      "\t\tmatch self {",
+      "\t\t\tSelf::$2 => write!(f, \"${3:message}\"),",
+      "\t\t}",
+      "\t}",
+      "}",
+      "",
+      "impl std::error::Error for $1 {}$0"
+    ],
+    "description": "error enum with Display and std::error::Error"
+  },
+  "derive": {
+    "prefix": "derive",
+    "body": [
+      "#[derive(${1:Debug, Clone, PartialEq})]"
+    ],
+    "description": "derive attribute"
+  },
+  "allow": {
+    "prefix": "allow",
+    "body": [
+      "#[allow(${1:dead_code})]"
+    ],
+    "description": "allow a lint"
+  },
+  "cfg": {
+    "prefix": "cfg",
+    "body": [
+      "#[cfg(${1:feature = \"${2:name}\"})]"
+    ],
+    "description": "conditional compilation attribute"
+  },
+  "module": {
+    "prefix": "mod",
+    "body": [
+      "mod ${1:name} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "inline module"
+  },
+  "test": {
+    "prefix": "test",
+    "body": [
+      "#[test]",
+      "fn ${1:name}() {",
+      "\t$0",
+      "}"
+    ],
+    "description": "test function"
+  },
+  "test module": {
+    "prefix": "tests",
+    "body": [
+      "#[cfg(test)]",
+      "mod tests {",
+      "\tuse super::*;",
+      "",
+      "\t#[test]",
+      "\tfn ${1:it_works}() {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ],
+    "description": "test module with one test"
+  },
+  "should_panic test": {
+    "prefix": "testpanic",
+    "body": [
+      "#[test]",
+      "#[should_panic(expected = \"${2:message}\")]",
+      "fn ${1:name}() {",
+      "\t$0",
+      "}"
+    ],
+    "description": "test that expects a panic"
+  },
+  "doc example": {
+    "prefix": "docex",
+    "body": [
+      "/// # Examples",
+      "///",
+      "/// ```",
+      "/// $0",
+      "/// ```"
+    ],
+    "description": "doc comment example (a doc-test)"
+  },
+  "macro_rules": {
+    "prefix": "macro",
+    "body": [
+      "macro_rules! ${1:name} {",
+      "\t($2) => {",
+      "\t\t$0",
+      "\t};",
+      "}"
+    ],
+    "description": "declarative macro"
+  },
+  "const": {
+    "prefix": "const",
+    "body": [
+      "const ${1:NAME}: ${2:Type} = ${0:value};"
+    ],
+    "description": "constant"
+  },
+  "static": {
+    "prefix": "static",
+    "body": [
+      "static ${1:NAME}: ${2:Type} = ${0:value};"
+    ],
+    "description": "static item"
+  },
+  "let": {
+    "prefix": "let",
+    "body": [
+      "let ${1:name} = ${0:value};"
+    ],
+    "description": "let binding"
+  },
+  "let mut": {
+    "prefix": "letm",
+    "body": [
+      "let mut ${1:name} = ${0:value};"
+    ],
+    "description": "mutable let binding"
+  },
+  "let else": {
+    "prefix": "letelse",
+    "body": [
+      "let ${1:Some(value)} = ${2:option} else {",
+      "\t${0:return};",
+      "};"
+    ],
+    "description": "let ... else"
+  },
+  "if": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "if expression"
+  },
+  "if/else": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition} {",
+      "\t$2",
+      "} else {",
+      "\t$0",
+      "}"
+    ],
+    "description": "if / else"
+  },
+  "if let": {
+    "prefix": "iflet",
+    "body": [
+      "if let ${1:Some(value)} = ${2:option} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "if let"
+  },
+  "match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:value} {",
+      "\t${2:pattern} => ${3:expression},",
+      "\t_ => ${0:todo!()},",
+      "}"
+    ],
+    "description": "match expression"
+  },
+  "match Option": {
+    "prefix": "matcho",
+    "body": [
+      "match ${1:option} {",
+      "\tSome(${2:value}) => $3,",
+      "\tNone => $0,",
+      "}"
+    ],
+    "description": "match on an Option"
+  },
+  "match Result": {
+    "prefix": "matchr",
+    "body": [
+      "match ${1:result} {",
+      "\tOk(${2:value}) => $3,",
+      "\tErr(${4:error}) => $0,",
+      "}"
+    ],
+    "description": "match on a Result"
+  },
+  "while": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "while loop"
+  },
+  "while let": {
+    "prefix": "whilelet",
+    "body": [
+      "while let ${1:Some(item)} = ${2:iter.next()} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "while let loop"
+  },
+  "loop": {
+    "prefix": "loop",
+    "body": [
+      "loop {",
+      "\t$0",
+      "}"
+    ],
+    "description": "infinite loop"
+  },
+  "for": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:items} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "for loop"
+  },
+  "for range": {
+    "prefix": "forr",
+    "body": [
+      "for ${1:i} in ${2:0}..${3:n} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "for loop over a range"
+  },
+  "for enumerate": {
+    "prefix": "fore",
+    "body": [
+      "for (${1:index}, ${2:item}) in ${3:items}.iter().enumerate() {",
+      "\t$0",
+      "}"
+    ],
+    "description": "for loop with enumerate"
+  },
+  "closure": {
+    "prefix": "closure",
+    "body": [
+      "|${1:args}| ${0:expression}"
+    ],
+    "description": "closure"
+  },
+  "unsafe": {
+    "prefix": "unsafe",
+    "body": [
+      "// SAFETY: ${1:why this is sound}",
+      "unsafe {",
+      "\t$0",
+      "}"
+    ],
+    "description": "unsafe block with its SAFETY comment"
+  },
+  "println": {
+    "prefix": "println",
+    "body": [
+      "println!(\"$1\");$0"
+    ],
+    "description": "print a line"
+  },
+  "println debug": {
+    "prefix": "printd",
+    "body": [
+      "println!(\"${1:value} = {:?}\", ${2:$1});$0"
+    ],
+    "description": "print a value with its Debug format"
+  },
+  "eprintln": {
+    "prefix": "eprintln",
+    "body": [
+      "eprintln!(\"$1\");$0"
+    ],
+    "description": "print a line to stderr"
+  },
+  "format": {
+    "prefix": "format",
+    "body": [
+      "format!(\"$1\")$0"
+    ],
+    "description": "format! a String"
+  },
+  "vec": {
+    "prefix": "vec",
+    "body": [
+      "vec![$1]$0"
+    ],
+    "description": "vec! literal"
+  },
+  "HashMap": {
+    "prefix": "hashmap",
+    "body": [
+      "let mut ${1:map} = std::collections::HashMap::new();$0"
+    ],
+    "description": "new mutable HashMap"
+  },
+  "assert": {
+    "prefix": "assert",
+    "body": [
+      "assert!(${1:condition});$0"
+    ],
+    "description": "assert!"
+  },
+  "assert_eq": {
+    "prefix": "asserteq",
+    "body": [
+      "assert_eq!(${1:left}, ${2:right});$0"
+    ],
+    "description": "assert_eq!"
+  },
+  "thread spawn": {
+    "prefix": "spawn",
+    "body": [
+      "let ${1:handle} = std::thread::spawn(move || {",
+      "\t$0",
+      "});"
+    ],
+    "description": "spawn a thread"
+  }
+}

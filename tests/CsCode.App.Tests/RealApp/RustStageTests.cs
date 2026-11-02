@@ -259,4 +259,70 @@ public class RealAppRustStageTests
         Capture(host, "rust-run-task");
         await host.ClosePaletteAsync(running);
     }
+
+    /// <summary>Records the kinds a code-action request asks for; offers nothing.</summary>
+    private sealed class AskedCodeActions : ICodeActionProvider
+    {
+        private readonly List<string> _asked = [];
+        public IReadOnlyList<string> Asked { get { lock (_asked) return [.. _asked]; } }
+
+        public ValueTask<IReadOnlyList<CodeAction>?> ProvideCodeActionsAsync(ITextDocument document, TextRange range, CodeActionContext context, CancellationToken ct)
+        {
+            lock (_asked) _asked.Add($"{string.Join(",", context.Only ?? [])} ({context.TriggerKind})");
+            return ValueTask.FromResult<IReadOnlyList<CodeAction>?>(null);
+        }
+    }
+
+    /// <summary>Unsorted imports, two of them unused, and a line rustfmt reflows.</summary>
+    private const string ImportsSource = "use std::fmt::Display;\nuse std::collections::HashMap;\nuse std::collections::BTreeMap;\n\npub fn count(m:&HashMap<i32,i32>)->usize{m.len()}\n";
+    private const string ImportsFormatted = "use std::collections::BTreeMap;\nuse std::collections::HashMap;\nuse std::fmt::Display;\n\npub fn count(m: &HashMap<i32, i32>) -> usize {\n    m.len()\n}\n";
+
+    [AvaloniaFact(Timeout = 240_000)]
+    public async Task Organize_imports_on_save_is_rustfmts_import_order_and_applies_none_of_rust_analyzers_quick_fixes()
+    {
+        Assert.SkipWhen(GdbToolchain.FindCargo() is null || JsDebugToolchain.FindOnPath("rust-analyzer") is null, "cargo or rust-analyzer is not on PATH");
+        await using var host = CreateHost(s =>
+        {
+            s["cscode.languageServers"]!["rust-analyzer"] = new JsonObject { ["enabled"] = true };
+            s["[rust]"] = new JsonObject
+            {
+                ["editor.formatOnSave"] = true,
+                ["editor.codeActionsOnSave"] = new JsonObject { ["source.organizeImports"] = "explicit" },
+                ["editor.codeActionsOnSaveTimeout"] = 10_000, // rust-analyzer answers within it: what the save skips, it skipped by kind
+            };
+        });
+        host.Files.WriteFile("src/lib.rs", ImportsSource);
+        await host.StartAsync([Folder(host)]);
+        var lib = new Uri(Path.Combine(Folder(host), "src", "lib.rs"));
+        await host.Get<INavigationService>().OpenAsync(lib, TextRange.At(0, 0));
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.EditorTabs.Any(t => t.Title == "lib.rs" && t.Controller is not null)), "lib.rs opened");
+        var bar = host.Get<IStatusBarService>();
+        Assert.True(await RealAppHost.WaitFor(() => bar.Items.Any(i => i.Id == "rust-analyzer.status" && i.Text == "✓ rust-analyzer"), 180_000), "rust-analyzer quiescent");
+
+        // asked for source.organizeImports, rust-analyzer (which advertises no such kind) answers with its unused-import quick fixes
+        var doc = host.Get<IDocumentManager>().Get(lib)!;
+        var asked = new CodeActionContext([], ["source.organizeImports"], CodeActionTriggerKind.Automatic);
+        var offered = new List<CodeAction>();
+        for (var deadline = DateTime.UtcNow.AddSeconds(60); offered.Count == 0 && DateTime.UtcNow < deadline;)
+        {
+            foreach (var provider in host.Get<ILanguageFeatureRegistry>().GetProviders<ICodeActionProvider>(doc))
+                offered.AddRange(await provider.ProvideCodeActionsAsync(doc, TextRange.FromLines(0, 0, 3, 0), asked, TestContext.Current.CancellationToken) ?? []);
+            Dispatcher.UIThread.RunJobs();
+            if (offered.Count == 0) await Task.Delay(250, TestContext.Current.CancellationToken);
+        }
+        Note("asked for source.organizeImports, rust-analyzer offered: " + string.Join(", ", offered.Select(a => $"{a.Title} ({a.Kind})")));
+        Assert.DoesNotContain(offered, a => a.Kind is "source.organizeImports" || a.Kind?.StartsWith("source.organizeImports.", StringComparison.Ordinal) == true); // else: update docs/RUST.md
+        Assert.Contains(offered, a => a.Kind == "quickfix");
+
+        // the shell's Save: code actions on save keep only actions of the asked kind, so none of those; format on save (rustfmt) sorts the imports
+        var probe = new AskedCodeActions(); // asked in turn with rust-analyzer: shows the save did ask for organize imports
+        using (host.Get<ILanguageFeatureRegistry>().Register<ICodeActionProvider>(DocumentSelector.ForLanguage("rust"), probe))
+            await host.RunAsync(KnownCommands.Save);
+        var path = lib.LocalPath;
+        Assert.True(await RealAppHost.WaitFor(() => File.ReadAllText(path) != ImportsSource, 30_000), "the save wrote the file");
+        Assert.Contains("source.organizeImports (Automatic)", probe.Asked);
+        Assert.Equal(ImportsFormatted, File.ReadAllText(path));
+        Note("saved with organize imports + format on save:\n" + File.ReadAllText(path));
+        Capture(host, "rust-organize-imports-on-save");
+    }
 }
