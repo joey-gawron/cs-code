@@ -183,6 +183,13 @@ public sealed class ShellController : IDisposable
             _disposables.Add(markdown);
         }
 
+        // .NET (docs/CSHARP.md): NuGet Add/Update/Remove/Restore, dotnet new, the C# language server choice
+        if (global::CsCode.App.DotNet.DotNetCommands.TryCreate(_sp) is { } dotnet)
+        {
+            dotnet.Start();
+            _disposables.Add(dotnet);
+        }
+
         Menus = new MenuModel(ShellMenus.Build(), commands, keys, _ui, _sp.GetService<IKeybindingService>(), workspace, () => specs);
         _disposables.Add(Menus);
         // Edit > Cut/Copy/Paste follow keyboard focus; right-click menus (editor, tabs, tool windows) are built from contributions.

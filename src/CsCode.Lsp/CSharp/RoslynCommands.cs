@@ -30,11 +30,20 @@ internal static class RoslynCommands
     public const string FixAllCodeAction = "roslyn.client.fixAllCodeAction";
     public const string CompletionComplexEdit = "roslyn.client.completionComplexEdit";
     public const string ResolveFixAllMethod = "codeAction/resolveFixAll";
+    /// <summary>"C#: Open Solution...": choose again which solution (or the projects) the running Roslyn server loads.</summary>
+    public const string OpenSolution = "csharp.openSolution";
 
     /// <param name="clients">The running Roslyn clients.</param>
-    public static IDisposable Register(ICommandService commands, Func<IReadOnlyList<LanguageClient>> clients)
+    /// <param name="restart">Restarts the Roslyn servers (the new choice is read when the server opens the code again).</param>
+    public static IDisposable Register(ICommandService commands, Func<IReadOnlyList<LanguageClient>> clients, Func<ValueTask>? restart = null)
     {
         var store = new DisposableStore();
+        store.Add(commands.Register(OpenSolution, async _ =>
+        {
+            if (clients().FirstOrDefault() is not { } client || client.Roslyn is not { } session || client.Services.Window is not { } window) return null;
+            if (await session.ChooseAgainAsync(window).ConfigureAwait(false) && restart is not null) await restart().ConfigureAwait(false);
+            return null;
+        }, new CommandMetadata(OpenSolution, "Open Solution...", "C#")));
         store.Add(commands.Register(NestedCodeAction, args => RunAsync(args, clients, NestedAsync), new CommandMetadata(NestedCodeAction, "C#: Choose a Code Action", "C#")));
         store.Add(commands.Register(FixAllCodeAction, args => RunAsync(args, clients, FixAllAsync), new CommandMetadata(FixAllCodeAction, "C#: Fix All Occurrences", "C#")));
         store.Add(commands.Register(CompletionComplexEdit, args => RunAsync(args, clients, ComplexEditAsync), new CommandMetadata(CompletionComplexEdit, "C#: Complete", "C#")));

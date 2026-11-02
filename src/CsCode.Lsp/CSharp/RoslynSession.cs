@@ -108,9 +108,10 @@ internal sealed class RoslynSession
     private async Task<string?> ChooseSolutionAsync(string root)
     {
         var solutions = FindSolutions(root);
-        if (solutions.Count <= 1) return solutions.FirstOrDefault();
         var state = _client.Services.State;
         var remembered = state?.Get<Dictionary<string, string>>(SolutionChoiceKey, StorageScope.Workspace);
+        if (remembered?.GetValueOrDefault(root) == ProjectsChoice) return null;
+        if (solutions.Count <= 1) return solutions.FirstOrDefault();
         if (remembered?.GetValueOrDefault(root) is { } known && solutions.Contains(known, StringComparer.Ordinal)) return known;
         if (_client.Services.Window is not { } window) return solutions[0];
         var items = solutions.Select(s => new QuickPickItem(Path.GetFileName(s), Path.GetRelativePath(root, Path.GetDirectoryName(s)!) is "." ? null : Path.GetDirectoryName(s), Tag: s)).ToArray();
@@ -123,6 +124,32 @@ internal sealed class RoslynSession
         }
         return chosen;
     }
+
+    /// <summary>
+    /// "C#: Open Solution...": a pick among the solutions at the server's root (and its projects), remembered for the root. True when the choice
+    /// changed (the caller restarts the server, which opens it).
+    /// </summary>
+    public async Task<bool> ChooseAgainAsync(IWindowService window)
+    {
+        var root = _client.RootUri is { IsFile: true } r ? r.LocalPath : null;
+        if (root is null) return false;
+        var solutions = await Task.Run(() => FindSolutions(root)).ConfigureAwait(false);
+        const string Projects = "\0projects";
+        var items = solutions.Select(s => new QuickPickItem(Path.GetFileName(s), Opened.Contains(s) ? "loaded" : null, Tag: s))
+            .Append(new QuickPickItem("Every project under " + Path.GetFileName(root.TrimEnd('/')), Opened.Count > 1 || (Opened.Count == 1 && !solutions.Contains(Opened[0])) ? "loaded" : null, Tag: Projects))
+            .ToArray();
+        var picked = await window.ShowQuickPickAsync(items, new QuickPickOptions("C#: Open Solution", "What should the C# server load?")).ConfigureAwait(false);
+        if (picked?.Tag is not string chosen) return false;
+        var state = _client.Services.State;
+        var remembered = new Dictionary<string, string>(state?.Get<Dictionary<string, string>>(SolutionChoiceKey, StorageScope.Workspace) ?? new(), StringComparer.Ordinal);
+        if (chosen == Projects) remembered[root] = ProjectsChoice;
+        else remembered[root] = chosen;
+        state?.Set(SolutionChoiceKey, remembered, StorageScope.Workspace);
+        return chosen == Projects ? Opened.Count == 1 && solutions.Contains(Opened[0]) : !Opened.Contains(chosen);
+    }
+
+    /// <summary>The remembered choice that means "open every project, not a solution".</summary>
+    internal const string ProjectsChoice = "<projects>";
 
     /// <summary>The <c>.sln</c> and <c>.slnx</c> files directly in <paramref name="root"/>, sorted.</summary>
     internal static List<string> FindSolutions(string root) =>
