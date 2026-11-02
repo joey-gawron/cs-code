@@ -57,7 +57,7 @@ public class EndPassDebugTests
 
         Assert.False(File.Exists(Path.Combine(h.Dir.Path, ".cscode", "tasks.json")), "a .cscode/tasks.json would hide the user's tasks");
         Assert.Equal(Path.Combine(h.Dir.Path, ".vscode", "launch.json"), launch.LocalPath); // next to the folder's tasks.json
-        Assert.Equal(["user-task", "build"], (await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct)).Select(t => t.Label));
+        Assert.Equal(["user-task", "build", "watch"], (await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct)).Select(t => t.Label));
         var text = File.ReadAllText(Path.Combine(h.Dir.Path, ".vscode", "tasks.json"));
         Assert.Contains("// the user's own tasks", text, StringComparison.Ordinal); // the user's text is kept as written
         var result = await h.Tasks.RunAsync("user-task", h.Dir.Uri, Ct);
@@ -75,7 +75,7 @@ public class EndPassDebugTests
             """);
         await h.Configurations.CreateLaunchJsonAsync("coreclr", h.Dir.Uri, Ct);
         var tasks = await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct);
-        Assert.Equal("build", Assert.Single(tasks).Label);
+        Assert.Equal(["build", "watch"], tasks.Select(t => t.Label)); // the template's watch task (dotnet watch) is new; its build is the user's
         Assert.Contains("\"make\"", File.ReadAllText(Path.Combine(h.Dir.Path, ".vscode", "tasks.json")), StringComparison.Ordinal);
     }
 
@@ -90,7 +90,7 @@ public class EndPassDebugTests
             """);
         await h.Configurations.CreateLaunchJsonAsync("coreclr", h.Dir.Uri, Ct);
         var tasks = await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct);
-        Assert.Equal(["make all", "build"], tasks.Select(t => t.Label));
+        Assert.Equal(["make all", "build", "watch"], tasks.Select(t => t.Label));
         Assert.Equal("make all", Assert.Single(tasks, t => t.IsDefaultBuild).Label);
         Assert.Equal(("build", false), (tasks[1].Group, tasks[1].IsDefault));
     }
@@ -106,7 +106,7 @@ public class EndPassDebugTests
             """);
         await h.Configurations.CreateLaunchJsonAsync("coreclr", h.Dir.Uri, Ct);
         var tasks = await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct);
-        Assert.Equal(["test", "build"], tasks.Select(t => t.Label));
+        Assert.Equal(["test", "build", "watch"], tasks.Select(t => t.Label));
         Assert.Equal("build", Assert.Single(tasks, t => t.IsDefaultBuild).Label);
         Assert.Equal(("test", true), (tasks[0].Group, tasks[0].IsDefault));
     }
@@ -438,9 +438,10 @@ public class EndPassDebugTests
         h.Dir.WriteFile(".vscode/launch.json", "{ \"version\": \"0.2.0\", \"configurations\": [] }");
         await AddConfigurationAsync(h, "coreclr", ".NET: Launch");
         Assert.True(File.Exists(Path.Combine(h.Dir.Path, ".vscode", "tasks.json")));
-        var build = Assert.Single(await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct));
-        Assert.Equal("build", build.Label);
-        Assert.True(build.IsDefaultBuild);
+        var tasks = await h.Tasks.GetTasksAsync(h.Dir.Uri, Ct);
+        Assert.Equal(["build", "watch"], tasks.Select(t => t.Label));
+        Assert.True(tasks[0].IsDefaultBuild);
+        Assert.Contains("$dotnet-watch", File.ReadAllText(Path.Combine(h.Dir.Path, ".vscode", "tasks.json")), StringComparison.Ordinal);
     }
 
     /// <summary>A tasks.json open in the editor gets the task there (unsaved, like the configuration), not behind the editor's back.</summary>
