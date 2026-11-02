@@ -12,6 +12,7 @@ and what is left. Brief: `docs/briefs/lang-5-csharp.md`.
 | Code actions on save | `editor.codeActionsOnSave`'s `source.organizeImports` (**Organize Usings**: Roslyn's remove unnecessary usings, then its sort) and `source.fixAll` (**Fix All in Document**: each analyzer warning's document-wide fix all), built from Roslyn's own actions; also Shift+Alt+O and the palette | `src/CsCode.Lsp/CSharp/RoslynSourceActions.cs` |
 | Tasks | **detected `dotnet` tasks** (Run Task, `preLaunchTask`): build, test and clean of the solution and of each project, run and **watch** (`dotnet watch run`, hot reload, tracked through `$dotnet-watch`) of each program; the tasks.json template has `build` and `watch` | `src/CsCode.Dap/Tasks/DotnetTaskProvider.cs`, `ProblemMatchers.cs` |
 | NuGet | **NuGet: Add / Update / Remove Package…**, **NuGet: Restore Packages** | `src/CsCode.App/DotNet/` |
+| New items | **.NET: New Item…** (and **New .NET Item…** on an Explorer folder): the SDK's item templates (`dotnet new list --type item`, through the New Project page's listing), named and namespaced for the folder | `src/CsCode.App/DotNet/` |
 
 ## 1. The two servers
 
@@ -260,6 +261,19 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
   as a task in a terminal. **Update Package…** picks among the project's references (`dotnet list package --format json`) and a version;
   **Remove Package…** runs `dotnet remove package`; **Restore Packages** runs `dotnet restore`. Sources that need credentials are not searched (no
   credential provider): they are listed in the NuGet output channel.
+* **.NET: New Item…** (`dotnet.newItem`; on an Explorer folder **New .NET Item…**, shown when a workspace folder has a project or solution at
+  its top or two levels down). The folder is the Explorer's, else the active file's, else the workspace folder; its nearest project gives the
+  language (`.fsproj` F#, `.vbproj` VB, else C#). The quick pick lists the SDK's item templates of that language and the language-free ones
+  (`dotnet new list --type item`, parsed by stage 7's `DotnetTemplates.ParseList`, kept for 5 minutes; SDK 10.0.403 has API/MVC controllers,
+  Razor components, pages and views, MSTest and NUnit test classes, protobuf, and config files: EditorConfig, global.json, nuget.config,
+  Directory.Build.props/targets, Directory.Packages.props…, but no plain class or interface item). It then asks for a name (a typed `.cs` is
+  dropped) unless the template writes a file of a fixed name (tags Config, MSBuild); passes `--language` to a template of several languages;
+  and passes `--namespace` (the project's `RootNamespace`, else its name, plus the folders below it, made identifiers) when the template's
+  `--help` lists it. A `--dry-run` comes first: it names the files to open afterwards, and an item that would replace a file (exit code 73) is
+  created with `--force` only after **Replace**. A template whose constraint fails because the project is not restored (the MSTest class)
+  offers **Restore and Create**; other constraints offer **Create Anyway**. `dotnet new` runs without a terminal; a failure shows its output.
+  Checked with the real SDK (`DotNetNewItemTests`): an API controller in `Controllers/` gets `namespace My.App.Controllers`, a second one asks
+  before replacing, an `.editorconfig` asks no name.
 
 ## 7. Seen in the real application (2026-11-01, macOS arm64)
 
@@ -281,8 +295,7 @@ printed the platform's telemetry banner (the debug launch now passes `TESTINGPLA
 
 ## 8. Deferred (open after the merge of every stage)
 
-* **`dotnet new`: New Project / New Item** — the brief's SHOULD item moved to stage 7 (the New Project page), which owns project creation and
-  the template listing (scope change, 2026-11-01). New Item can reuse that listing once stage 7 is merged.
+* **`dotnet new` New Project** — stage 7's New Project page creates .NET projects (scope change, 2026-11-01); New Item is here (section 6).
 
 Stage 2's per-server extension pattern was cherry-picked from the Rust branch (its commits "Add the per-server LSP extension pattern…" and
 "Let server extensions answer server-to-client requests…", at the Rust session's suggestion) and Roslyn is built on it: `RoslynExtension`
