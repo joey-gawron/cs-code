@@ -78,6 +78,11 @@ if [[ "$with_python" == 1 ]]; then
       # npm checks each tarball against the registry's integrity (SHA-512) before unpacking it.
       npm install --prefix "$dest" --no-audit --no-fund --loglevel=error --save-exact "pyright@$PYRIGHT_VERSION" "basedpyright@$BASEDPYRIGHT_VERSION"
     fi
+    # basedpyright's package also declares the bins `pyright` and `pyright-langserver`, and npm links them to basedpyright: point them back at
+    # Pyright's own scripts, or everything that starts "Pyright" from here runs basedpyright.
+    ln -sf ../pyright/index.js "$dest/node_modules/.bin/pyright"
+    ln -sf ../pyright/langserver.index.js "$dest/node_modules/.bin/pyright-langserver"
+    "$dest/node_modules/.bin/pyright" --version
   fi
   # shellcheck source=python/venv.sh
   source "$root/tools/python/venv.sh"
