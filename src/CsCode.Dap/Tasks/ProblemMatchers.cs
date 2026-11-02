@@ -240,8 +240,10 @@ internal static class ProblemMatchers
 /// <summary>
 /// Runs a task's problem matchers over its output and publishes what they find to <see cref="IDiagnosticService"/> (the Error List), owner
 /// <c>task.&lt;matcher owner&gt;</c>: each matcher's earlier problems are cleared when the task starts (VS Code clears a matcher's markers per
-/// run), lines are split from the raw output with escape sequences removed and carriage-return overwrites resolved, and at most
-/// <see cref="MaxProblems"/> problems are kept. Single-threaded: the task runner feeds it on its lane.
+/// run), lines are split from the raw output with escape sequences removed and carriage-return overwrites resolved, a problem already found
+/// for its file in this run (or background cycle) is not added again (VS Code records a marker once per resource: MSBuild's summary repeats
+/// each error when its output is not a terminal), and at most <see cref="MaxProblems"/> problems are kept. Single-threaded: the task runner
+/// feeds it on its lane.
 /// </summary>
 internal sealed class ProblemCollector
 {
@@ -517,6 +519,7 @@ internal sealed class ProblemCollector
             message.Trim(), severity, data.GetValueOrDefault("code"), matcher.Source ?? matcher.Owner);
         var key = (Owner(matcher), uri);
         if (!_found.TryGetValue(key, out var list)) _found[key] = list = new List<Diagnostic>();
+        if (list.Contains(diagnostic)) return; // the same problem again (a build summary's repeat): counted once
         list.Add(diagnostic);
         _dirty.Add(key);
         _count++;

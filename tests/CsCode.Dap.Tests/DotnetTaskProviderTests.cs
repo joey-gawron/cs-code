@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CsCode.Core.Languages;
 using CsCode.Core.Tasks;
 using CsCode.Dap.Client;
@@ -195,12 +196,11 @@ public class DotnetTaskProviderTests
         dir.WriteFile("Program.cs", "System.Console.WriteLine(\"up\")\n");
         var broken = await service.RunAsync("dotnet: build", dir.Uri, TestToken.Ct);
         Assert.False(broken.Succeeded);
-        // (twice without a terminal: redirected, MSBuild's summary repeats each error whatever /consoleloggerparameters says; a task terminal's
-        // terminal logger prints it once)
-        var errors = diagnostics.GetAll().Where(d => d.Diagnostic.Code == "CS1002").ToList();
-        Assert.NotEmpty(errors);
-        Assert.All(errors, e => Assert.EndsWith(Path.GetFileName(dir.Path) + "/Program.cs", e.Uri.LocalPath, StringComparison.Ordinal)); // GenerateFullPaths
-        Assert.All(errors, e => Assert.Equal(0, e.Diagnostic.Range.Start.Line));
+        // once, though without a terminal MSBuild's summary repeats it (whatever /consoleloggerparameters says)
+        Assert.Equal(2, Regex.Count(output.Text(TaskService.ChannelName), @"error CS1002"));
+        var error = Assert.Single(diagnostics.GetAll(), d => d.Diagnostic.Code == "CS1002");
+        Assert.EndsWith(Path.GetFileName(dir.Path) + "/Program.cs", error.Uri.LocalPath, StringComparison.Ordinal); // GenerateFullPaths
+        Assert.Equal(0, error.Diagnostic.Range.Start.Line);
 
         // dotnet watch: ready once the program started (the run returns then), the error cleared by that build; still running until terminated
         dir.WriteFile("Program.cs", Sleeper);
