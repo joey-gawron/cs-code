@@ -161,8 +161,19 @@ macOS asks for an administrator in a dialog first.
 
 ## 7. Seen in the real app
 
-Recorded in section 9 of the stage report and below once checked in the window (`tools/package-macos.sh`-built app or `dotnet run`, a temp
-`CSCODE_HOME`).
+**Not yet.** On 2026-11-01 the Mac's screen was locked (`ioreg -n Root -d1` reports `CGSSessionScreenIsLocked=Yes`), and CsCode cannot start
+without an active display: Avalonia.Native fails to create its render timer (`CVDisplayLink`, CoreVideo error -6661) and the app exits with a
+crash report. Everything above is proven by the tests in section 9 against the real cmake, ninja, ctest, clangd, CodeLLDB and lldb-dap; the
+window checks below remain to be done:
+
+1. Open a CMake C project with one visible configure preset (with `cmake.configureOnOpen: true`, or answer *Configure*): the status bar shows
+   `CMake: [debug]`, `build/<preset>/compile_commands.json` appears, and clangd resolves `#include "mathlib.h"` (no diagnostic; hover works).
+2. Click `Build` in the status bar: the CMake output channel shows the build; a deliberate error lands in the Error List at its line.
+3. Choose the launch target, click the bug button: the debugger stops at a breakpoint in `main.c` and the Locals show values.
+4. Test Explorer: the CTest tests appear (with `subtracts [fast, math]`), Run All shows `fails` failed with its output, Debug on a test stops
+   at a breakpoint in `tests/math_tests.c`.
+5. ⌘+hover over `#include "mathlib.h"` underlines it; ⌘+Click opens `include/mathlib.h`.
+6. With `"terminal": "integrated"` in `cmake.debugConfig`, a program reading stdin gets the keys typed in the integrated terminal.
 
 ## 8. Deferred (waits for other stages)
 
