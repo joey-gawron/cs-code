@@ -234,6 +234,21 @@ public sealed class RealRustAnalyzerTests(RealRustAnalyzerTests.Fixture f) : ICl
     }
 
     [Fact]
+    public async Task Inlay_hints_resolve_their_type_parts_to_the_types_definition()
+    {
+        NeedsServer();
+        var provider = Env.Provider<IInlayHintsProvider>(f.Main);
+        var hints = await provider.ProvideInlayHintsAsync(f.Main, TextRange.FromLines(0, 0, 10, 0), Ct).Within(Long);
+        var vec = hints!.First(h => h.Label.Contains("Vec", StringComparison.Ordinal)); // let v = vec![…]: ": Vec<i32>"
+        Assert.True(vec.CanResolve); // rust-analyzer resolves lazily now that the client offers it
+        Assert.DoesNotContain(vec.LabelParts!, p => p.Location is not null);
+        var resolved = await provider.ResolveInlayHintAsync(vec, Ct).AsTask().Within(Long);
+        var part = resolved.LabelParts!.First(p => p.Value == "Vec");
+        Assert.NotNull(part.Location);
+        Assert.EndsWith("vec/mod.rs", part.Location!.Uri.AbsolutePath, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Run_quick_pick_lists_the_runnables_of_the_file()
     {
         NeedsServer();

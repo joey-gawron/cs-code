@@ -450,15 +450,32 @@ internal sealed class SemanticTokensRangeProvider : LspProvider, ISemanticTokens
         }, ct);
 }
 
-internal sealed class InlayHintsProvider(LanguageClient client) : LspProvider(client, ProviderKind.InlayHint), IInlayHintsProvider
+internal sealed class InlayHintsProvider(LanguageClient client, FeatureEntry[] entries) : LspProvider(client, ProviderKind.InlayHint), IInlayHintsProvider
 {
+    // The client advertises resolveSupport for tooltips and label parts' tooltips, locations and commands (ClientCapabilitiesFactory): a server
+    // that resolves (rust-analyzer) leaves them out of textDocument/inlayHint and sends them on inlayHint/resolve, asked when the pointer rests on
+    // a hint or before a link is followed.
+    private readonly bool _resolve = entries.Any(e => e.Opt<P.InlayHintOptions>()?.ResolveProvider == true);
+
     public ValueTask<IReadOnlyList<InlayHint>?> ProvideInlayHintsAsync(ITextDocument document, TextRange range, CancellationToken ct) =>
         Client.DocRequestAsync<IReadOnlyList<InlayHint>>(Kind, Feature(), document, LanePriority.Background, async dr =>
         {
             var p = new P.InlayHintParams { TextDocument = dr.Id, Range = dr.Mapper.ToLsp(range, dr.Uri) };
             var r = await dr.SendAsync(P.LspRequests.TextDocumentInlayHint, p, contentModifiedRetries: 2).ConfigureAwait(false);
-            return r is null ? null : r.Take(5000).Select(h => dr.Mapper.ToCore(h, dr.Uri)).ToArray();
+            return r is null ? null : r.Take(5000).Select(h => dr.Mapper.ToCore(h, dr.Uri, _resolve)).ToArray();
         }, ct);
+
+    public async ValueTask<InlayHint> ResolveInlayHintAsync(InlayHint hint, CancellationToken ct)
+    {
+        var m = Client.Mapper;
+        if (!_resolve || !hint.CanResolve || !m.TryGetInlayHintOrigin(hint, out var origin)) return hint;
+        var resolved = await Client.PlainRequestAsync<InlayHint>(LanePriority.Interactive, default, async ctx =>
+        {
+            var r = await Client.RequestAsync(ctx, P.LspRequests.InlayHintResolve, origin.Hint, ctx.Token).ConfigureAwait(false);
+            return r is null ? null : m.ToCore(r, origin.DocumentUri) with { Position = hint.Position }; // where it is placed stays the editor's
+        }, ct).ConfigureAwait(false);
+        return resolved ?? hint;
+    }
 }
 
 internal sealed class LinkedEditingProvider(LanguageClient client) : LspProvider(client, ProviderKind.LinkedEditing), ILinkedEditingRangeProvider

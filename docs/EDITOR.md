@@ -174,6 +174,12 @@ Numbers refer to the brief's MUST list.
 
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
+Inlay hints' label parts (lang-2): each part is its own text. A hint with a tooltip, a part with a location or command, or one its provider can
+resolve takes the pointer (others let clicks through to the text): resting on it resolves it once (`IInlayHintsProvider.ResolveInlayHintAsync`,
+3 s budget; rust-analyzer sends tooltips and type locations only then) and shows the part's tooltip (else the hint's) with "Ctrl+click to go to
+mod.rs:438" (⌘ on a Mac); Ctrl/⌘+click on a part opens its location (rust-analyzer: the type's definition) or runs its command, without moving
+the caret (`InlayHintResolveTests`).
+
 ## 4. Threading rules and how they are verified
 
 The binding rule — *editing must never wait for language services* — in concrete form:

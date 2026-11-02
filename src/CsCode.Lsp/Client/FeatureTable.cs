@@ -186,7 +186,7 @@ internal sealed class FeatureTable(LanguageClient client)
             ProviderKind.SelectionRange => reg.Register<ISelectionRangeProvider>(sel, new SelectionRangeProvider(client), owner),
             ProviderKind.SemanticTokens => reg.Register<ISemanticTokensProvider>(sel, new SemanticTokensProvider(client, entries), owner),
             ProviderKind.SemanticTokensRange => reg.Register<ISemanticTokensRangeProvider>(sel, new SemanticTokensRangeProvider(client, entries), owner),
-            ProviderKind.InlayHint => reg.Register<IInlayHintsProvider>(sel, new InlayHintsProvider(client), owner),
+            ProviderKind.InlayHint => reg.Register<IInlayHintsProvider>(sel, new InlayHintsProvider(client, entries), owner),
             ProviderKind.LinkedEditing => reg.Register<ILinkedEditingRangeProvider>(sel, new LinkedEditingProvider(client), owner),
             ProviderKind.CallHierarchy => reg.Register<ICallHierarchyProvider>(sel, new CallHierarchyProvider(client), owner),
             ProviderKind.TypeHierarchy => reg.Register<ITypeHierarchyProvider>(sel, new TypeHierarchyProvider(client), owner),
