@@ -107,7 +107,13 @@ Linux install; GDB comes from the system).
   for the failure location). Stable libtest reports no per-test time, so Rust tests show none (the JSON format with times needs nightly).
 * **Debug.** The test executable under the Rust debugger (`cscode.debug.rustDebugger`, read as the debugger module reads it: `lldb`/`codelldb`
   → CodeLLDB, `gdb` → GDB; unset: CodeLLDB on macOS, GDB elsewhere) with `<names> --exact --nocapture --test-threads=1`, `cwd` and `env` as for a
-  run. A debug run debugs one target (the first that holds a requested test). The libtest lines are read from the session's output.
+  run. A debug run over several targets debugs them one after another, one session each (lang-2; before, only the first). The libtest lines
+  are read from the session's output.
+* **Doc-tests** (lang-2). A package with a library also has its doc-tests listed (`cargo test --doc -- --list --format terse`) under a
+  "Doc-tests (<lib>)" target: id `doc/src/lib.rs - add (line 3)`, label `add (line 3)`, located at the example's line. They run with
+  `cargo test --doc` — all of the package's whenever any is asked for: with rustdoc's merged doctests (edition 2024, Rust 1.96.1) a name filter
+  does not select one (`--exact` filters every one out; a plain filter runs them all) — so running one also reports the others. They cannot be
+  debugged (rustdoc compiles each when it runs): a debug run says so in the Tests output and debugs the other selected tests.
 
 ### JavaScript / TypeScript (`JavaScriptTestProvider`)
 
@@ -233,7 +239,7 @@ then Continue and the result comes back from the session — under CodeLLDB on m
 * **F# / VB** test projects (`.fsproj`, `.vbproj`) are not detected: detection looks at `.csproj` files and discovery scans C#.
 * **Theories with pre-enumerated data** show their cases after a run, not at discovery.
 * **Rust**: no per-test durations (stable libtest); `#[path]` modules and macros that generate tests are found by `--list` but get no location;
-  doc-tests are not listed (cargo runs them separately); a debug run of several targets debugs the first.
+  running one doc-test runs all of the package's (no name filter with merged doctests), and doc-tests cannot be debugged.
 * **Jest/Vitest**: custom `testMatch`/`include` patterns are not read (the default patterns are); a watch mode is not offered; Vitest's browser
   mode is not handled. Debugging Vitest in a worker pool may need `--pool=forks`.
 * **Remote folders** (ssh) are not searched: the providers run tools locally. Running them through `cscode-server` is the remote workstream's.

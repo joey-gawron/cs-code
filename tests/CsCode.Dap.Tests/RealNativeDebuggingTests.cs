@@ -80,6 +80,10 @@ public class RealNativeDebuggingTests
         Note($"{type}: ip {ip}; {code.Count} instructions, first {code[0].AddressText} {code[0].Instruction} ({code[0].Symbol}) at {code[0].Location?.Name}:{code[0].Line + 1}");
         Assert.Contains(code, i => i.Address == pc);
         Assert.Contains(code, i => i.Location?.Path?.EndsWith("main.rs", StringComparison.Ordinal) == true && i.Line is not null);
+        // the Disassembly window's first page: 64 instructions each side
+        var page = await native.DisassembleAsync(ip!, 0, -64, 128, Ct);
+        Note($"{type}: window page: {page.Count} instructions {page.FirstOrDefault()?.AddressText}..{page.LastOrDefault()?.AddressText}, pc at index {page.ToList().FindIndex(i => i.Address == pc)}, invalid {page.Count(i => i.IsInvalid)}");
+        Assert.Contains(page, i => i.Address == pc);
 
         await native.StepAsync(DebugStepAction.Over, stop.ThreadId, instruction: true, Ct);
         await SessionHarness.Eventually(() => h.Service.StopLocation is { Session.State: DebugSessionState.Stopped } l && !ReferenceEquals(l, stop), 30_000, "the step's stop");

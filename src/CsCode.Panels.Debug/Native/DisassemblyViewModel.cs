@@ -209,7 +209,7 @@ public sealed class DisassemblyViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>The address box: an address goes as it is; an expression is evaluated in the focused frame and its memory reference used.</summary>
-    internal async Task GoToAsync(string? input)
+    public async Task GoToAsync(string? input)
     {
         if (string.IsNullOrWhiteSpace(input) || _session is not { } session) return;
         var text = input.Trim();
