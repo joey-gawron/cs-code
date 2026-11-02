@@ -166,7 +166,8 @@ dotnet test tests/CsCode.App.Tests --blame-hang-timeout 5m --filter "FullyQualif
 
 Each real-tool test skips with its reason when its tool is missing. `PythonCompositionTests` checks the stage's "Done when" over the real
 composition root: a `.venv` folder's interpreter, Pyright and Ruff diagnostics, a save running fix-all, organize imports and Ruff's format,
-and debugpy stopping at a breakpoint with that interpreter.
+and debugpy stopping at a breakpoint with that interpreter. The same was seen by hand in the app window on macOS: F5 with no launch.json
+stops at a breakpoint, Cmd+S runs the save actions and Ruff's format, and the Test Explorer runs pytest's parametrized cases one by one.
 
 ## 9. Limits
 
