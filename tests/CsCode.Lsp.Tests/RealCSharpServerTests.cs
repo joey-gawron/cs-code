@@ -86,6 +86,10 @@ public class RealCSharpServerTests
         return env;
     }
 
+    /// <summary>The running Roslyn server's session state (<see cref="RoslynExtension"/>).</summary>
+    internal static RoslynSession RoslynOf(LspTestEnv env) =>
+        Assert.IsType<RoslynSession>(Assert.Single(env.Manager.RunningClients(CSharpServers.RoslynId)).Extension?.State);
+
     private static TextPosition At(ITextDocument doc, string text, int delta = 0) => doc.PositionAt(doc.GetText().IndexOf(text, StringComparison.Ordinal) + delta);
 
     private static async Task<LocationLink> DefinitionAsync(LspTestEnv env, ITextDocument doc, TextPosition position, Func<LocationLink, bool> accept, string what,
@@ -115,9 +119,9 @@ public class RealCSharpServerTests
         var info = await env.WaitForStateAsync(CSharpServers.RoslynId, LanguageServerState.Running, TimeSpan.FromSeconds(120));
         Assert.Contains("CSharp", info.ServerName);
 
-        var client = Assert.Single(env.Manager.RunningClients(CSharpServers.RoslynId));
-        var took = await client.Roslyn!.Ready.WaitAsync(TimeSpan.FromSeconds(180), Ct);
-        Assert.Equal([Path.Combine(env.Root, "Sample.slnx")], client.Roslyn.Opened);
+        var roslyn = RoslynOf(env);
+        var took = await roslyn.Ready.WaitAsync(TimeSpan.FromSeconds(180), Ct);
+        Assert.Equal([Path.Combine(env.Root, "Sample.slnx")], roslyn.Opened);
         Assert.True(took > TimeSpan.Zero);
 
         // CS0029 (cannot convert string to int) on `int wrong = "text";`: Roslyn only answers pull diagnostics
@@ -133,7 +137,7 @@ public class RealCSharpServerTests
         await using var env = Start(CSharpServers.RoslynId);
         var doc = env.Open("Program.cs", Program, "csharp");
         await env.WaitForStateAsync(CSharpServers.RoslynId, LanguageServerState.Running, TimeSpan.FromSeconds(120));
-        await Assert.Single(env.Manager.RunningClients(CSharpServers.RoslynId)).Roslyn!.Ready.WaitAsync(TimeSpan.FromSeconds(180), Ct);
+        await RoslynOf(env).Ready.WaitAsync(TimeSpan.FromSeconds(180), Ct);
 
         // `string` → System.String, decompiled
         var bcl = await DefinitionAsync(env, doc, At(doc, "string s"), l => VirtualDocumentUri.IsVirtual(l.TargetUri), "string");

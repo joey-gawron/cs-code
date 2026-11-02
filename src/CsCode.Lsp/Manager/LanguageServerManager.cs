@@ -61,8 +61,6 @@ public sealed class LanguageServerManager : ILanguageServerManager, IWillSavePar
         _external = new ExternalDocuments(ClientOf);
         CSharpServers.AddExternalSources(_external);
         if (services.VirtualDocuments is { } virtualDocuments) _store.Add(virtualDocuments.Register(_external));
-        // the commands Roslyn's code actions and completions name for the client to run
-        if (services.Commands is { } commands) _store.Add(RoslynCommands.Register(commands, () => RunningClients(CSharpServers.RoslynId), () => RestartAsync(CSharpServers.RoslynId)));
         _ctx = new ClientContext
         {
             Services = services,

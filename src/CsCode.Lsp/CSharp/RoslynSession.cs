@@ -2,8 +2,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using CsCode.Core.Platform;
 using CsCode.Lsp.Client;
+using CsCode.Lsp.Extensions;
 using CsCode.Lsp.Features;
-using StreamJsonRpc;
 
 namespace CsCode.Lsp.CSharp;
 
@@ -19,8 +19,8 @@ namespace CsCode.Lsp.CSharp;
 /// the status bar and awaitable (<see cref="Ready"/>). The loading itself is reported through standard work-done progress.</item>
 /// <item><b>Toasts</b> (<c>window/_roslyn_showToast</c>, a showMessage with commands) are shown as messages.</item>
 /// </list>
-/// One per running Roslyn session, created by the client before its connection listens (custom notifications can be added only then);
-/// it lives and dies with that session and holds nothing else.
+/// The per-server state of <see cref="RoslynExtension"/> (<see cref="ServerExtensionSession.State"/>): one per running Roslyn session, gone
+/// with it.
 /// </summary>
 internal sealed class RoslynSession
 {
@@ -34,11 +34,11 @@ internal sealed class RoslynSession
 
     private static readonly string[] SkippedDirectories = ["bin", "obj", ".git", "node_modules", ".vs", ".idea", ".scratch"];
 
-    private readonly LanguageClient _client;
+    private readonly ServerExtensionSession _session;
     private readonly long _started = Stopwatch.GetTimestamp();
     private readonly TaskCompletionSource<TimeSpan> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public RoslynSession(LanguageClient client) => _client = client;
+    public RoslynSession(ServerExtensionSession session) => _session = session;
 
     /// <summary>Completes with the time from start to <c>workspace/projectInitializationComplete</c>.</summary>
     public Task<TimeSpan> Ready => _ready.Task;
@@ -46,20 +46,18 @@ internal sealed class RoslynSession
     /// <summary>What was opened: the solution file, or the project files (empty until <see cref="OnInitialized"/> chose).</summary>
     public IReadOnlyList<string> Opened { get; private set; } = [];
 
-    [JsonRpcMethod(ProjectInitializationComplete)]
     public void OnProjectInitializationComplete()
     {
         var took = Stopwatch.GetElapsedTime(_started);
         if (!_ready.TrySetResult(took)) return;
-        _client.Log.Add($"[client] Roslyn: project initialization complete after {took.TotalSeconds:0.0} s");
-        _client.Services.Window?.SetStatusBarMessage($"C#: {Describe(Opened)} loaded", TimeSpan.FromSeconds(5));
+        _session.Log($"project initialization complete after {took.TotalSeconds:0.0} s");
+        _session.Services.Window?.SetStatusBarMessage($"C#: {Describe(Opened)} loaded", TimeSpan.FromSeconds(5));
     }
 
-    [JsonRpcMethod(ShowToast, UseSingleObjectParameterDeserialization = true)]
     public void OnShowToast(JsonElement p)
     {
         var message = p.Str("message");
-        if (message is null || _client.Services.Window is not { } window) return;
+        if (message is null || _session.Services.Window is not { } window) return;
         var severity = p.Int("messageType") switch { 1 => MessageSeverity.Error, 2 => MessageSeverity.Warning, _ => MessageSeverity.Info };
         _ = window.ShowMessageAsync(severity, "C#: " + message).AsTask();
     }
@@ -71,33 +69,33 @@ internal sealed class RoslynSession
     {
         try
         {
-            var root = _client.RootUri is { IsFile: true } r ? r.LocalPath : _client.WorkspaceFolders.FirstOrDefault(f => f.IsFile)?.LocalPath;
+            var root = _session.RootUri is { IsFile: true } r ? r.LocalPath : _session.WorkspaceFolders.FirstOrDefault(f => f.IsFile)?.LocalPath;
             if (root is null || !Directory.Exists(root))
             {
-                _client.Log.Add("[client] Roslyn: no folder to open (an untitled or remote document): nothing loaded");
+                _session.Log("no folder to open (an untitled or remote document): nothing loaded");
                 return;
             }
             var solution = await ChooseSolutionAsync(root).ConfigureAwait(false);
             if (solution is not null)
             {
                 Opened = [solution];
-                _client.Log.Add($"[client] Roslyn: {SolutionOpen} {solution}");
-                _client.NotifyRaw(SolutionOpen, new { solution = LspMapper.ToUriString(new Uri(solution)) });
+                _session.Log($"{SolutionOpen} {solution}");
+                _session.Notify(SolutionOpen, new { solution = LspMapper.ToUriString(new Uri(solution)) });
                 return;
             }
             var projects = FindProjects(root);
             if (projects.Count == 0)
             {
-                _client.Log.Add($"[client] Roslyn: no solution or project under {root}: nothing loaded");
+                _session.Log($"no solution or project under {root}: nothing loaded");
                 return;
             }
             Opened = projects;
-            _client.Log.Add($"[client] Roslyn: {ProjectOpen} with {projects.Count} project(s) under {root}");
-            _client.NotifyRaw(ProjectOpen, new { projects = projects.Select(p => LspMapper.ToUriString(new Uri(p))).ToArray() });
+            _session.Log($"{ProjectOpen} with {projects.Count} project(s) under {root}");
+            _session.Notify(ProjectOpen, new { projects = projects.Select(p => LspMapper.ToUriString(new Uri(p))).ToArray() });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
         {
-            _client.Log.Add("[client] Roslyn: could not choose what to open: " + ex.Message);
+            _session.Log("could not choose what to open: " + ex.Message);
         }
     }
 
@@ -108,12 +106,12 @@ internal sealed class RoslynSession
     private async Task<string?> ChooseSolutionAsync(string root)
     {
         var solutions = FindSolutions(root);
-        var state = _client.Services.State;
+        var state = _session.Services.State;
         var remembered = state?.Get<Dictionary<string, string>>(SolutionChoiceKey, StorageScope.Workspace);
         if (remembered?.GetValueOrDefault(root) == ProjectsChoice) return null;
         if (solutions.Count <= 1) return solutions.FirstOrDefault();
         if (remembered?.GetValueOrDefault(root) is { } known && solutions.Contains(known, StringComparer.Ordinal)) return known;
-        if (_client.Services.Window is not { } window) return solutions[0];
+        if (_session.Services.Window is not { } window) return solutions[0];
         var items = solutions.Select(s => new QuickPickItem(Path.GetFileName(s), Path.GetRelativePath(root, Path.GetDirectoryName(s)!) is "." ? null : Path.GetDirectoryName(s), Tag: s)).ToArray();
         var picked = await window.ShowQuickPickAsync(items, new QuickPickOptions("C#: Open Solution", $"{solutions.Count} solutions in {Path.GetFileName(root)}: which one should the C# server load?")).ConfigureAwait(false);
         // dismissed: the first one this time, asked again next time
@@ -132,7 +130,7 @@ internal sealed class RoslynSession
     /// </summary>
     public async Task<bool> ChooseAgainAsync(IWindowService window)
     {
-        var root = _client.RootUri is { IsFile: true } r ? r.LocalPath : null;
+        var root = _session.RootUri is { IsFile: true } r ? r.LocalPath : null;
         if (root is null) return false;
         var solutions = await Task.Run(() => FindSolutions(root)).ConfigureAwait(false);
         const string Projects = "\0projects";
@@ -141,7 +139,7 @@ internal sealed class RoslynSession
             .ToArray();
         var picked = await window.ShowQuickPickAsync(items, new QuickPickOptions("C#: Open Solution", "What should the C# server load?")).ConfigureAwait(false);
         if (picked?.Tag is not string chosen) return false;
-        var state = _client.Services.State;
+        var state = _session.Services.State;
         var remembered = new Dictionary<string, string>(state?.Get<Dictionary<string, string>>(SolutionChoiceKey, StorageScope.Workspace) ?? new(), StringComparer.Ordinal);
         if (chosen == Projects) remembered[root] = ProjectsChoice;
         else remembered[root] = chosen;

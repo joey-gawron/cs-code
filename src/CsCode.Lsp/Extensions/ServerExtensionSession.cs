@@ -136,10 +136,11 @@ public sealed class ServerExtensionSession : IDisposable
             _handler = null;
         }
 
-        public async Task<object?> InvokeAsync(JsonElement p, CancellationToken ct)
+        // p is optional: a request without params (or "params": null) must still find this method (StreamJsonRpc matches by arity)
+        public async Task<object?> InvokeAsync(JsonElement p = default, CancellationToken ct = default)
         {
             if (_session is not { } session || _handler is not { } handler || Volatile.Read(ref session._disposed) != 0) return null;
-            var copy = p.Clone();
+            var copy = p.ValueKind == JsonValueKind.Undefined ? default : p.Clone();
             try
             {
                 return await session._client.Context.Queue.RunAsync<object>(LanePriority.Interactive, default, async wc =>
@@ -168,10 +169,11 @@ public sealed class ServerExtensionSession : IDisposable
             _handler = null;
         }
 
-        public void Invoke(JsonElement p)
+        // p is optional: Roslyn's workspace/projectInitializationComplete has no params, and a one-parameter method would never match it
+        public void Invoke(JsonElement p = default)
         {
             if (_session is not { } session || _handler is not { } handler || Volatile.Read(ref session._disposed) != 0) return;
-            var copy = p.Clone();
+            var copy = p.ValueKind == JsonValueKind.Undefined ? default : p.Clone();
             session._client.Context.Queue.Post(LanePriority.Background, () =>
             {
                 if (Volatile.Read(ref session._disposed) != 0) return;

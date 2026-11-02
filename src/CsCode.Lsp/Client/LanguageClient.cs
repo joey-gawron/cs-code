@@ -108,8 +108,6 @@ internal sealed partial class LanguageClient : IAsyncDisposable
     public int InFlightRequests => (int)Interlocked.Read(ref _inFlight);
     public int SyncedDocumentCount => _docs.Count;
     public Task Stopped => _stopped.Task;
-    /// <summary>Roslyn's session behaviour (opening the solution, readiness) when this client runs the Roslyn server, else null.</summary>
-    internal CSharp.RoslynSession? Roslyn { get; private set; }
     internal LspServices Services => _ctx.Services;
     internal ClientContext Context => _ctx;
     internal ServerLog Log => _log;
@@ -198,12 +196,6 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             var rpc = new JsonRpc(new HeaderDelimitedMessageHandler(connection.Input, new FramingGuardStream(connection.Output, settings.MaxMessageBytes), formatter));
             rpc.CancelLocallyInvokedMethodsWhenConnectionIsClosed = true;
             rpc.AddLocalRpcTarget(new ServerRequestTarget(this), new JsonRpcTargetOptions { DisposeOnDisconnect = false });
-            // Roslyn's own notifications (solution loaded, toasts): added before the connection listens, the only time it can be
-            if (CSharp.CSharpServers.CreateSession(this) is { } roslyn)
-            {
-                Roslyn = roslyn;
-                rpc.AddLocalRpcTarget(roslyn, new JsonRpcTargetOptions { DisposeOnDisconnect = false });
-            }
             rpc.Disconnected += OnRpcDisconnected;
             _rpc = rpc;
             AttachExtension(rpc);
@@ -250,7 +242,6 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             _docsMayOpen = true;
             foreach (var sd in _docs.Values) PostOpen(sd);
             SchedulePullAll();
-            Roslyn?.OnInitialized();
             _log.Add($"[client] started {ServerName ?? Definition.DisplayName} {ServerVersion} (pid {ProcessId}, encoding {Mapper.Encoder.Name})");
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

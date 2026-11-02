@@ -11,9 +11,6 @@ internal static class CSharpServers
     public const string CSharpLsId = "csharp";
     public const string RoslynId = "roslyn";
 
-    /// <summary>The Roslyn behaviour for a client of the <c>roslyn</c> definition, else null.</summary>
-    public static RoslynSession? CreateSession(LanguageClient client) => client.Definition.Id == RoslynId ? new RoslynSession(client) : null;
-
     public static void AddExternalSources(ExternalDocuments external)
     {
         external.AddSource(CSharpLsId, new CSharpLsMetadataSource());

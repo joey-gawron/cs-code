@@ -69,7 +69,7 @@ public class CSharpServerEvaluation
         results["serverVersion"] = $"{info.ServerName} {info.ServerVersion}";
         var client = Assert.Single(env.Manager.RunningClients(server));
         results["root"] = client.RootUri?.LocalPath;
-        if (client.Roslyn is { } roslyn)
+        if (client.Extension?.State is RoslynSession roslyn)
         {
             await roslyn.Ready.WaitAsync(TimeSpan.FromMinutes(10), Ct);
             results["ready_s"] = Seconds(clock);

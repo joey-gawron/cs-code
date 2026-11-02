@@ -52,6 +52,10 @@ public class ServerExtensionTests
             {
                 lock (Statuses) Statuses.Add((p.GetProperty("s").GetString()!, Environment.CurrentManagedThreadId));
             });
+            session.OnNotification("probe/done", p =>
+            {
+                lock (Statuses) Statuses.Add(("done:" + p.ValueKind, Environment.CurrentManagedThreadId));
+            });
             session.OnRequest("probe/ask", (p, _) => Task.FromResult<object?>(new { answer = p.GetProperty("q").GetInt32() * 2, thread = Environment.CurrentManagedThreadId }));
             if (ThrowInAttach) throw new InvalidOperationException("attach failed on purpose");
         }
@@ -117,6 +121,19 @@ public class ServerExtensionTests
             Assert.Equal(["busy", "ready"], ext.Statuses.Select(s => s.Status));
             Assert.All(ext.Statuses, s => Assert.NotEqual(Environment.CurrentManagedThreadId, s.ThreadId));
         }
+    }
+
+    [Fact]
+    public async Task A_notification_without_params_reaches_the_extension()
+    {
+        // Roslyn's workspace/projectInitializationComplete carries no params: it used to match no handler and was dropped
+        var ext = new ProbeExtension();
+        await using var env = new LspTestEnv(extensions: [ext]);
+        var (server, _) = await env.StartAsync();
+        await server.NotifyAsync("probe/done", null); // the fake server omits a null member: no "params" at all
+        await server.NotifyAsync("probe/done", null);
+        await TestHelpers.EventuallyAsync(() => { lock (ext.Statuses) return ext.Statuses.Count(s => s.Status.StartsWith("done:", StringComparison.Ordinal)) == 2; },
+            () => "both param-less notifications handled: " + string.Join(", ", ext.Statuses.Select(s => s.Status)));
     }
 
     [Fact]
