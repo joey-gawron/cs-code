@@ -213,8 +213,10 @@ in `host.Disposables` (released with the manager), so a command exists before an
 editor (`host.ActiveSession(this)`, `host.SessionFor(this, uri)`, `host.Sessions(this)`). One `ServerExtensionSession` per running server (per
 workspace root), created by `LanguageClient` when the server starts:
 * `Attach(session)` runs before the connection listens — the only time `session.OnNotification(method, handler, latestWins)` can add a
-  handler (StreamJsonRpc refuses new methods afterwards). A handler gets a copy of the params on the Language lane; `latestWins` drops a queued
-  one when a newer one arrives (status-like notifications). `session.OnRequest(method, (params, ct) => Task<object?>)` answers a
+  handler (StreamJsonRpc refuses new methods afterwards). A handler gets a copy of the params (`default`, kind `Undefined`, when there are none)
+  on the Language lane, in the order the server sent them, one at a time (a per-session queue drained by one lane item: the lane has several
+  threads; at most 4,096 wait, the oldest dropped beyond); `latestWins` drops a queued one when a newer one of the same method arrives
+  (status-like notifications). `session.OnRequest(method, (params, ct) => Task<object?>)` answers a
   server-to-client request the same way (on the lane; its result is the response, a throw an error response; null once the server stopped).
 * Client-side commands a server names in code actions, lenses or hovers (rust-analyzer's `runSingle`, Roslyn's `roslyn.client.*`) are
   ordinary commands the extension registers in `Register(host)`; the editor runs them through `ICommandService` with the server's arguments.
