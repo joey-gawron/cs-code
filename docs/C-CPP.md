@@ -5,10 +5,9 @@ the C debugging matrix. Stage 4 (C++, `docs/briefs/lang-4-cpp.md`) adds the Goog
 provider, clangd for Objective-C++ and CUDA and the C++ debugging matrix in sections 10–16. The two stages ran at the same time on separate
 branches and were merged in that order.
 
-Stage 3 ran in parallel with stages 1 (Python) and 2 (Rust) instead of after them, so the pieces that build on theirs are **deferred**
-(section 8): CMake tasks through Rust's `ITaskProvider`, the clangd extension (Switch Header/Source, inactive regions, View AST, file status,
-the review of clangd's default arguments) on Rust's per-server extension pattern, the matrix rows that need the Memory / Disassembly windows
-and data breakpoints, and C snippets on Python's bundled-snippets mechanism.
+Stage 3 ran in parallel with stages 1 (Python) and 2 (Rust) instead of after them, so the pieces that build on theirs came after the merge
+(section 8): CMake tasks through Rust's `ITaskProvider`, the clangd extension on Rust's per-server extension pattern, the matrix rows for the
+Memory / Disassembly windows and data breakpoints, and C snippets on Python's bundled-snippets mechanism.
 
 Toolchain on this Mac (2026-11-01): Apple clang / clangd 21.0.0 (`/usr/bin`), CMake 3.31.12 (MacPorts, first on PATH; Homebrew's 4.4.2 is
 also installed), Ninja 1.13.2 (MacPorts), Apple lldb-dap (LLVM 21, `xcrun -f lldb-dap`), CodeLLDB v1.12.3 (`.scratch/tools/codelldb`). No
@@ -261,25 +260,29 @@ window checks below remain to be done:
 5. ⌘+hover over `#include "mathlib.h"` underlines it; ⌘+Click opens `include/mathlib.h`.
 6. With `"terminal": "integrated"` in `cmake.debugConfig`, a program reading stdin gets the keys typed in the integrated terminal.
 
-## 8. Deferred (waited for other stages)
+## 8. Items that waited for other stages (done on the follow-up branch)
 
-Stages 1 (Python) and 2 (Rust) are merged into this branch, so the first four rows are open work now rather than blocked.
+Stage 3 first ran beside stages 1 and 2; once they were merged, the items that built on their pieces were done on `claude/c-followups`:
 
-| Item | Builds on | Note |
+| Item | Built on | Where |
 |---|---|---|
-| CMake tasks through `ITaskProvider` (`cmake: build`, … with `$gcc`) | `Core/Tasks/ITaskProvider.cs`; `Dap/Tasks/CargoTaskProvider.cs` is the example | `ICMakeService.BuildAsync` is what the provider will call |
-| clangd extension: Switch Header/Source, inactive `#if 0` regions, View AST, file status, default-argument review | `Lsp/Extensions/LanguageServerExtension` (docs/LSP.md §7a) | MUST 2 |
-| Matrix rows: Memory window from a pointer, Disassembly, data breakpoints | `Core/Debugging/DebugNative.cs` and the `debug.memory` / `debug.disassembly` windows | breakpoints at the physical path (`TempDirectory.PhysicalPath`) |
-| C snippets | `Editor/Snippets/Builtin/<language id>.json` | MUST 7 |
-| cmake-language-server, bear | the user's go-ahead | not installed; nothing asked yet |
+| CMake tasks through `ITaskProvider` (`CMake: build`, … with `$gcc`) | stage 2's `ITaskProvider` | §1 Tasks |
+| clangd extension: Switch Between Source/Header, inactive regions, Show AST, file status, default-argument review | stage 2's `LanguageServerExtension` (two hooks added) | §3a |
+| Matrix rows: Memory window, Disassembly, data breakpoints | stage 2's `IDebugSessionNative` | §6 |
+| C snippets | stage 1's bundled snippets | §3b |
+| SHOULD: Create compile_flags.txt, Build and Run Active File, bear / compiledb, `.clang-format` / `.clang-tidy` | | §4, §3a |
+| `cscode.testing.ctest.enabled` (CTest had JavaScript's switch) | | docs/TESTING.md |
+
+Still waiting for the user's go-ahead: installing cmake-language-server and bear (nothing was installed).
 
 ## 9. Tests
 
 ```
-dotnet test tests/CsCode.Build.CMake.Tests                                   # presets, File API, output parser, service, host; real cmake + ninja
+dotnet test tests/CsCode.Build.CMake.Tests                                   # presets, File API, output parser, service, host, tasks, reply watch,
+                                                                             # C file commands; real cmake + ninja + clang
 dotnet test tests/CsCode.Panels.Testing.Tests --filter CTestProviderTests     # CTest JSON / JUnit / debug config; real ctest
-dotnet test tests/CsCode.Lsp.Tests --filter RealClangdDocumentLinkTests       # documentLink against the real clangd
-dotnet test tests/CsCode.Editor.Tests --filter DocumentLinkTests              # Ctrl/⌘ hover and click
+dotnet test tests/CsCode.Lsp.Tests --filter "ClangdExtensionTests|RealClangd" # the clangd extension (fake and real), documentLink
+dotnet test tests/CsCode.Editor.Tests --filter "DocumentLinkTests|InactiveRegionsFeatureTests|BundledSnippetTests"
 dotnet test tests/CsCode.Dap.Tests --filter "CLaunchTemplateTests|StaleThreadsTests|RealCDebugMatrixTests"
 ```
 
