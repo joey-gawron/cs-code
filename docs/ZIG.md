@@ -80,8 +80,10 @@ The sample (`RealZigDebuggingTests.Source`) is built with `zig build-exe` (Debug
 | Watch / hover expressions | `some` → `42`, `numbers` → `len=3` | same |
 | Parameters passed by reference | `pair = <variable not available>` (a `Pair(i32)` struct parameter Zig passes by reference without a location) | same |
 | End to end on `zig init` (`RealZigProjectTests`) | Create launch.json → Run Task `zig: build` with a type error → Problems: `7:25 Error expected type 'u32', found '*const [4:0]u8'`; the `zig build` template builds through its preLaunchTask and stops in `zig-out/bin/hello`: `window = len=3`, `maybe = 7` | — |
-| **Memory window** | open: stage 2's window (the adapters advertise what it needs) | open |
-| **Disassembly window** | open: stage 2's window | open |
+| **Disassembly window** (stage 2's) | at the `inspect` breakpoint: a 128-instruction page around the instruction pointer with `main.inspect` and `main.zig:26` on its instructions; one instruction step moves `…96b8 → …96bc` (the next instruction, same line) | same page and step; lldb-dap names the symbol and file only on an instruction that starts a line |
+| **Memory window** (stage 2's) | View Binary Data on `numbers[0]` (memory reference `0x1001606AC`, CsCode's slice formatter keeps the elements' addresses) reads `02 00 00 00 03 00 00 00 04 00 00 00` | same reference and bytes |
+| **Registers window** | a `Registers` scope (scopes `Local`, `Static`, `Global`, `Registers`) | `Registers` (hint `registers`) |
+| **Data breakpoints** (Break When Value Changes) | on `var n` in `inspect`: `4 bytes at 16FDFD19C (n)`, verified; Continue stops (`data breakpoint`) with `n = 3` | same; the stop's reason is `breakpoint` |
 
 ## Test Explorer (`src/CsCode.Testing/Providers/Zig/`)
 
@@ -164,7 +166,6 @@ pattern's `HandleShowMessage` hook (added for it: an extension may keep a server
 
 | Item | Builds on |
 |---|---|
-| Matrix rows: Memory window, Disassembly window (and data breakpoints) | stage 2's native debugging windows (CodeLLDB and lldb-dap already advertise the capabilities) |
 | Zig snippets | stage 1's bundled snippets (`src/CsCode.Editor/Snippets/Builtin/zig.json`) |
 
 Done in the merge with main: zls's handling moved onto stage 2's `LanguageServerExtension` pattern (above).
