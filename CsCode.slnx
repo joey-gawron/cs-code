@@ -14,6 +14,7 @@
     <Project Path="src/CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
     <Project Path="src/CsCode.Profiling/CsCode.Profiling.csproj" />
+    <Project Path="src/CsCode.ProjectTemplates/CsCode.ProjectTemplates.csproj" />
     <Project Path="src/CsCode.Sessions/CsCode.Sessions.csproj" />
     <Project Path="src/CsCode.Terminal/CsCode.Terminal.csproj" />
     <Project Path="src/CsCode.Testing/CsCode.Testing.csproj" />

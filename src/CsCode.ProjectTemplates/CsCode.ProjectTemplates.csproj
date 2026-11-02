@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The New Project generators (Empty, Python, Rust, C, C++, C#, Zig) and the creation steps around them (folder checks, the Git step, the
+       clean-up of a failed run). UI-free: references Core only; the page is CsCode.Panels.NewProject. docs/NEW-PROJECT.md. -->
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Panels.NewProject" />
+    <InternalsVisibleTo Include="CsCode.ProjectTemplates.Tests" />
+    <InternalsVisibleTo Include="CsCode.Panels.NewProject.Tests" />
+  </ItemGroup>
+
+</Project>
