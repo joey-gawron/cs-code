@@ -9,6 +9,7 @@ and what is left. Brief: `docs/briefs/lang-5-csharp.md`.
 | Library and generated code | go to definition into the BCL / NuGet packages and into source generators' output opens **read-only virtual documents** (`String.cs [decompiled]`, `RegexGenerator.g.cs [generated]`), with highlighting, hover and go to definition inside | Core `VirtualDocuments.cs`, `CSharp/ExternalDocuments.cs` |
 | Test Explorer | xUnit v3, VSTest (as before), now also **Microsoft.Testing.Platform** projects (MSTest runner, NUnit runner, TUnit) and **F# / VB** test projects; run and debug | `src/CsCode.Testing/Providers/DotNet/` |
 | Debugging | netcoredbg; breakpoints now bind on macOS (they never did for a project behind a symbolic link) | `src/CsCode.Dap/Session/SourcePathAliases.cs` |
+| Code actions on save | `editor.codeActionsOnSave`'s `source.organizeImports` (**Organize Usings**: Roslyn's remove unnecessary usings, then its sort) and `source.fixAll` (**Fix All in Document**: each analyzer warning's document-wide fix all), built from Roslyn's own actions; also Shift+Alt+O and the palette | `src/CsCode.Lsp/CSharp/RoslynSourceActions.cs` |
 | Tasks | the .NET tasks.json template has a **`watch`** task (`dotnet watch run`, hot reload) tracked through `$dotnet-watch` | `src/CsCode.Dap/Tasks/ProblemMatchers.cs` |
 | NuGet | **NuGet: Add / Update / Remove Package…**, **NuGet: Restore Packages** | `src/CsCode.App/DotNet/` |
 
@@ -47,6 +48,33 @@ the download on 2026-11-01). Everything below was checked against that build: it
   `roslyn.client.fixAllCodeAction` ("Fix All: …": a pick of the scope among `FixAllFlavors`, then `codeAction/resolveFixAll`),
   `roslyn.client.completionComplexEdit` (override and partial-method completions: the edit, then the caret at `newOffset`).
   `roslyn.client.peekReferences` (code lens) was already mapped by the editor. **Toasts** (`window/_roslyn_showToast`) show as messages.
+* **Code actions on save** (`editor.codeActionsOnSave`, stage 1's will-save participant). Roslyn's code actions are only `quickfix`,
+  `refactor`, `refactor.extract` and `refactor.inline`, and it ignores `context.only`: neither `source.organizeImports` nor `source.fixAll`
+  matches anything it answers. CsCode builds both from Roslyn's own actions (`RoslynSourceActions.cs`), offered only when a source kind is
+  asked for (never in the light bulb):
+  * `source.organizeImports.roslyn`, **Organize Usings**: Roslyn's "Remove unnecessary usings" (the IDE0005 fix, which removes every
+    unnecessary using of the file), then its "Sort Usings" refactoring (System first unless `.editorconfig`'s
+    `dotnet_sort_system_directives_first` says otherwise), both asked over the using directives. IDE0005 needs no severity: Roslyn offers the
+    fix at its default (hidden) one. Also Organize Imports (Shift+Alt+O) and **C#: Organize Usings**.
+  * `source.fixAll.roslyn`, **Fix All in Document**: for each analyzer diagnostic of warning or error severity in the file (IDE…, CA…, a
+    NuGet analyzer's; not the compiler's CS…, which `dotnet format` leaves too, nor suggestions), one id after another in document order,
+    Roslyn's "Fix All:" of its fix for that diagnostic in the Document scope (`codeAction/resolveFixAll`). A rule is fixed on save by raising it
+    to a warning in `.editorconfig` (`dotnet_diagnostic.IDE0090.severity = warning`). Also **C#: Fix All in Document**.
+  * Each step is a round trip on the text the step before left, so each action is a command that runs its steps (Pyright's organize imports
+    is a command too). On save an edit is applied only before the participant's deadline (`editor.codeActionsOnSaveTimeout`, 750 ms) and only
+    to the text it was computed for. Measured on a small project (`RealCSharpServerTests`): organize 60–70 ms and a fix all of one id 175 ms;
+    the **first** organize after the solution loaded took 0.9–1 s (Roslyn loading its fixers), so the first save may remove the unnecessary
+    usings and leave the sorting to the next one, unless the timeout is raised.
+  * Found on the way: `codeAction/resolveFixAll` fails ("Sequence contains no elements") when its range also holds an action whose fix all
+    lacks the asked scope (Sort Usings' has only Project and Solution). So each fix all is resolved at its own diagnostic's range, and the
+    diagnostics are pulled from Roslyn for the current text before each id (`textDocument/diagnostic` without an identifier answers every
+    source).
+  * Sorting on format (VS Code's `dotnet.formatting.organizeImportsOnFormat`) is Roslyn's own setting in CsCode,
+    `"csharp|formatting.dotnet_organize_imports_on_format": true`: Roslyn's full-document formatting then sorts the usings (checked).
+
+  ```json
+  "[csharp]": { "editor.codeActionsOnSave": { "source.fixAll": "explicit", "source.organizeImports": "explicit" } }
+  ```
 
 ### csharp-ls (the alternative)
 
@@ -234,10 +262,6 @@ printed the platform's telemetry banner (the debug launch now passes `TESTINGPLA
 
 ## 8. Deferred (open after the merge of every stage)
 
-* **`codeActionsOnSave` with Roslyn** — stage 1's (Python) participant is on main since the C# merge; wiring Roslyn to it is open. What was found for it: Roslyn's code action kinds are
-  only `quickfix`, `refactor`, `refactor.extract`, `refactor.inline`; it never returns `source.organizeImports` or `source.fixAll` and ignores
-  `context.only`. Organize usings on save is done in VS Code by `csharp|formatting.dotnet_organize_imports_on_format = true` plus formatting; fix
-  all on save has no server support. csharp-ls was not checked for it yet.
 * **`dotnet new`: New Project / New Item** — the brief's SHOULD item moved to stage 7 (the New Project page), which owns project creation and
   the template listing (scope change, 2026-11-01). New Item can reuse that listing once stage 7 is merged.
 * **.NET tasks through `ITaskProvider`** (`dotnet build`, `test`, `run`, `clean` per project with `$msCompile`) — stage 2's (Rust) contract is on
@@ -255,6 +279,8 @@ fix with in-order delivery. Since the C# merge both stages run on main's copy of
 
 * Roslyn's `workspace/configuration` sections (`csharp|…`, `dotnet|…`) are answered from settings of the same name: VS Code's C# settings
   (`dotnet.*`) are not mapped, so Roslyn runs with its defaults (decompilation on). `--csharpDesignTimePath` is not passed.
+* Roslyn's light bulb "Fix All: Remove unnecessary usings" → Document fails on a using line (the `resolveFixAll` bug above: Sort Usings is at the
+  same range); Project and Solution work. Code actions on save are Roslyn's only: csharp-ls was not checked for source actions.
 * `workspace/textDocumentContent/refresh` is not handled (a generated document opened before its generator reruns is stale).
 * Razor and Blazor still have highlighting only (STRETCH, not started).
 * NuGet: no credential providers, no package icons or README, no "outdated" view.

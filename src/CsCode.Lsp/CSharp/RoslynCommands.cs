@@ -19,6 +19,8 @@ namespace CsCode.Lsp.CSharp;
 /// is not a plain text edit (override completion, partial methods): the edit is applied and the caret put at <c>newOffset</c> (−1: after the
 /// edit). Snippet placeholders in such an edit are inserted as text.</item>
 /// <item><c>csharp.openSolution</c> ("C#: Open Solution..."): choose again what the running server loads, then restart it.</item>
+/// <item><c>csharp.organizeUsings</c> ("C#: Organize Usings") and <c>csharp.fixAllInDocument</c> ("C#: Fix All in Document"): the source actions
+/// CsCode builds from Roslyn's own (<see cref="RoslynSourceActions"/>), which run them on save; from the palette, on the active editor.</item>
 /// </list>
 /// <c>roslyn.client.peekReferences</c> (code lens) is mapped by the editor (CodeLensCommands). Registered once per manager by
 /// <see cref="RoslynExtension.Register"/>; each command talks to the Roslyn session serving the document its data names (else the active one).
@@ -33,9 +35,10 @@ internal static class RoslynCommands
     /// <summary>"C#: Open Solution...": choose again which solution (or the projects) the running Roslyn server loads.</summary>
     public const string OpenSolution = "csharp.openSolution";
 
-    public static void Register(ServerExtensionHost host, RoslynExtension extension)
+    /// <summary>Registers the commands; false when the host has no command service (then nothing is registered).</summary>
+    public static bool Register(ServerExtensionHost host, RoslynExtension extension, RoslynSourceActions sourceActions)
     {
-        if (host.Services.Commands is not { } commands) return;
+        if (host.Services.Commands is not { } commands) return false;
         var store = host.Disposables;
         store.Add(commands.Register(NestedCodeAction, inv => RunAsync(inv, host, extension, NestedAsync), new CommandMetadata(NestedCodeAction, "C#: Choose a Code Action", "C#")));
         store.Add(commands.Register(FixAllCodeAction, inv => RunAsync(inv, host, extension, FixAllAsync), new CommandMetadata(FixAllCodeAction, "C#: Fix All Occurrences", "C#")));
@@ -46,6 +49,11 @@ internal static class RoslynCommands
             if (await roslyn.ChooseAgainAsync(window).ConfigureAwait(false)) await host.Manager.RestartAsync(CSharpServers.RoslynId).ConfigureAwait(false);
             return null;
         }, new CommandMetadata(OpenSolution, "Open Solution...", "C#")));
+        store.Add(commands.Register(RoslynSourceActions.OrganizeUsingsCommand, inv => RunAsync(inv, host, extension, sourceActions.OrganizeUsingsAsync),
+            new CommandMetadata(RoslynSourceActions.OrganizeUsingsCommand, "Organize Usings", "C#")));
+        store.Add(commands.Register(RoslynSourceActions.FixAllCommand, inv => RunAsync(inv, host, extension, sourceActions.FixAllAsync),
+            new CommandMetadata(RoslynSourceActions.FixAllCommand, "Fix All in Document", "C#")));
+        return true;
     }
 
     private static async ValueTask<object?> RunAsync(CommandInvocation invocation, ServerExtensionHost host, RoslynExtension extension,
