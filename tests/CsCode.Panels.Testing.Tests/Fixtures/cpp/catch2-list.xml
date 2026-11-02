@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MatchingTests>
+  <TestCase>
+    <Name>adds numbers</Name>
+    <ClassName/>
+    <Tags>[math]</Tags>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>7</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>fails</Name>
+    <ClassName/>
+    <Tags>[math][slow]</Tags>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>8</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>hidden test</Name>
+    <ClassName/>
+    <Tags>[.]</Tags>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>13</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>has sections</Name>
+    <ClassName/>
+    <Tags/>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>14</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>skipped one</Name>
+    <ClassName/>
+    <Tags/>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>18</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>throws</Name>
+    <ClassName/>
+    <Tags/>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>19</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>Name, with comma [and brackets]</Name>
+    <ClassName/>
+    <Tags/>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>20</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>fixture case</Name>
+    <ClassName>Fx</ClassName>
+    <Tags>[fx]</Tags>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>22</Line>
+    </SourceInfo>
+  </TestCase>
+  <TestCase>
+    <Name>Scenario: a scenario</Name>
+    <ClassName/>
+    <Tags/>
+    <SourceInfo>
+      <File>/work/cppsample/catch_tests.cpp</File>
+      <Line>23</Line>
+    </SourceInfo>
+  </TestCase>
+</MatchingTests>

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catch2TestRun name="catch_tests" rng-seed="4026525416" xml-format-version="3" catch2-version="3.8.1">
+  <TestCase name="adds numbers" tags="[math]" filename="/work/cppsample/catch_tests.cpp" line="7">
+    <OverallResult success="true" skips="0" durationInSeconds="8.3e-05"/>
+  </TestCase>
+  <TestCase name="fails" tags="[math][slow]" filename="/work/cppsample/catch_tests.cpp" line="8">
+    <Expression success="false" type="CHECK" filename="/work/cppsample/catch_tests.cpp" line="11">
+      <Original>
+        Add(x, 2) == 5
+      </Original>
+      <Expanded>
+        4 == 5
+      </Expanded>
+    </Expression>
+    <OverallResult success="false" skips="0" durationInSeconds="0.001016">
+      <StdOut>
+from catch
+      </StdOut>
+    </OverallResult>
+  </TestCase>
+  <TestCase name="has sections" filename="/work/cppsample/catch_tests.cpp" line="14">
+    <Section name="first" filename="/work/cppsample/catch_tests.cpp" line="15">
+      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false" durationInSeconds="2e-06"/>
+    </Section>
+    <Section name="second" filename="/work/cppsample/catch_tests.cpp" line="16">
+      <Expression success="false" type="REQUIRE" filename="/work/cppsample/catch_tests.cpp" line="16">
+        <Original>
+          1 == 2
+        </Original>
+        <Expanded>
+          1 == 2
+        </Expanded>
+      </Expression>
+      <OverallResults successes="0" failures="1" expectedFailures="0" skipped="false" durationInSeconds="0.000793"/>
+    </Section>
+    <OverallResult success="false" skips="0" durationInSeconds="0.00233"/>
+  </TestCase>
+  <TestCase name="skipped one" filename="/work/cppsample/catch_tests.cpp" line="18">
+    <Skip filename="/work/cppsample/catch_tests.cpp" line="18">
+      not yet
+    </Skip>
+    <OverallResult success="true" skips="1" durationInSeconds="0.000639"/>
+  </TestCase>
+  <TestCase name="throws" filename="/work/cppsample/catch_tests.cpp" line="19">
+    <Exception filename="/work/cppsample/catch_tests.cpp" line="19">
+      boom
+    </Exception>
+    <OverallResult success="false" skips="0" durationInSeconds="0.000708"/>
+  </TestCase>
+  <TestCase name="Name, with comma [and brackets]" filename="/work/cppsample/catch_tests.cpp" line="20">
+    <OverallResult success="true" skips="0" durationInSeconds="6e-05"/>
+  </TestCase>
+  <TestCase name="fixture case" tags="[fx]" filename="/work/cppsample/catch_tests.cpp" line="22">
+    <OverallResult success="true" skips="0" durationInSeconds="5.1e-05"/>
+  </TestCase>
+  <TestCase name="Scenario: a scenario" filename="/work/cppsample/catch_tests.cpp" line="23">
+    <Section name="Given: x" filename="/work/cppsample/catch_tests.cpp" line="23">
+      <Section name="Then: y" filename="/work/cppsample/catch_tests.cpp" line="23">
+        <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false" durationInSeconds="1e-06"/>
+      </Section>
+      <OverallResults successes="1" failures="0" expectedFailures="0" skipped="false" durationInSeconds="0.000641"/>
+    </Section>
+    <OverallResult success="true" skips="0" durationInSeconds="0.001415"/>
+  </TestCase>
+  <OverallResults successes="5" failures="3" expectedFailures="0" skips="1"/>
+  <OverallResultsCases successes="4" failures="3" expectedFailures="0" skips="1"/>
+</Catch2TestRun>

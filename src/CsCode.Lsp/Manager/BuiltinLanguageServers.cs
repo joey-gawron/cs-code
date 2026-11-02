@@ -111,7 +111,7 @@ public static class BuiltinLanguageServers
             All3("Install it with: npm install -g basedpyright (or pip install basedpyright, or pipx install basedpyright)"),
             "none (basedpyright does not format)", enabled: false, fromPythonEnvironment: true,
             notes: "Off by default: \"cscode.languageServers\": { \"basedpyright\": { \"enabled\": true }, \"python\": { \"enabled\": false } }."),
-        S(Def("clangd", "C / C++ (clangd)", ["c", "cpp", "objective-c"], "clangd", [], ["compile_commands.json", "compile_flags.txt", ".clangd"]),
+        S(Def("clangd", "C / C++ (clangd)", ["c", "cpp", "objective-c", "objective-cpp", "cuda-cpp"], "clangd", [], ["compile_commands.json", "compile_flags.txt", ".clangd"]),
             new("Install clangd from your LLVM / distribution package (e.g. sudo apt install clangd).",
                 "Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd.",
                 "Install it with: winget install LLVM.LLVM"),

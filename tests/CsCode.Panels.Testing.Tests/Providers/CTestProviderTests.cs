@@ -144,7 +144,7 @@ public sealed class CTestProviderTests
 
     // ------------------------------------------------------------------------------------------------ real ctest
 
-    private sealed class Folder(string path) : IWorkspaceService
+    internal sealed class Folder(string path) : IWorkspaceService
     {
         public IReadOnlyList<Uri> Folders { get; } = [new Uri(path.TrimEnd('/') + "/")];
         public string? Name => "test";
