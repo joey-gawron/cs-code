@@ -90,7 +90,7 @@ public static class BuiltinLanguageServers
                 ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
             All3("Install it with: npm install -g pyright"),
             "none (Pyright does not format)"),
-        S(Def("clangd", "C / C++ (clangd)", ["c", "cpp", "objective-c"], "clangd", [], ["compile_commands.json", "compile_flags.txt", ".clangd"]),
+        S(Def("clangd", "C / C++ (clangd)", ["c", "cpp", "objective-c", "objective-cpp", "cuda-cpp"], "clangd", [], ["compile_commands.json", "compile_flags.txt", ".clangd"]),
             new("Install clangd from your LLVM / distribution package (e.g. sudo apt install clangd).",
                 "Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd.",
                 "Install it with: winget install LLVM.LLVM"),

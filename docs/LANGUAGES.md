@@ -108,7 +108,7 @@ SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the ro
 
 <!-- BEGIN GENERATED: LanguageMatrixTests (do not edit by hand) -->
 
-85 languages, 36 built-in language servers, 8 built-in debugger(s). Highlighted: 84 (22 of them by tree-sitter by default, 20 more with tree-sitter as an option); with a language server: 45.
+85 languages, 36 built-in language servers, 8 built-in debugger(s). Highlighted: 84 (22 of them by tree-sitter by default, 20 more with tree-sitter as an option); with a language server: 47.
 
 ### Support matrix
 
@@ -127,7 +127,7 @@ SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the ro
 | Compose `dockercompose` | names `compose.yml` `compose.yaml` `compose.*.yml` … | TextMate `source.yaml` (VS Code `yaml`) | VS Code: `#`, pairs, indent rules | user only | indentation (off-side), region markers | none built in | none | none built in |
 | CSS `css` | `.css` | TextMate `source.css` (VS Code `css`); tree-sitter `css` as an option | VS Code: `/* */`, pairs, indent rules, word pattern | user only | indentation, region markers, syntax tree with tree-sitter, server ranges | `css`: vscode-css-language-server | vscode-css-language-server | none built in |
 | CSV `csv` | `.csv` | tree-sitter `csv` (default) | CsCode: no comments, pairs, word pattern | user only | indentation | none built in | none | none built in |
-| CUDA C++ `cuda-cpp` | `.cu` `.cuh` | TextMate `source.cuda-cpp` (VS Code `cpp`) | VS Code: `//`, `/* */`, pairs, word pattern | user only | indentation, region markers | none built in | none | none built in |
+| CUDA C++ `cuda-cpp` | `.cu` `.cuh` | TextMate `source.cuda-cpp` (VS Code `cpp`) | VS Code: `//`, `/* */`, pairs, word pattern | user only | indentation, region markers, server ranges | `clangd`: clangd | clangd (clang-format rules) | none built in |
 | Dart `dart` | `.dart` | TextMate `source.dart` (VS Code `dart`) | VS Code: `//`, `/* */`, pairs | user only | indentation, server ranges | `dart`: dart | dart language-server (dart format) | none built in |
 | Diff `diff` | `.diff` `.patch` `.rej` | TextMate `source.diff` (VS Code `diff`) | VS Code: `#`, `#  `, pairs | user only | indentation | none built in | none | none built in |
 | Docker `dockerfile` | `.dockerfile` `.containerfile` `Dockerfile` `Containerfile` names `Dockerfile.*` `Containerfile.*` | TextMate `source.dockerfile` (VS Code `docker`) | VS Code: `#`, pairs | user only | indentation, server ranges | `dockerfile`: docker-langserver | docker-langserver | none built in |
@@ -161,7 +161,7 @@ SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the ro
 | Markdown `markdown` | `.md` `.mkd` `.mdwn` `.mdown` `.markdown` `.markdn` `.mdtxt` `.mdtext` +1 more | TextMate `text.html.markdown` (VS Code `markdownbasics`); tree-sitter `markdown` as an option | VS Code: `<!-- -->`, pairs | built-in (VS Code) | indentation (off-side), region markers, syntax tree with tree-sitter, server ranges | `marksman`: marksman | none (Marksman does not format) | none built in |
 | Nix `nix` | `.nix` | tree-sitter `nix` (default) | CsCode: `#`, `/* */`, pairs, indent rules, word pattern | user only | syntax tree, server ranges | `nix`: nil / nixd | nil / nixd running nixfmt | none built in |
 | Objective-C `objective-c` | `.m` | TextMate `source.objc` (VS Code `objectivec`) | VS Code: `//`, `/* */`, pairs | user only | indentation, server ranges | `clangd`: clangd | clangd (clang-format rules) | none built in |
-| Objective-C++ `objective-cpp` | `.mm` | TextMate `source.objcpp` (VS Code `objectivec`) | VS Code: `//`, `/* */`, pairs | user only | indentation | none built in | none | none built in |
+| Objective-C++ `objective-cpp` | `.mm` | TextMate `source.objcpp` (VS Code `objectivec`) | VS Code: `//`, `/* */`, pairs | user only | indentation, server ranges | `clangd`: clangd | clangd (clang-format rules) | none built in |
 | OCaml `ocaml` | `.ml` `.mli` | tree-sitter `ocaml` (default) | CsCode: `(* *)`, pairs, indent rules, word pattern | user only | syntax tree, server ranges | `ocaml-lsp`: ocamllsp | ocamllsp (ocamlformat, when installed) | none built in |
 | Pascal `pascal` | `.pas` `.pp` | TextMate `source.pascal` (VS Code `pascal`) | VS Code: `//`, `(* *)`, pairs, word pattern | user only | indentation | none built in | none | none built in |
 | Perl `perl` | `.pl` `.pm` `.pod` `.t` `.psgi` first line `^#!.*\bperl\b` | TextMate `source.perl` (VS Code `perl`) | VS Code: `#`, pairs | user only | indentation, region markers | none built in | none | none built in |
@@ -205,7 +205,7 @@ SQL, …) run one server for all workspace folders. `${workspaceFolder}` (the ro
 | Id | Languages | Executable (alternatives) and arguments | Root markers | Initialization options / settings | Install: Linux | Install: macOS | Install: Windows |
 |---|---|---|---|---|---|---|---|
 | `bash` | `shellscript` | `bash-language-server start` | none: one server for all workspace folders | - | Install it with: npm install -g bash-language-server | Install it with: npm install -g bash-language-server | Install it with: npm install -g bash-language-server |
-| `clangd` | `c` `cpp` `objective-c` | `clangd` | `compile_commands.json` `compile_flags.txt` `.clangd` (nearest) | - | Install clangd from your LLVM / distribution package (e.g. sudo apt install clangd). | Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd. | Install it with: winget install LLVM.LLVM |
+| `clangd` | `c` `cpp` `objective-c` `objective-cpp` `cuda-cpp` | `clangd` | `compile_commands.json` `compile_flags.txt` `.clangd` (nearest) | - | Install clangd from your LLVM / distribution package (e.g. sudo apt install clangd). | Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd. | Install it with: winget install LLVM.LLVM |
 | `clojure-lsp` | `clojure` | `clojure-lsp` | `deps.edn` `project.clj` `shadow-cljs.edn` `bb.edn` `build.boot` `.lsp` (nearest) | - | Install it with: bash < <(curl -s https://raw.githubusercontent.com/clojure-lsp/clojure-lsp/master/install) (or: nix profile install nixpkgs#clojure-lsp) | Install it with: brew install clojure-lsp/brew/clojure-lsp-native | Install it with: scoop bucket add scoop-clojure https://github.com/littleli/scoop-clojure; scoop install clojure-lsp |
 | `cmake` | `cmake` | `cmake-language-server` | `CMakePresets.json` `CMakeUserPresets.json` `CTestConfig.cmake` (nearest) | init `{"buildDirectory":"build"}` | Install it with: pipx install cmake-language-server (or: pip install --user cmake-language-server) | Install it with: pipx install cmake-language-server (or: pip install --user cmake-language-server) | Install it with: pipx install cmake-language-server (or: pip install --user cmake-language-server) |
 | `csharp` | `csharp` | `csharp-ls` | `*.sln` `*.slnx` `*.csproj` (nearest) | - | Install it with: dotnet tool install --global csharp-ls | Install it with: dotnet tool install --global csharp-ls | Install it with: dotnet tool install --global csharp-ls |
