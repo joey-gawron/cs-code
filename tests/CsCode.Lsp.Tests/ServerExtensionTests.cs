@@ -52,10 +52,8 @@ public class ServerExtensionTests
             {
                 lock (Statuses) Statuses.Add((p.GetProperty("s").GetString()!, Environment.CurrentManagedThreadId));
             });
-            session.OnNotification("probe/done", p =>
-            {
-                lock (Statuses) Statuses.Add(("done:" + p.ValueKind, Environment.CurrentManagedThreadId));
-            });
+            session.OnNotification("probe/done", p => { lock (Statuses) Statuses.Add(("done:" + p.ValueKind, Environment.CurrentManagedThreadId)); });
+            session.OnRequest("probe/ping", (p, _) => Task.FromResult<object?>(new { kind = p.ValueKind.ToString() }));
             session.OnRequest("probe/ask", (p, _) => Task.FromResult<object?>(new { answer = p.GetProperty("q").GetInt32() * 2, thread = Environment.CurrentManagedThreadId }));
             if (ThrowInAttach) throw new InvalidOperationException("attach failed on purpose");
         }
@@ -124,16 +122,14 @@ public class ServerExtensionTests
     }
 
     [Fact]
-    public async Task A_notification_without_params_reaches_the_extension()
+    public async Task Notifications_reach_the_extension_one_at_a_time_in_the_order_sent()
     {
-        // Roslyn's workspace/projectInitializationComplete carries no params: it used to match no handler and was dropped
         var ext = new ProbeExtension();
         await using var env = new LspTestEnv(extensions: [ext]);
         var (server, _) = await env.StartAsync();
-        await server.NotifyAsync("probe/done", null); // the fake server omits a null member: no "params" at all
-        await server.NotifyAsync("probe/done", null);
-        await TestHelpers.EventuallyAsync(() => { lock (ext.Statuses) return ext.Statuses.Count(s => s.Status.StartsWith("done:", StringComparison.Ordinal)) == 2; },
-            () => "both param-less notifications handled: " + string.Join(", ", ext.Statuses.Select(s => s.Status)));
+        for (var i = 0; i < 200; i++) await server.NotifyAsync("probe/status", new { s = i.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        await TestHelpers.EventuallyAsync(() => { lock (ext.Statuses) return ext.Statuses.Count == 200; }, "200 statuses");
+        lock (ext.Statuses) Assert.Equal(Enumerable.Range(0, 200).Select(i => i.ToString(System.Globalization.CultureInfo.InvariantCulture)), ext.Statuses.Select(s => s.Status));
     }
 
     [Fact]
@@ -145,6 +141,18 @@ public class ServerExtensionTests
         var answer = await server.RequestAsync("probe/ask", new { q = 21 }).Within();
         Assert.Equal(42, answer.GetProperty("answer").GetInt32());
         Assert.NotEqual(Environment.CurrentManagedThreadId, answer.GetProperty("thread").GetInt32());
+    }
+
+    [Fact]
+    public async Task A_notification_or_request_without_params_reaches_the_extension()
+    {
+        var ext = new ProbeExtension();
+        await using var env = new LspTestEnv(extensions: [ext]);
+        var (server, _) = await env.StartAsync();
+        await server.NotifyAsync("probe/done", null); // no "params" member at all (Roslyn's workspace/projectInitializationComplete)
+        await TestHelpers.EventuallyAsync(() => { lock (ext.Statuses) return ext.Statuses.Any(s => s.Status == "done:Undefined"); }, "the notification without params");
+        var answer = await server.RequestAsync("probe/ping", null).Within();
+        Assert.Equal("Undefined", answer.GetProperty("kind").GetString());
     }
 
     [Fact]

@@ -51,13 +51,15 @@ public sealed class ServerExtensionSession : IDisposable
 
     /// <summary>
     /// Handles a server-to-client notification (<c>experimental/serverStatus</c>). Only during <see cref="LanguageServerExtension.Attach"/>: the
-    /// connection does not accept new methods once it listens. <paramref name="handler"/> runs on the Language lane with a copy of the params;
-    /// <paramref name="latestWins"/> drops a queued one when a newer one arrives (status-like notifications).
+    /// connection does not accept new methods once it listens. <paramref name="handler"/> runs on the Language lane with a copy of the params
+    /// (<c>default</c>, kind Undefined, when the notification has none);
+    /// in the order the server sent them, one at a time; <paramref name="latestWins"/> drops a queued one when a newer one of the same method arrives
+    /// (status-like notifications).
     /// </summary>
     public void OnNotification(string method, Action<JsonElement> handler, bool latestWins = false)
     {
         var rpc = _attaching ?? throw new InvalidOperationException($"{Extension.Name}: notification handlers are added in Attach, before the server starts.");
-        var sink = new NotificationSink(this, handler, latestWins ? new WorkKey(handler, 0) : default);
+        var sink = new NotificationSink(this, handler, latestWins);
         _sinks.Add(sink);
         rpc.AddLocalRpcMethod(SinkInvoke, sink, new JsonRpcMethodAttribute(method) { UseSingleObjectParameterDeserialization = true });
     }
@@ -136,7 +138,7 @@ public sealed class ServerExtensionSession : IDisposable
             _handler = null;
         }
 
-        // p is optional: a request without params (or "params": null) must still find this method (StreamJsonRpc matches by arity)
+        // optional: StreamJsonRpc matches by arity, and a request without params (no "params" member) would otherwise never arrive
         public async Task<object?> InvokeAsync(JsonElement p = default, CancellationToken ct = default)
         {
             if (_session is not { } session || _handler is not { } handler || Volatile.Read(ref session._disposed) != 0) return null;
@@ -157,32 +159,70 @@ public sealed class ServerExtensionSession : IDisposable
         }
     }
 
+    // ---- notifications: in the order the server sent them, one at a time, on the Language lane
+
+    /// <summary>At most this many notifications wait for their handlers; beyond it the oldest are dropped (a flooding server).</summary>
+    internal const int MaxPendingNotifications = 4096;
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(NotificationSink Sink, JsonElement Params, long Seq)> _inbox = new();
+    private int _draining;
+    private long _dropped;
+
+    private void Enqueue(NotificationSink sink, JsonElement copy)
+    {
+        var seq = Interlocked.Increment(ref sink.Latest);
+        _inbox.Enqueue((sink, copy, seq));
+        while (_inbox.Count > MaxPendingNotifications && _inbox.TryDequeue(out _)) Interlocked.Increment(ref _dropped);
+        ScheduleDrain();
+    }
+
+    private void ScheduleDrain()
+    {
+        if (Interlocked.Exchange(ref _draining, 1) != 0) return;
+        if (!_client.Context.Queue.Post(LanePriority.Background, Drain, exempt: true)) Volatile.Write(ref _draining, 0);
+    }
+
+    // Single consumer (_draining stays set while it runs): the lane's several threads never run two of this session's handlers at once or out of order.
+    private void Drain()
+    {
+        try
+        {
+            while (_inbox.TryDequeue(out var item))
+            {
+                if (Volatile.Read(ref _disposed) != 0) { _inbox.Clear(); return; }
+                if (item.Sink.LatestWins && item.Seq != Volatile.Read(ref item.Sink.Latest)) continue; // a newer one of the same kind is queued
+                if (item.Sink.Handler is not { } handler) continue;
+                try { handler(item.Params); }
+                catch (Exception ex) when (ex is not OutOfMemoryException) { Log($"notification handler failed: {ex.Message}"); }
+            }
+            if (Interlocked.Exchange(ref _dropped, 0) is var dropped and > 0) Log($"{dropped} notifications dropped: the server sent more than {MaxPendingNotifications} faster than they were handled");
+        }
+        finally
+        {
+            Volatile.Write(ref _draining, 0);
+            if (!_inbox.IsEmpty && Volatile.Read(ref _disposed) == 0) ScheduleDrain(); // arrived after the last dequeue
+        }
+    }
+
     /// <summary>The target StreamJsonRpc calls on its reader loop: copy and enqueue, nothing else.</summary>
-    private sealed class NotificationSink(ServerExtensionSession session, Action<JsonElement> handler, WorkKey key)
+    private sealed class NotificationSink(ServerExtensionSession session, Action<JsonElement> handler, bool latestWins)
     {
         private ServerExtensionSession? _session = session;
-        private Action<JsonElement>? _handler = handler;
+        public Action<JsonElement>? Handler { get; private set; } = handler;
+        public bool LatestWins { get; } = latestWins;
+        public long Latest;
 
         public void Detach()
         {
             _session = null;
-            _handler = null;
+            Handler = null;
         }
 
-        // p is optional: Roslyn's workspace/projectInitializationComplete has no params, and a one-parameter method would never match it
+        // optional: a notification without params (Roslyn's workspace/projectInitializationComplete) must reach its handler too
         public void Invoke(JsonElement p = default)
         {
-            if (_session is not { } session || _handler is not { } handler || Volatile.Read(ref session._disposed) != 0) return;
-            var copy = p.ValueKind == JsonValueKind.Undefined ? default : p.Clone();
-            session._client.Context.Queue.Post(LanePriority.Background, () =>
-            {
-                if (Volatile.Read(ref session._disposed) != 0) return;
-                try { handler(copy); }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
-                    session.Log($"notification handler failed: {ex.Message}");
-                }
-            }, key, exempt: true);
+            if (_session is not { } session || Handler is null || Volatile.Read(ref session._disposed) != 0) return;
+            session.Enqueue(this, p.ValueKind == JsonValueKind.Undefined ? default : p.Clone());
         }
     }
 }
