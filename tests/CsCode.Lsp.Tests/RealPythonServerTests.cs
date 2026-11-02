@@ -108,6 +108,29 @@ public class RealPythonServerTests
             () => "back on the venv with pytest\n" + env.Dump(), TimeSpan.FromSeconds(90));
     }
 
+    /// <summary>Typing, a key every 50 ms: once the keys stop, both servers report on the text as typed (Ruff's diagnostics are pulled, Pyright's pushed).</summary>
+    [Fact]
+    public async Task Both_servers_report_on_what_was_typed_once_the_keys_stop()
+    {
+        if (!RequireTools()) return;
+        var python = new FixedEnvironments();
+        python.Select(ToolVenv);
+        await using var env = Create(python);
+        env.Dir.WriteFile("pyproject.toml", "[project]\nname = \"demo\"\nversion = \"0\"\n");
+        var doc = env.Open("main.py", "import json\nimport os\n\nprint(os.sep)\n", "python");
+        await env.WaitForStateAsync("ruff", LanguageServerState.Running, TimeSpan.FromSeconds(60));
+        await env.WaitForStateAsync("python", LanguageServerState.Running, TimeSpan.FromSeconds(90));
+        await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "F401"), () => "Ruff's F401\n" + env.Dump(), TimeSpan.FromSeconds(60));
+
+        foreach (var c in "print(os.sep, missing)\n")
+        {
+            doc.ApplyEdits([TextEdit.Insert(doc.PositionAt(doc.Length), c.ToString())]);
+            await Task.Delay(50, Ct);
+        }
+        await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "F821"), () => "Ruff's undefined name\n" + env.Dump(), TimeSpan.FromSeconds(30));
+        await TestHelpers.EventuallyAsync(() => env.Diagnostics.Get(doc.Uri).Any(d => d.Code == "reportUndefinedVariable"), () => "Pyright's undefined name\n" + env.Dump(), TimeSpan.FromSeconds(30));
+    }
+
     [Fact]
     public async Task Ruff_formats_and_its_fix_all_and_organize_imports_actions_resolve_to_edits()
     {
@@ -148,8 +171,9 @@ public class RealPythonServerTests
     }
 
     /// <summary>
-    /// The comparison docs/PYTHON.md records for choosing the default type checker: what each server offers on the same file. Checked 2026-11-01:
-    /// Pyright 1.1.414's own server now has semantic tokens and inlay hints too (they used to be Pylance-only), as basedpyright 1.40.2 does.
+    /// The comparison docs/PYTHON.md records for choosing the default type checker: what each server offers on the same file. Checked 2026-11-02:
+    /// Pyright 1.1.414's own server has neither semantic tokens nor inlay hints (Pylance-only); basedpyright 1.40.2 has both. Each command is
+    /// the package's own script (tools/fetch-lsp-tools.sh re-points <c>pyright-langserver</c>, which basedpyright's package also declares).
     /// </summary>
     [Theory]
     [InlineData("python", "pyright-langserver")]
@@ -173,9 +197,9 @@ public class RealPythonServerTests
             hints = await UntilAsync(async () => await env.Provider<IInlayHintsProvider>(doc).ProvideInlayHintsAsync(doc, new TextRange(TextPosition.Zero, doc.PositionAt(doc.Length)), Ct),
                 "inlay hints", h => h.Count > 0, seconds: 30);
         CsCodeTestNote.Report($"[{id}] semantic tokens: {semantic}; inlay hints: {inlay} ({string.Join(", ", hints?.Select(h => h.Label) ?? [])}); formatting: {env.Registry.GetProviders<IDocumentFormattingProvider>(doc).Count > 0}");
-        Assert.True(semantic);
-        Assert.True(inlay);
-        Assert.Contains(hints!, h => h.Label.Contains("int", StringComparison.Ordinal)); // the inferred type of `total`
+        var based = id == "basedpyright";
+        Assert.Equal((based, based), (semantic, inlay));
+        if (based) Assert.Contains(hints!, h => h.Label.Contains("int", StringComparison.Ordinal)); // the inferred type of `total`
     }
 }
 

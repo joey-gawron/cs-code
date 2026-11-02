@@ -52,17 +52,19 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
 
 | Server | Id | Default | What it gives |
 |---|---|---|---|
-| Pyright `pyright-langserver --stdio` | `python` | on | types, completion, hover, navigation, semantic tokens, inlay hints; gets the selected interpreter |
+| Pyright `pyright-langserver --stdio` | `python` | on | types, completion, hover, navigation; gets the selected interpreter (no semantic tokens, no inlay hints) |
 | Ruff `ruff server` (Ruff ≥ 0.5.3) | `ruff` | on | lint diagnostics, Quick Fixes, `source.fixAll.ruff`, `source.organizeImports.ruff`, formatting; one server per workspace |
-| basedpyright `basedpyright-langserver --stdio` | `basedpyright` | **off** | Pyright's features plus its stricter checks; turn it on and Pyright off: `"cscode.languageServers": { "basedpyright": { "enabled": true }, "python": { "enabled": false } }` |
+| basedpyright `basedpyright-langserver --stdio` | `basedpyright` | **off** | Pyright's features plus semantic tokens, inlay hints and its stricter checks; turn it on and Pyright off: `"cscode.languageServers": { "basedpyright": { "enabled": true }, "python": { "enabled": false } }` |
 
 The Python tool servers run the selected environment's own copy when it has one (`.venv/bin/ruff`, as VS Code's Ruff extension does by
 default), else PATH, `cscode.lsp.searchDirs`, the tools directory. Install hints per platform are in docs/LANGUAGES.md.
 
-**Pyright or basedpyright as the default.** The brief expected only basedpyright to have semantic highlighting and inlay hints; against the
-current releases both have them (`RealPythonServerTests.What_Pyright_and_basedpyright_offer`: semantic tokens and inlay hints `: int`, `a=`, `b=`
-from each). basedpyright's remaining differences are its stricter default rule set, its baseline file and a few Pylance-like features. Pyright
-stays the default until the user decides otherwise.
+**Pyright or basedpyright as the default.** As the brief expected, only basedpyright has semantic highlighting and inlay hints
+(`RealPythonServerTests.What_Pyright_and_basedpyright_offer`: Pyright 1.1.414 registers neither; basedpyright 1.40.2 both, with the hints
+`: int`, `a=`, `b=`). Its other differences are a stricter default rule set, its baseline file and a few Pylance-like features. A first check
+said both servers had them: basedpyright's npm package also declares the commands `pyright` and `pyright-langserver`, npm had linked them to
+basedpyright, and the check ran basedpyright twice. tools/fetch-lsp-tools.sh now points them back at Pyright. Pyright stays the default
+until the user decides otherwise.
 
 `pyproject.toml` schema validation through Taplo is **not verified**: Taplo is not installed on this Mac.
 
