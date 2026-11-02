@@ -1,6 +1,7 @@
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Python;
+using CsCode.Core.Terminal;
 using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -20,6 +21,10 @@ public sealed class PythonIntegration : IDisposable
     /// <summary><c>${command:python.interpreterPath}</c> in launch configurations and tasks: the active file's (else the first folder's) interpreter.</summary>
     public const string InterpreterPath = "python.interpreterPath";
     public const string StatusItemId = "python.interpreter";
+    /// <summary>Run Python File in Terminal: the active file with its folder's interpreter, in the "Python" terminal.</summary>
+    public const string RunFile = "python.execInTerminal";
+    /// <summary>Run Selection/Line in Python REPL (Shift+Enter): one REPL terminal per interpreter, reused.</summary>
+    public const string RunSelection = "python.execSelectionInTerminal";
     private const string EnterPath = "enter";
     private const string Refresh = "refresh";
 
@@ -58,6 +63,16 @@ public sealed class PythonIntegration : IDisposable
                 await _environments.SetActiveAsync(Navigation?.ActiveDocument?.Uri, null).ConfigureAwait(true);
                 return null;
             }, new CommandMetadata(ClearInterpreter, "Clear Workspace Interpreter Setting", "Python")));
+            _subs.Add(commands.Register(RunFile, async _ =>
+            {
+                await RunFileAsync().ConfigureAwait(true);
+                return null;
+            }, new CommandMetadata(RunFile, "Run Python File in Terminal", "Python")));
+            _subs.Add(commands.Register(RunSelection, async inv =>
+            {
+                await RunSelectionAsync(inv.Args is [string text, ..] ? text : null).ConfigureAwait(true);
+                return null;
+            }, new CommandMetadata(RunSelection, "Run Selection/Line in Python REPL", "Python")));
             _subs.Add(commands.Register(InterpreterPath, async inv =>
             {
                 var resource = inv.Args is [Uri uri, ..] ? uri : Navigation?.ActiveDocument?.Uri ?? _sp.GetService<IWorkspaceService>()?.PrimaryFolder;
@@ -138,6 +153,72 @@ public sealed class PythonIntegration : IDisposable
         }
         await _environments.SetActiveAsync(resource, env.Executable).ConfigureAwait(true);
         _sp.GetService<ILoggerFactory>()?.CreateLogger<PythonIntegration>().LogInformation("Python interpreter entered by hand: {Path} ({Label})", env.Executable, env.Label);
+    }
+
+    // ---- running code ----
+
+    private ITerminalService? Terminals => _sp.GetService<ITerminalService>();
+
+    /// <summary>The active Python file, saved first, run with its folder's interpreter in a terminal named "Python" (reused while it lives).</summary>
+    internal async Task RunFileAsync()
+    {
+        if (Navigation?.ActiveDocument is not { LanguageId: "python", Uri.IsFile: true } doc || Terminals is not { } terminals)
+        {
+            Window?.SetStatusBarMessage("Run Python File needs a Python file on disk in the active editor.", TimeSpan.FromSeconds(4));
+            return;
+        }
+        if (doc.IsDirty) await doc.SaveAsync().ConfigureAwait(true);
+        if (await _environments.GetActiveAsync(doc.Uri).ConfigureAwait(true) is not { } env)
+        {
+            await PickAsync(doc.Uri).ConfigureAwait(true);
+            return;
+        }
+        var folder = _sp.GetService<IWorkspaceService>()?.Folders.FirstOrDefault(f => f.IsFile && doc.Uri.LocalPath.StartsWith(f.LocalPath, StringComparison.Ordinal));
+        var terminal = terminals.Terminals.FirstOrDefault(t => t.Title == "Python" && !t.HasExited)
+            ?? await terminals.CreateAsync(new TerminalCreateOptions { Name = "Python", Cwd = folder?.LocalPath ?? Path.GetDirectoryName(doc.Uri.LocalPath) }).ConfigureAwait(true);
+        await terminals.ShowAsync(terminal, preserveFocus: true).ConfigureAwait(true);
+        await terminal.SendTextAsync(CommandLine(env.Executable, doc.Uri.LocalPath)).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// The selection (else the caret's line) sent to the Python REPL of the file's interpreter: a terminal running that interpreter, created on first
+    /// use and reused. The code is dedented, and an indented last line gets the blank line the REPL needs to run the block.
+    /// </summary>
+    internal async Task RunSelectionAsync(string? text = null)
+    {
+        if (Navigation?.ActiveDocument is not { LanguageId: "python" } doc || Terminals is not { } terminals) return;
+        text ??= _sp.GetService<Core.Debugging.IActiveSelectionProvider>()?.SelectedText is { Length: > 0 } selected ? selected
+            : Navigation.ActiveCaret is { } caret && doc is Core.Text.ITextDocument textDoc ? textDoc.GetLineText(caret.Line) : null;
+        if (string.IsNullOrWhiteSpace(text)) return;
+        if (await _environments.GetActiveAsync(doc.Uri).ConfigureAwait(true) is not { } env)
+        {
+            await PickAsync(doc.Uri).ConfigureAwait(true);
+            return;
+        }
+        var title = "Python REPL (" + env.Label + ")";
+        var repl = terminals.Terminals.FirstOrDefault(t => t.Title == title && !t.HasExited)
+            ?? await terminals.CreateAsync(new TerminalCreateOptions { Name = title, ShellPath = env.Executable, ShellArgs = [], Cwd = Path.GetDirectoryName(doc.Uri.LocalPath) }).ConfigureAwait(true);
+        await terminals.ShowAsync(repl, preserveFocus: true).ConfigureAwait(true);
+        await repl.SendTextAsync(ForRepl(text), addNewLine: true).ConfigureAwait(true);
+    }
+
+    /// <summary>Code as the REPL takes it: common indentation removed, blank lines inside a block dropped (each would end it), a trailing blank line after an indented block.</summary>
+    internal static string ForRepl(string code)
+    {
+        var lines = code.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n');
+        var indent = lines.Where(l => l.Trim().Length > 0).Select(l => l.Length - l.TrimStart().Length).DefaultIfEmpty(0).Min();
+        var kept = lines.Select(l => l.Length >= indent ? l[indent..] : l.TrimStart()).Where(l => l.Trim().Length > 0).ToList();
+        var result = string.Join("\n", kept);
+        return kept.Count > 0 && (kept[^1].StartsWith(' ') || kept[^1].StartsWith('\t') || kept[^1].TrimEnd().EndsWith(':')) ? result + "\n" : result;
+    }
+
+    /// <summary>A command line for the user's shell: each part quoted when it needs it (single quotes on Unix, double on Windows).</summary>
+    internal static string CommandLine(params string[] parts) => string.Join(' ', parts.Select(Quote));
+
+    private static string Quote(string part)
+    {
+        if (part.Length > 0 && part.All(c => char.IsLetterOrDigit(c) || c is '/' or '.' or '_' or '-' or ':' or '\\' or '+' or '=' or ',')) return part;
+        return OperatingSystem.IsWindows() ? "\"" + part.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"" : "'" + part.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
     }
 
     private static string Shorten(string path)
