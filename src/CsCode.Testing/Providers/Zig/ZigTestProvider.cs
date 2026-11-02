@@ -346,7 +346,10 @@ public sealed class ZigTestProvider(TestProviderContext context) : ITestProvider
             var spec = new ProcessSpec(Zig(), args, project.Directory);
             sink.Output($"> {spec}");
             var parser = new ZigTestOutputParser(project, sink, Reporting(project, run.Root, sink));
-            var exit = await context.Processes.RunAsync(spec, parser.OnLine, parser.OnLine, ct).ConfigureAwait(false);
+            // the runner writes to standard error, a test may print to standard output: two reader threads, one parser
+            var gate = new object();
+            void OnLine(string line) { lock (gate) parser.OnLine(line); }
+            var exit = await context.Processes.RunAsync(spec, OnLine, OnLine, ct).ConfigureAwait(false);
             parser.Complete();
             if (exit is null) return TestRunOutcome.Cancelled;
             worst = Math.Max(worst, exit.Value);
