@@ -159,6 +159,14 @@ Both are honoured with no setting (checked with clangd 21): a `.clang-format` wi
 the editor sent a tab size of 4, and a `.clang-tidy` enabling `readability-braces-around-statements` produced that diagnostic (source
 `clang-tidy`). Without a `.clang-format`, clangd formats in LLVM style (2 spaces) whatever the editor's tab size is.
 
+## 3b. C snippets
+
+`src/CsCode.Editor/Snippets/Builtin/c.json` on stage 1's bundled-snippets mechanism (a user snippet with the same prefix wins): `main`,
+`mainv`, `func`, `for`, `forr`, `while`, `do`, `if`, `ifelse`, `elseif`, `else`, `switch`, `case`, `struct`, `tstruct`, `enum`, `union`,
+`typedef`, `include`, `includes`, `define`, `ifdef`, `ifndef`, `if0` (wraps the selection), `guard` (an include guard named after the file:
+`MATHLIB_H` in `mathlib.h`), `externc`, `printf`, `eprintf` and `malloc` (with its null check). The prefixes are words, without `#`, so they
+complete as you type. clangd offers its own code patterns (`for`, `#include`) beside them, as it does next to cpptools' snippets in VS Code.
+
 ## 4. Projects without CMake
 
 Not done in this stage (SHOULD): the "Create compile_flags.txt" command, Build and Run Active File, and docs for bear / compiledb. clangd
