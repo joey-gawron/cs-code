@@ -200,7 +200,25 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
 * **.NET: New Project… / New Item…**: a pick of the installed templates (`dotnet new list --type project|item`), a name, then `dotnet new` as a
   task (a project into a new folder of the workspace, an item next to the active file; the template's default language when it has several).
 
-## 7. Deferred (they need another stage's shared piece)
+## 7. Seen in the real application (2026-11-01, macOS arm64)
+
+`CSharpRealAppTests` (`tests/CsCode.App.Tests/RealApp`) runs the real composition in a window (`RealAppHost`) and saves a screenshot of each
+check in `.scratch/screenshots`:
+
+| Check | Result |
+|---|---|
+| CsCode's own repository opens with **Roslyn**: "C#: CsCode.slnx loaded" in the status bar; F12 on `ConcurrentDictionary` | ✅ `ConcurrentDictionary.cs [decompiled]`, read-only, highlighted, with Roslyn's reference lenses (`csharp-roslyn-decompiled.png`) |
+| Go to Implementation on a `[GeneratedRegex]` method | ✅ `RegexGenerator.g.cs [generated]` (`csharp-roslyn-generated.png`) |
+| The same with **csharp-ls** | ✅ `ConcurrentDictionary.cs [decompiled]` (`csharp-csharp-decompiled.png`); no generated documents |
+| An MSTest-runner and an NUnit-runner project (never built before) in the Test Explorer: discovered, Run All, Debug of one test each | ✅ results as expected; each debug run stopped at the breakpoint in the test and reported Passed after Continue (`csharp-test-explorer-*.png`) |
+| F5 on a console project under the temp folder (behind `/var` → `/private/var`), launch.json with a `build` preLaunchTask | ✅ the build ran in its task terminal, netcoredbg stopped at the breakpoint, reported on the file as opened (`csharp-f5-breakpoint.png`) |
+| UI budgets while Roslyn loads CsCode's solution (typing into the open file every 30 ms until 5 s after the solution loaded; load average 7.4) | ✅ dispatcher p50 0.01 ms, p99 4.0 ms, max 19.2 ms (budget 16 / 50 ms); a keystroke's edit p99 0.9 ms, max 4.2 ms (budget 20 ms) |
+
+The Test Explorer check found two things fixed on the way: a runner project that was never restored has no `IsTestingPlatformApplication`
+yet (the packages' props set it), so `EnableMSTestRunner` / `EnableNUnitRunner` / a TUnit reference count too; and a debugged MTP program
+printed the platform's telemetry banner (the debug launch now passes `TESTINGPLATFORM_TELEMETRY_OPTOUT` like runs do).
+
+## 8. Deferred (they need another stage's shared piece)
 
 * **`codeActionsOnSave` with Roslyn** — needs stage 1's (Python) participant, not merged. What was found for it: Roslyn's code action kinds are
   only `quickfix`, `refactor`, `refactor.extract`, `refactor.inline`; it never returns `source.organizeImports` or `source.fixAll` and ignores
@@ -211,7 +229,7 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
 * Roslyn's integration is a Roslyn-only hook (`LanguageClient.Roslyn`, a second JSON-RPC target, `RoslynCommands`) rather than stage 2's
   per-server extension pattern, which was not merged either; it moves onto that pattern when both are in.
 
-## 8. Limits
+## 9. Limits
 
 * Roslyn's `workspace/configuration` sections (`csharp|…`, `dotnet|…`) are answered from settings of the same name: VS Code's C# settings
   (`dotnet.*`) are not mapped, so Roslyn runs with its defaults (decompilation on). `--csharpDesignTimePath` is not passed.
@@ -219,7 +237,7 @@ Microsoft.Testing.Extensions.TrxReport 2.5.2; an F# xUnit v3 3.2.2 project), `Re
 * Razor and Blazor still have highlighting only (STRETCH, not started).
 * NuGet: no credential providers, no package icons or README, no "outdated" view.
 
-## 9. Tests
+## 10. Tests
 
 ```
 tools/fetch-roslyn-ls.sh                                                       # Roslyn into .scratch/tools/roslyn-ls (once)
@@ -229,6 +247,7 @@ CSCODE_CSHARP_EVAL=1 dotnet tests/CsCode.Lsp.Tests/bin/Debug/net10.0/CsCode.Lsp.
 dotnet tests/CsCode.Panels.Testing.Tests/bin/Debug/net10.0/CsCode.Panels.Testing.Tests.dll -class CsCode.Panels.Testing.Tests.Providers.RealTestingPlatformTests
 dotnet tests/CsCode.Dap.Tests/bin/Debug/net10.0/CsCode.Dap.Tests.dll -class CsCode.Dap.Tests.RealNetCoreDbgMatrixTests -class CsCode.Dap.Tests.RealNetCoreDbgTests
 dotnet tests/CsCode.Panels.Debug.Tests/bin/Debug/net10.0/CsCode.Panels.Debug.Tests.dll -class CsCode.Panels.Debug.Tests.RealDebuggerEndToEndTests
+dotnet tests/CsCode.App.Tests/bin/Debug/net10.0/CsCode.App.Tests.dll -class CsCode.App.Tests.RealApp.CSharpRealAppTests       # the real-app checks
 ```
 
 Each real suite skips with its reason when its tool is missing (Roslyn not fetched, csharp-ls not installed, netcoredbg not fetched, the test
