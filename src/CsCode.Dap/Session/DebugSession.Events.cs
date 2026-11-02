@@ -34,6 +34,7 @@ public sealed partial class DebugSession
         _handles.Invalidate();
         _completions.Clear();
         if (e.ThreadId is { } threadId) Volatile.Write(ref _focusedThread, threadId);
+        _stoppedThread = e.ThreadId;
         LastException = null;
 
         // A stop at the breakpoint of a client-side exception filter (GDB: "Rust panics") is reported as the exception it stands for.
