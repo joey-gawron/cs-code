@@ -106,7 +106,7 @@ public class NewProjectTests
         return null;
     }
 
-    public static TheoryData<string> Generators => ["rust", "cmake-c", "cmake-cpp", "zig", "dotnet", "node-js", "python", "empty", "static-site"];
+    public static TheoryData<string> Generators => ["rust", "cmake-c", "cmake-cpp", "zig", "dotnet", "node-js", "node-ts", "python", "empty", "static-site"];
 
     [AvaloniaTheory(Timeout = 600_000)]
     [MemberData(nameof(Generators))]
@@ -131,12 +131,14 @@ public class NewProjectTests
         Assert.True(await RealAppHost.WaitFor(() => vm.Initialized.IsCompleted, 60_000), "the tool checks answered");
         var item = vm.Generators.Single(g => g.Id == generatorId);
         Assert.SkipUnless(item.IsAvailable, $"{item.DisplayName}: {item.ToolSummary}. {item.InstallHint}");
+        Assert.SkipWhen(generatorId == "node-ts" && Environment.GetEnvironmentVariable("CSCODE_TEST_DOWNLOADS") != "1",
+            "typescript and @types/node download from the npm registry; set CSCODE_TEST_DOWNLOADS=1 to run it (only with the user's go-ahead)");
 
         // The user picks the generator, a folder (the physical path: netcoredbg matches breakpoints to the PDB's path, which has no /var link) and a name.
         vm.SelectedGenerator = item;
         Assert.True(await RealAppHost.WaitFor(() => vm.OptionsLoaded.IsCompleted, 60_000), "the options loaded");
         vm.Location = TempDirectory.PhysicalPath(host.Files.Path);
-        vm.Name = generatorId switch { "dotnet" => "HelloApp", "node-js" => "hello-app", _ => "hello_app" };
+        vm.Name = generatorId switch { "dotnet" => "HelloApp", "node-js" or "node-ts" => "hello-app", _ => "hello_app" };
         foreach (var option in vm.Options)
             switch (generatorId, option.Id)
             {
@@ -162,7 +164,7 @@ public class NewProjectTests
         {
             "rust" or "cmake-c" or "cmake-cpp" or "zig" => codelldb is null ? "CodeLLDB is not in .scratch/tools (tools/fetch-codelldb.sh)" : null,
             "dotnet" => netcoredbg is null ? "netcoredbg is not in .scratch/tools" : null,
-            "node-js" => jsDebug is null ? "js-debug is not in .scratch/tools" : null,
+            "node-js" or "node-ts" => jsDebug is null ? "js-debug is not in .scratch/tools" : null,
             "python" => "debugpy arrives with the Python stage",
             _ => "an empty project has nothing to debug",
         };

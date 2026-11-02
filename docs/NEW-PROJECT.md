@@ -169,9 +169,9 @@ the page shows the error in red and brings the Output window to the front.
 | C++ (17 exe, 20 lib, 23 exe; GoogleTest; Catch2) | yes | as C; GoogleTest and Catch2 tests discovered and passing | yes | CodeLLDB stops at `main.cpp:6` |
 | C# (console + xUnit, classlib in .sln) | yes | `dotnet build`, `dotnet test`; the program prints Hello, World! | yes | netcoredbg stops at `Program.cs:1` |
 | JavaScript | yes | `node --test` (1 pass); `node src/index.js` | yes | js-debug stops at `index.js:3` |
-| Python (app with .venv) | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest only with downloads allowed | yes | not on main (debugpy) |
+| Python (app with .venv; package with pytest) | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest installed from PyPI into `.venv`, `python -m pytest` (1 passed) | yes | not on main (debugpy) |
 | Empty, Static Website | yes | — | yes | — |
-| TypeScript | needs the npm registry: not run | — | — | — |
+| TypeScript | yes (typescript and @types/node from the npm registry) | `npm test` (1 pass); `tsc` builds `dist/index.js`, which prints Hello, world! | yes | js-debug stops at `index.ts:3` through the source map |
 | Zig (zig 0.17.0, installed 2026-11-02) | yes | `zig build`, `zig build test` | yes | CodeLLDB stops at `main.zig:8` |
 
 Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `RealApp/NewProjectTests.Screenshots_of_the_page` into
@@ -185,7 +185,8 @@ Screenshots of the page (Rust and C# chosen) and of the Welcome link come from `
 | `tests/CsCode.Panels.NewProject.Tests` | the view model (generators, validation, options and the VCS link, remembering, create/fail/cancel, opening here or in a new window) and the real view headless (keyboard only: Name focused, typing, Enter, arrows, Esc, Alt+L, Alt+G), `LeakAssert` for the view model and the view | `dotnet test tests/CsCode.Panels.NewProject.Tests` |
 | `tests/CsCode.App.Tests` (`RealApp/NewProjectTests`) | the real application (every module, `CSCODE_HOME` in a temp dir, headless window): the menu, the palette command and the Welcome link open the page; per installed toolchain a project made on the page opens with its main file and F5 builds it and stops at a breakpoint in it | `dotnet test tests/CsCode.App.Tests --blame-hang-timeout 12m --filter FullyQualifiedName~RealApp.NewProjectTests` |
 
-Results on this Mac: ProjectTemplates 105 passed, 2 skipped (pytest and TypeScript downloads); Panels.NewProject 21 passed; RealApp
-NewProjectTests 12 passed, Zig's F5 among them (on 2026-11-01, with the menu, Welcome and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
+Results on this Mac (2026-11-02): ProjectTemplates 105 passed, 2 skipped (pytest and TypeScript downloads), and with `CSCODE_TEST_DOWNLOADS=1`
+those 2 pass; Panels.NewProject 21 passed; RealApp NewProjectTests 13 passed with downloads on (F5 for Rust, C, C++, Zig, C#, JavaScript and
+TypeScript; 12 passed and TypeScript skipped without; on 2026-11-01, with the menu, Welcome and session App tests: 54 passed). Real-tool tests skip with their reason when the tool is missing. Downloads only with the user's go-ahead: pytest and TypeScript run with
 `CSCODE_TEST_DOWNLOADS=1`; the C++ framework tests use the GoogleTest/Catch2 archives the C++ stage fetched into `.scratch/tools/cpp-test-frameworks`
 (`FETCHCONTENT_SOURCE_DIR_*`), and otherwise need the same variable. The F5 cases use CodeLLDB, netcoredbg and js-debug from `.scratch/tools`.
