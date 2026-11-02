@@ -34,6 +34,9 @@ public class BackgroundCommandLineTests
         Assert.Equal(("x", "y", true, true, true, false), (host.Session, host.SeedFrom, host.Unnamed, host.Hidden, host.Host, host.IsLauncher));
         Assert.Empty(host.Targets);
         Assert.True(CommandLineOptions.Parse(["--host", "--spare"]).Spare);
+        var spare = CommandLineOptions.Parse(["--host", "--spare", "--quit-token", "0f3a"]);
+        Assert.Equal(("0f3a", true), (spare.QuitToken, spare.Spare));
+        Assert.Empty(spare.Targets);
         Assert.False(CommandLineOptions.Parse(["--foreground", "f.cs"]).IsLauncher);
         Assert.False(CommandLineOptions.Parse(["--version"]).IsLauncher);
     }
@@ -244,6 +247,36 @@ public class SessionStartupFailureTests
             App.Background = previous;
             host.Dispose();
         }
+    }
+}
+
+/// <summary>
+/// A spare whose endpoint opened after a <c>cscode --quit --all</c> looked for processes (it was still starting under load) was never asked to quit
+/// and stayed: it now sees that quit's token and leaves by itself (docs/SESSIONS.md, "The warm spare"). In-process: the host's start-up only.
+/// </summary>
+public class SpareQuitTokenTests
+{
+    [Fact]
+    public void A_spare_started_before_the_last_quit_all_leaves_at_once_and_one_started_after_it_stays()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Skip("Unix sockets");
+        using var home = new TempDirectory("cscode-quit-token-");
+        var runtime = RuntimeDirectory.Resolve(name => name == "CSCODE_HOME" ? home.Path : null);
+        var store = new SessionStore(home.Combine("data"));
+        var crash = new CrashHandler(home.Combine("logs"));
+        var startedWith = runtime.QuitAllToken(); // what the launcher passed when it started the spare: no quit --all yet
+        Assert.Equal(RuntimeDirectory.NoQuitAllToken, startedWith);
+        runtime.NewQuitAllToken(); // a quit --all ran while the spare was starting, before its endpoint existed
+
+        var missed = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--spare", "--headless-test", "--quit-token", startedWith]), crash, runtime, store, out var refused);
+        Assert.Null(missed);
+        Assert.Equal(0, refused);
+        Assert.False(File.Exists(runtime.EndpointOf(Environment.ProcessId)));
+
+        using var current = BackgroundHost.Start(CommandLineOptions.Parse(["--host", "--spare", "--headless-test", "--quit-token", runtime.QuitAllToken()]), crash, runtime, store, out refused);
+        Assert.NotNull(current);
+        Assert.Null(refused);
+        Assert.True(File.Exists(runtime.EndpointOf(Environment.ProcessId)));
     }
 }
 

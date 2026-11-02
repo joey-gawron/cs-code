@@ -90,7 +90,8 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
 
     /// <summary>
     /// Takes the session (or prepares to be the spare) and opens the endpoint. Returns null with <paramref name="refusedExitCode"/> set when this
-    /// process must not run (3: another process owns the session; 2: invalid name), or null without it when background mode is unavailable here
+    /// process must not run (3: another process owns the session; 2: invalid name; 0: a spare that a <c>--quit --all</c> missed while it was
+    /// starting), or null without it when background mode is unavailable here
     /// (the window then runs as a plain in-process window).
     /// </summary>
     public static BackgroundHost? Start(CommandLineOptions options, CrashHandler crash, out int? refusedExitCode)
@@ -179,6 +180,15 @@ public sealed class BackgroundHost : IIpcHandler, IDisposable
         {
             Console.Error.WriteLine("cscode: cannot open the IPC endpoint: " + ex.Message);
             host.Dispose();
+            return null;
+        }
+        // A `cscode --quit --all` since the launcher started this spare looked for processes before the endpoint above existed, so it could not ask
+        // this one to quit: its new token says so instead. Read after the endpoint opened: either that quit found the endpoint or this sees the token.
+        if (options.Spare && options.QuitToken is { } token && runtime.QuitAllToken() != token)
+        {
+            SessionTrace.Mark("host: a quit --all ran while this spare was starting");
+            host.Dispose();
+            refusedExitCode = 0;
             return null;
         }
         return host;

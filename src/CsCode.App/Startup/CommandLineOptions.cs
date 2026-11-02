@@ -8,7 +8,8 @@ public sealed record StartupTarget(string Path, int? Line = null, int? Column = 
 /// <c>~/.local/bin/cscode</c> and scripts depend on it):
 /// <c>cscode [paths...] [--session NAME | --new-window] [--wait] [--goto file:line:col] [--list-sessions] [--background] [--quit [NAME | --all]]
 /// [--foreground] [--help] [--version]</c>. Directories open as the workspace folder, files open as editors. Unknown switches are collected, not
-/// fatal. The internal switches (<c>--host</c>, <c>--spare</c>, <c>--hidden</c>, <c>--unnamed</c>, <c>--seed-from NAME</c>, <c>--headless-test</c>)
+/// fatal. The internal switches (<c>--host</c>, <c>--spare</c>, <c>--quit-token TOKEN</c>, <c>--hidden</c>, <c>--unnamed</c>, <c>--seed-from NAME</c>,
+/// <c>--headless-test</c>)
 /// are how the launcher starts CsCode processes; they are not part of the public interface.
 /// </summary>
 public sealed record CommandLineOptions(
@@ -42,6 +43,8 @@ public sealed record CommandLineOptions(
     public bool Host { get; init; }
     /// <summary><c>--spare</c>: start as the warm spare (no session until claimed).</summary>
     public bool Spare { get; init; }
+    /// <summary><c>--quit-token TOKEN</c>: the spare's quit-all token when the launcher started it (<c>RuntimeDirectory.QuitAllToken</c>).</summary>
+    public string? QuitToken { get; init; }
     /// <summary><c>--hidden</c>: restore the session without showing its window.</summary>
     public bool Hidden { get; init; }
     /// <summary><c>--unnamed</c>: the session is a new unnamed one (<c>window-N</c>).</summary>
@@ -63,7 +66,7 @@ public sealed record CommandLineOptions(
         bool newWindow = false, wait = false, help = false, version = false;
         bool list = false, background = false, quit = false, all = false, foreground = false;
         bool host = false, spare = false, hidden = false, unnamed = false, headless = false;
-        string? session = null, seedFrom = null;
+        string? session = null, seedFrom = null, quitToken = null;
         string? pending = null; // the switch whose value comes next
         foreach (var arg in args)
         {
@@ -72,6 +75,7 @@ public sealed record CommandLineOptions(
                 case "--goto": targets.Add(ParseTarget(arg, cwd)); pending = null; continue;
                 case "--session": session = arg; pending = null; continue;
                 case "--seed-from": seedFrom = arg; pending = null; continue;
+                case "--quit-token": quitToken = arg; pending = null; continue;
                 case "--quit":
                     pending = null;
                     if (!arg.StartsWith('-')) { session = arg; continue; }
@@ -95,6 +99,7 @@ public sealed record CommandLineOptions(
                 case "--hidden": hidden = true; break;
                 case "--unnamed": unnamed = true; break;
                 case "--seed-from": pending = "--seed-from"; break;
+                case "--quit-token": pending = "--quit-token"; break;
                 case "--headless-test": headless = true; break;
                 default:
                     if (arg.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase) || arg.StartsWith("docker://", StringComparison.OrdinalIgnoreCase)
@@ -108,7 +113,7 @@ public sealed record CommandLineOptions(
         {
             RemoteTargets = remote,
             Session = session, ListSessions = list, Background = background, Quit = quit, All = all, Foreground = foreground,
-            Host = host, Spare = spare, Hidden = hidden, Unnamed = unnamed, SeedFrom = seedFrom, HeadlessTest = headless,
+            Host = host, Spare = spare, QuitToken = quitToken, Hidden = hidden, Unnamed = unnamed, SeedFrom = seedFrom, HeadlessTest = headless,
         };
     }
 

@@ -60,9 +60,13 @@ public sealed class FakeHost : IIpcHandler, IDisposable
     public ConcurrentQueue<IpcMessage> Received { get; } = new();
     public bool QuitRequested { get; private set; }
 
+    /// <summary>Called with each request as it arrives, before it is answered.</summary>
+    public Action<IpcMessage>? Seen { get; set; }
+
     public async Task<IpcMessage> HandleAsync(IpcMessage request, CancellationToken ct)
     {
         Received.Enqueue(request);
+        Seen?.Invoke(request);
         if (Wedged) await Task.Delay(Timeout.Infinite, ct);
         lock (_gate)
         {

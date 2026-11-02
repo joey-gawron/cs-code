@@ -285,6 +285,11 @@ visible; the launcher then starts the next spare. A spare that is still starting
 one with the higher pid quits. Not warmed: the compositor's first frame of the real window (it needs a shown window), now the largest part of
 the host's share of a claim (≈ 40-60 ms of a publish's ≈ 180 ms on macOS).
 
+`cscode --quit --all` cannot ask a spare whose endpoint is not open yet: the launch just before started it, and under load its start-up takes a
+second or more before the endpoint opens. Such a spare used to stay. The quit leaves a new token in the runtime directory (`quit-all`) before it
+looks for processes, every spare is started with the token of its moment (`--quit-token`), and a spare that finds another token there once its
+endpoint is open quits at once (exit code 0): either the quit sees the endpoint or the spare sees the token.
+
 **Background priority** (`ProcessPriority`): a spare starts (and waits) at a low priority that its claim lifts again first thing, so the
 replacement spare the launcher starts right after a claim (≈ 0.3-0.8 s of CPU) does not compete with the window just opened. Plain `nice` cannot
 do this: an unprivileged process can never lower its nice value again, so a claimed spare would stay slow. macOS: the Darwin background state
@@ -598,6 +603,8 @@ executables and libraries one by one, then the bundle) and verified; `--install`
   crash log. A real-X11 variant (a private Xvfb, `DISPLAY` only) checks that libX11 comes from the system; it skips without an Xvfb.
 * `SessionStartupFailureTests` — a session process (and a spare) whose start-up failed: show and claim fail at once with the reason, quit ends
   it, the session's lock is released.
+* `SpareQuitTokenTests` — a spare started with the token from before the last `--quit --all` leaves as its endpoint opens; one with the current
+  token stays. `SessionLauncherTests` checks that the token is new before the quit's discovery and that each spare is started with the current one.
 * `StartupBenchmarkTests` — the start-up measurements above (opt-in, `CSCODE_STARTUP_BENCH`).
 
 ```

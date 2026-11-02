@@ -55,6 +55,30 @@ public sealed class RuntimeDirectory
 
     public string TrayLockPath => System.IO.Path.Combine(Path, "tray.lock");
 
+    /// <summary>The token before any <c>cscode --quit --all</c> left one (<see cref="QuitAllToken"/>).</summary>
+    public const string NoQuitAllToken = "none";
+
+    /// <summary>
+    /// Where <c>cscode --quit --all</c> leaves a new token before it looks for processes. A warm spare is started with the token of the moment and,
+    /// once its endpoint is open, quits by itself when the token here is another one: a quit that looked before that endpoint existed could not ask
+    /// it (docs/SESSIONS.md, "The warm spare").
+    /// </summary>
+    public string QuitAllTokenPath => System.IO.Path.Combine(Path, "quit-all");
+
+    /// <summary>The last quit-all's token; <see cref="NoQuitAllToken"/> when none ran (or the file cannot be read).</summary>
+    public string QuitAllToken()
+    {
+        try { return AtomicFile.ReadOrNull(QuitAllTokenPath) is { Length: > 0 } bytes ? Encoding.UTF8.GetString(bytes) : NoQuitAllToken; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return NoQuitAllToken; }
+    }
+
+    /// <summary>Replaces the token (written whole: a spare never reads half of one). Best effort.</summary>
+    public void NewQuitAllToken()
+    {
+        try { AtomicFile.Write(QuitAllTokenPath, Encoding.UTF8.GetBytes(Guid.NewGuid().ToString("N"))); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
     /// <summary>
     /// Where builds before the session locks moved to the data directory locked session <paramref name="name"/> (<c>&lt;runtime&gt;/locks/&lt;name&gt;.lock</c>).
     /// Still honoured and taken by <see cref="SessionLock"/>: a process of such a build that is still running after an upgrade (quitting, or
