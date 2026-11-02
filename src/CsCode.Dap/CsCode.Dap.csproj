@@ -16,6 +16,8 @@
   <ItemGroup>
     <!-- CsCode's GDB helper (Rust value summaries), sourced by gdb at startup: copied next to the assembly, and so into the app's output. -->
     <None Update="Adapters/Gdb/cscode_gdb.py" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CsCode's loader for Zig's LLDB pretty printers (initCommands of CodeLLDB and lldb-dap): copied next to the assembly too. -->
+    <None Update="Adapters/Lldb/cscode_zig_lldb.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

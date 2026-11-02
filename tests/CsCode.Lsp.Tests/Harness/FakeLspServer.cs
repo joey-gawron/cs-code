@@ -54,6 +54,8 @@ public sealed class FakeLspServer : ILspConnection
     // ---- configuration (set BEFORE the client connects) ----
     public ServerCapabilities Capabilities { get; set; }
     public string Name { get; set; } = "fake-server";
+    /// <summary>The <c>serverInfo.version</c> of the default <c>initialize</c> answer.</summary>
+    public string Version { get; set; } = "1.0";
     public Func<JsonElement, Task<object?>>? InitializeHook { get; set; }
     public ConcurrentDictionary<string, Func<JsonElement, Task<object?>>> Requests { get; } = new();
     public ConcurrentDictionary<string, Action<Msg>> NotificationHandlers { get; } = new();
@@ -98,7 +100,7 @@ public sealed class FakeLspServer : ILspConnection
         Requests.TryAdd(LspMethods.Initialize, async p =>
         {
             if (InitializeHook is not null) return await InitializeHook(p).ConfigureAwait(false);
-            return new InitializeResult { Capabilities = Capabilities, ServerInfo = new InitializeResultServerInfo { Name = Name, Version = "1.0" } };
+            return new InitializeResult { Capabilities = Capabilities, ServerInfo = new InitializeResultServerInfo { Name = Name, Version = Version } };
         });
         Requests.TryAdd(LspMethods.Shutdown, _ => { Shutdown = true; return Task.FromResult<object?>(null); });
     }

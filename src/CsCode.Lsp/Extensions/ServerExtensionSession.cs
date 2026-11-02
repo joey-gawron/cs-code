@@ -40,6 +40,10 @@ public sealed class ServerExtensionSession : IDisposable
     public Uri? RootUri => _client.RootUri;
     public IReadOnlyList<Uri> WorkspaceFolders => _client.WorkspaceFolders;
     public bool IsRunning => _client.IsOperational && Volatile.Read(ref _disposed) == 0;
+    /// <summary>The version the server reported in its <c>initialize</c> answer (<c>serverInfo.version</c>; null before it, or when it sent none).</summary>
+    public string? ServerVersion => _client.ServerVersion;
+    /// <summary>The LSP module's settings as the client has them (search directories, time-outs).</summary>
+    internal LspSettings Settings => _client.Settings;
     /// <summary>The server's <c>capabilities.experimental</c> from its <c>initialize</c> answer (null before it, or when it sent none).</summary>
     public JsonElement? ExperimentalServerCapabilities => _client.ServerCapabilities?.Experimental;
     /// <summary>The Core services (window, commands, navigation, documents…), as the LSP module has them.</summary>

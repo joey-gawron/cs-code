@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
+using CsCode.Core.Platform;
 
 namespace CsCode.Lsp.Extensions;
 
@@ -63,11 +64,17 @@ public abstract class LanguageServerExtension
 
     /// <summary>The lenses CsCode shows for a document (drop, keep or rewrite the server's). On the Language lane.</summary>
     public virtual IReadOnlyList<CodeLens> AdjustCodeLenses(ServerExtensionSession session, IReadOnlyList<CodeLens> lenses, Uri document) => lenses;
+
+    /// <summary>
+    /// Whether the extension takes a <c>window/showMessage</c> of the server (true: CsCode does not show it; zls's version complaint, which
+    /// <see cref="Zls.ZlsExtension"/> says its own way). The message is logged either way. On the connection's reader: decide, post any work.
+    /// </summary>
+    public virtual bool HandleShowMessage(ServerExtensionSession session, MessageSeverity severity, string text) => false;
 }
 
 /// <summary>The built-in extensions. A new one is one line here.</summary>
 public static class ServerExtensions
 {
     /// <summary>Fresh instances for one manager (an extension may hold per-manager state).</summary>
-    public static IReadOnlyList<LanguageServerExtension> CreateBuiltins() => [new RustAnalyzer.RustAnalyzerExtension(), new CSharp.RoslynExtension()];
+    public static IReadOnlyList<LanguageServerExtension> CreateBuiltins() => [new RustAnalyzer.RustAnalyzerExtension(), new CSharp.RoslynExtension(), new Zls.ZlsExtension()];
 }

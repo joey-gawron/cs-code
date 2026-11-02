@@ -383,9 +383,9 @@ public class CodeLldbAdapterFactoryTests
         var services = new ServiceCollection().AddCsCodeDap();
         await using var sp = services.BuildServiceProvider();
         var lldb = Assert.Single(sp.GetServices<BuiltinDebugAdapter>(), b => b.Type == "lldb");
-        Assert.Equal("Rust / C / C++ (CodeLLDB)", lldb.Label);
+        Assert.Equal("Rust / C / C++ / Zig (CodeLLDB)", lldb.Label);
         Assert.Same(CodeLldbAdapterQuirks.Instance, lldb.Quirks);
-        Assert.Equal(["rust", "c", "cpp"], lldb.Languages);
+        Assert.Equal(["rust", "c", "cpp", "zig"], lldb.Languages);
         Assert.Same(sp.GetRequiredService<CodeLldbAdapterFactory>(), lldb.Factory);
         Assert.Same(lldb.Factory, lldb.Provider);
     }

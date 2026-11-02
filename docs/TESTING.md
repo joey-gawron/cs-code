@@ -5,7 +5,7 @@ JavaScript/TypeScript packages that use Jest or Vitest, and C++ test executables
 
 | Project | References | Holds |
 |---|---|---|
-| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`, `Providers/CTest`, `Providers/Cpp`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
+| `CsCode.Testing` | Core only (no Avalonia) | the providers (`Providers/DotNet`, `Providers/Rust`, `Providers/JavaScript`, `Providers/CTest`, `Providers/Cpp`, `Providers/Zig`), their output parsers and source scanners, the process runner, the test tree and the run controller (`Engine/`) |
 | `CsCode.Panels.Testing` | Core, Ui, Testing | the Test Explorer tool window and its view-model, `TestingHost` (commands, settings, Error List / Output glue, context keys), the editor's glyph provider |
 
 The editor side is `CsCode.Editor/Features/TestGutterFeature.cs`, over the new Core contract `ITestGutterProvider`
@@ -166,6 +166,15 @@ GoogleTest, Catch2 and doctest executables, each a project. Full description in 
   is listed twice; one CTest runs whole stays here.
 * Building first and discovery through the CMake File API are open (C-CPP.md section 15): build, then Refresh.
 
+### Zig (`ZigTestProvider`, lang-6)
+
+* **Detection.** Each `build.zig` (not in `zig-out` or the caches). **Discovery** runs nothing: `ZigTestScanner` reads the project's `.zig`
+  files for `test "name"` and decltests `test ident` (top level and named containers); ids `src/root.zig::test.adds`, `src/root.zig::decltest.add`.
+* **Run.** `zig test` with a `--test-filter` per test, compiled as the build's `test` step compiles each file (its `zig test` command lines,
+  learned from `zig build test --verbose` and cached until build.zig changes), read by `ZigTestOutputParser` from the test runner's per-test lines.
+  **Debug.** The same compile with `--test-no-exec -femit-bin`, that binary under CodeLLDB. Details, what the tools offer and the limits:
+  docs/ZIG.md, "Test Explorer".
+
 ## The tree, runs and threading (`TestController`, `TestTree`)
 
 * **Tree.** Project > grouping levels (namespace, target, module, file, class, describe block) > test > case. Groups show the aggregate of their
@@ -206,12 +215,13 @@ selection (a rebuild resets the list, which used to drop it).
 | `testing.defaultGutterClickAction` | `"run"` | `run`, `debug` or `contextMenu`. |
 | `testing.openTesting` | `"openOnTestStart"` | `neverOpen`, `openOnTestStart` / `openExplorerOnTestStart` (show the explorer when a run starts), `openOnTestFailure`. Shown without taking the keyboard. |
 | `cscode.testing.autoDiscover` | `true` | Discover when an editor shows a file that declares tests (a Rust package is built to list them). Tests are always discovered when the explorer is first shown, a test command runs, or Refresh, and never just because a folder opened. Off: only then. |
-| `cscode.testing.dotnet.enabled` / `.rust.enabled` / `.javascript.enabled` / `.cpp.enabled` | `true` | Turn a provider off. |
+| `cscode.testing.dotnet.enabled` / `.rust.enabled` / `.javascript.enabled` / `.cpp.enabled` / `.zig.enabled` | `true` | Turn a provider off. |
 | `cscode.testing.cpp.executables` | TestMate's default | Globs naming the C++ test executables (C-CPP.md section 10). |
 | `cscode.testing.cpp.debugger` | `""` | `codelldb`, `lldb-dap` or `gdb` for C++ tests; empty: `cscode.cmake.debugger`, then CodeLLDB on macOS, GDB elsewhere. |
 | `cscode.testing.cpp.breakOnFailure` | `true` | Debugging a C++ test stops at the failing assertion. |
 
-Also read: `cscode.debug.rustDebugger` (the Rust debugger) and `cscode.debug.nodePath` (node for Jest/Vitest runs).
+Also read: `cscode.debug.rustDebugger` (the Rust debugger), `cscode.debug.nodePath` (node for Jest/Vitest runs) and `zig.path` /
+`zls.zig_exe_path` (zig for Zig tests).
 
 ## Integration (what the host does)
 

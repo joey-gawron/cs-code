@@ -16,6 +16,7 @@ public static class TestingSettings
     public const string JavaScriptEnabled = "cscode.testing.javascript.enabled";
     public const string PythonEnabled = "cscode.testing.python.enabled";
     public const string CppEnabled = "cscode.testing.cpp.enabled";
+    public const string ZigEnabled = "cscode.testing.zig.enabled";
 
     /// <summary>The provider id → its "enabled" setting.</summary>
     public static string EnabledKey(string providerId) => providerId switch
@@ -24,6 +25,7 @@ public static class TestingSettings
         "rust" => RustEnabled,
         "python" => PythonEnabled,
         "cpp" => CppEnabled,
+        "zig" => ZigEnabled,
         _ => JavaScriptEnabled,
     };
 
@@ -57,5 +59,6 @@ public static class TestingSettings
         P(CsCode.Testing.Providers.Cpp.CppTestProvider.DebuggerSetting, "", "The debugger for C++ tests: CodeLLDB, lldb-dap or GDB. Empty: the CMake integration's cscode.cmake.debugger, then CodeLLDB on macOS, GDB elsewhere.",
             """{"type":"string","enum":["","codelldb","lldb-dap","gdb"],"enumDescriptions":["cscode.cmake.debugger, else CodeLLDB on macOS, GDB elsewhere.","CodeLLDB (type lldb).","LLVM's lldb-dap.","GDB's own DAP (GDB 14+)."]}"""),
         P(CsCode.Testing.Providers.Cpp.CppTestProvider.BreakOnFailureSetting, true, "Debugging a C++ test stops in the debugger at the assertion that fails (GoogleTest's --gtest_break_on_failure, Catch2's --break, doctest's breaks).", """{"type":"boolean"}"""),
+        P(ZigEnabled, true, "Find Zig projects (build.zig) and their test blocks.", """{"type":"boolean"}"""),
     ];
 }

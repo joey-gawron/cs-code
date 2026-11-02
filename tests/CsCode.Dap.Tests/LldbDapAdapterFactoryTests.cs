@@ -345,8 +345,8 @@ public class LldbDapAdapterFactoryTests
         await using var sp = services.BuildServiceProvider();
         var builtins = sp.GetServices<BuiltinDebugAdapter>().ToList();
         var dap = Assert.Single(builtins, b => b.Type == "lldb-dap");
-        Assert.Equal("Rust / C / C++ (lldb-dap)", dap.Label);
-        Assert.Equal(["rust", "c", "cpp"], dap.Languages);
+        Assert.Equal("Rust / C / C++ / Zig (lldb-dap)", dap.Label);
+        Assert.Equal(["rust", "c", "cpp", "zig"], dap.Languages);
         Assert.Same(sp.GetRequiredService<LldbDapAdapterFactory>(), dap.Factory);
         Assert.Same(dap.Factory, dap.Provider);
         Assert.Single(builtins, b => b.Type == "lldb"); // CodeLLDB stays

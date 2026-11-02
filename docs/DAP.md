@@ -496,6 +496,13 @@ pid, the `cargo` key's test binary, the templates, `env`, a 1M-line flood and a 
 process is left. They skip with the reason when gdb (14+ with Python), cargo or rustc is missing. `GdbQuirksTests` (fake adapters shaped like
 GDB 18) and `GdbAdapterFactoryTests` (stand-in scripts for gdb/rustc, the stdio transport's nice/marker/reaping) need no GDB.
 
+### Real-adapter tests (Zig)
+
+`RealZigDebuggingTests` (8: CodeLLDB and lldb-dap, slices, optionals, error unions, tagged unions, generics, threads, panics) and
+`RealZigProjectTests` (a `zig init` project: Create launch.json, Run Task `zig: build` with errors in Problems, the `zig build` template under
+CodeLLDB) run against the real zig (`tools/fetch-zig.sh`) and skip with the reason without it; `ZigDebuggingTests` covers templates, tasks,
+the pretty-printer commands and `$zig` without tools. The Zig wiring (templates, `cscode_zig_lldb.py`) and the matrix: docs/ZIG.md.
+
 ### Real-adapter tests (CodeLLDB, Rust)
 
 `RealCodeLldbRustTests` (trait `Category=RealAdapter`, serial; 19 tests) run the same matrix on the same rig (`RealGdbRig` with type `lldb`)

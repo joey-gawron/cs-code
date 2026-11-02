@@ -280,7 +280,7 @@ public sealed partial class DebugService
 
     /// <summary>
     /// The debug type "Create launch.json" uses for <paramref name="folder"/>, from the files at its root: <c>Cargo.toml</c> → the Rust debugger
-    /// (<see cref="RustDebuggerSetting"/>), a .NET project or solution → <c>coreclr</c>, <c>tsconfig.json</c>/<c>package.json</c> → <c>pwa-node</c>;
+    /// (<see cref="RustDebuggerSetting"/>), <c>build.zig</c> → CodeLLDB (else lldb-dap), a .NET project or solution → <c>coreclr</c>, <c>tsconfig.json</c>/<c>package.json</c> → <c>pwa-node</c>;
     /// otherwise the only debugger there is, else null. (The first debugger in label order — what was used before — made a .NET launch.json
     /// for a cargo package.)
     /// </summary>
@@ -297,6 +297,8 @@ public sealed partial class DebugService
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { files = []; }
             if (files.Contains("Cargo.toml")) return Known(RustDebugger()) ?? Known(Adapters.GdbAdapterFactory.PrimaryType);
+            // Zig: the LLDB debuggers (GDB does not list zig); CodeLLDB first, as CsCode.app ships it
+            if (files.Contains("build.zig")) return Known(Adapters.CodeLldbAdapterFactory.PrimaryType) ?? Known(Adapters.LldbDapAdapterFactory.PrimaryType);
             if (files.Any(n => n.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)
                 || n.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)))
                 return Known("coreclr");

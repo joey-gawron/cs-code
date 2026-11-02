@@ -232,7 +232,8 @@ workspace root), created by `LanguageClient` when the server starts:
 **Hooks into standard answers** (all on the Language lane, all optional): `WantsRawHover` + `AdjustHover(session, raw, hover, uri)` (members
 the protocol has no slot for, e.g. rust-analyzer's hover `actions`); `AdjustCodeLenses(session, lenses, uri)` (drop, keep or rewrite);
 `RewritesAnswerOf(method)` + `RewriteAnswer(session, method, raw)` (rewrite a typed request's raw answer before it is deserialised, e.g.
-snippet text edits). A hook that throws is logged in the server's Output channel ("<name> <hook> failed: …") and the session goes on as if the
+snippet text edits); `HandleShowMessage(session, severity, text)` (true keeps a `window/showMessage` from the user, logged either way; on
+the connection's reader, so it decides and posts: zls's version complaint, `ZlsExtension`). A hook that throws is logged in the server's Output channel ("<name> <hook> failed: …") and the session goes on as if the
 extension had not been there for that call.
 
 **Threading.** Command handlers run on the caller's thread (the UI thread from a key or the palette) and only enqueue; everything that maps or
