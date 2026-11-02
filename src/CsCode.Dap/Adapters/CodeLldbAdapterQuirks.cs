@@ -11,6 +11,10 @@ namespace CsCode.Dap.Adapters;
 /// <item><b>Rust panics</b>: CodeLLDB's own "Rust: on panic" filter (<c>rust_panic</c>, on by default, offered when the session's source
 /// languages include Rust) is an LLDB breakpoint on <c>rust_panic$</c>, so its stop arrives as reason <c>breakpoint</c>. It is reported as the
 /// exception "Rust panics" with the panic's message from the program's output, as GDB's client-side filter is.</item>
+/// <item><b>C++ exceptions</b> (observed with the real v1.12.3 on macOS): its "C++: on throw" (<c>cpp_throw</c>, on by default) and "C++: on
+/// catch" (<c>cpp_catch</c>) filters are LLDB breakpoints on <c>__cxa_throw</c> / <c>__cxa_begin_catch</c> too, and their stops arrive as
+/// reason <c>breakpoint</c> with no description; they are reported as the exceptions "C++ throw" / "C++ catch" (lldb-dap says "exception"
+/// itself).</item>
 /// <item><b>Hit counts</b>: CodeLLDB reads a bare <c>N</c> as <c>&gt;= N</c> (every hit from the Nth on); js-debug and Visual Studio's "is
 /// equal to" mean the Nth hit only, so a bare number is sent as <c>=N</c>. <c>&lt;</c>, <c>&lt;=</c>, <c>=</c>, <c>&gt;=</c>, <c>&gt;</c> and
 /// <c>%</c> are CodeLLDB's own and pass unchanged.</item>
@@ -36,9 +40,15 @@ public sealed class CodeLldbAdapterQuirks : DebugAdapterQuirks
     /// <summary>CodeLLDB's exception filter id for Rust panics.</summary>
     public const string RustPanicFilter = "rust_panic";
 
+    /// <summary>CodeLLDB's exception filter ids for C++ (offered when the session's source languages include C++).</summary>
+    public const string CppThrowFilter = "cpp_throw";
+    public const string CppCatchFilter = "cpp_catch";
+
     private static readonly IReadOnlyList<SyntheticExceptionFilter> PanicFilters =
     [
         new(RustPanicFilter, "Rust panics", "rust_panic$", Default: true, Description: "Break when a Rust thread panics, before the panic unwinds or aborts."),
+        new(CppThrowFilter, "C++ throw", "__cxa_throw", Default: true, Description: "Break when a C++ exception is thrown."),
+        new(CppCatchFilter, "C++ catch", "__cxa_begin_catch", Default: false, Description: "Break when a C++ exception is caught."),
     ];
 
     /// <summary>The prefix VS Code's C++ debugger uses for debugger commands; CodeLLDB's own is <c>/cmd </c> (or a backtick).</summary>
@@ -47,8 +57,14 @@ public sealed class CodeLldbAdapterQuirks : DebugAdapterQuirks
 
     public override IReadOnlyList<SyntheticExceptionFilter> BreakpointExceptionFilters => PanicFilters;
 
-    public override DebugExceptionInfo? DescribeSyntheticStop(SyntheticExceptionFilter filter, string recentOutput) =>
-        filter.Filter == RustPanicFilter ? GdbAdapterQuirks.DescribeRustPanic(recentOutput) : null;
+    public override DebugExceptionInfo? DescribeSyntheticStop(SyntheticExceptionFilter filter, string recentOutput) => filter.Filter switch
+    {
+        RustPanicFilter => GdbAdapterQuirks.DescribeRustPanic(recentOutput),
+        // the exception object is the throwing frame's business (the call stack shows where): nothing to wait for in the output
+        CppThrowFilter => new DebugExceptionInfo(CppThrowFilter, "A C++ exception was thrown.", "always", null, "C++ exception", null),
+        CppCatchFilter => new DebugExceptionInfo(CppCatchFilter, "A C++ exception is being caught.", "always", null, "C++ exception", null),
+        _ => null,
+    };
 
     public override ReplRequest MapReplInput(string input)
     {
