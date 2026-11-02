@@ -1,3 +1,4 @@
+using CsCode.Core.Build;
 using CsCode.Core.Diagnostics;
 using CsCode.Core.Projects;
 using CsCode.Core.Python;
@@ -20,7 +21,7 @@ public static class ServiceCollectionExtensions
     {
         services.TryAddSingleton<IToolRunner>(sp => new ToolRunner(sp.GetService<IMemoryMonitor>()));
         services.TryAddSingleton(sp => new ProjectCreator(sp.GetRequiredService<IToolRunner>()));
-        services.TryAddSingleton(sp => new ProjectFollowUps(sp.GetService<IPythonEnvironmentService>()));
+        services.TryAddSingleton(sp => new ProjectFollowUps(sp.GetService<IPythonEnvironmentService>(), sp.GetService<ICMakeService>()));
         services.AddSingleton<IProjectGenerator>(sp => new EmptyProjectGenerator(sp.GetRequiredService<IToolRunner>()));
         services.AddSingleton<IProjectGenerator>(sp => new PythonProjectGenerator(sp.GetRequiredService<IToolRunner>()));
         services.AddSingleton<IProjectGenerator>(sp => new RustProjectGenerator(sp.GetRequiredService<IToolRunner>()));

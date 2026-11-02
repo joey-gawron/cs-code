@@ -124,11 +124,16 @@ the page shows the error in red and brings the Output window to the front.
 * The window **has a folder**: CsCode asks *Open in This Window*, *Open in New Window* or *Don't Open*. *New Window* is offered where File ▸ New
   Window exists (session processes, docs/SESSIONS.md): it now takes absolute paths as arguments, so the new session opens the folder and the main file.
   A `--foreground` run has one window and offers *Open in This Window* / *Don't Open*. *Don't Open* leaves the page with "Created …".
-* **Follow-ups** (`ProjectFollowUps`, in ProjectTemplates; the page runs it on the pool once the folder and main file are open in this window, after
-  its own tab has closed, and it reports to the New Project Output channel): a Python project's `.venv/bin/python` becomes its folder's interpreter
-  through the Python stage's `IPythonEnvironmentService.SetActiveAsync` ("Selected the interpreter 3.14.x ('.venv': venv)"). A project opened in a
-  new window gets the same from its `.vscode/settings.json` (`python.defaultInterpreterPath`, which the environment service reads), and the
-  environment service prefers a folder's own `.venv` anyway.
+* **Follow-ups** (`ProjectFollowUps`, in ProjectTemplates; the page runs them around opening the folder in this window, after its own tab has
+  closed, and they report to the New Project Output channel):
+  * **C and C++:** just before the folder opens, `ICMakeService.ConfigureWhenOpenedAsync(dir, "debug")` (docs/C-CPP.md, *Configure when
+    opened*): the C stage's CMake integration configures the project with its `debug` preset as soon as it detects it, without asking whether to
+    configure or which preset ("Configured CMake: 3 targets in …/build/debug"). The CMake status bar, clangd's compile commands and the Test
+    Explorer have the targets at once. With GoogleTest or Catch2 this first configure fetches them.
+  * **Python:** once the folder is open, `.venv/bin/python` becomes its folder's interpreter through the Python stage's
+    `IPythonEnvironmentService.SetActiveAsync` ("Selected the interpreter 3.14.x ('.venv': venv)").
+  * A project opened in a **new window** gets the interpreter from its `.vscode/settings.json` (`python.defaultInterpreterPath`, which the
+    environment service reads; it prefers a folder's own `.venv` anyway), and the CMake integration's usual configure-on-open question there.
 
 ## Settings, state, commands
 
@@ -142,16 +147,15 @@ the page shows the error in red and brings the Output window to the front.
 
 * `src/CsCode.Core/Projects/ProjectGenerators.cs` (new).
 * `IViewActivator.CloseViewAsync(viewId)` with a default that closes nothing; `ShellViewActivator` closes the document view's tab.
+* `ICMakeService.ConfigureWhenOpenedAsync(sourceDirectory, configurePreset)` with a default that does nothing; `CMakeService` implements it (the
+  C stage's code, added with the coordinator's agreement; docs/C-CPP.md).
 * `workbench.action.newWindow` takes absolute paths (folder, then files) and passes them to the new session's `LaunchRequest.Targets`.
 * File ▸ New is a submenu (Project…, File); the Welcome page's Start list begins with "Create a new project".
 
 ## Still open
 
-* **CMake configure after creation** through the C stage's integration: `CMakeService` configures only once a configure preset is selected (the
-  generated presets have `debug` and `release`, so it asks with a quick pick), and on opening a folder `CMakeHost` asks "Configure the CMake
-  project?" (`cmake.configureOnOpen` unset). Both happen when the project is detected, before a follow-up can act, and `ICMakeService` has no
-  public way to choose a preset; a configure without prompts needs a small API in the C stage's code. Until then the C integration's own prompts
-  appear, and the first F5 or Ctrl+Shift+B configures through the `cmake: configure (debug)` task.
+* **A new window** (another session process) does not get the follow-ups: its CMake integration asks as for any project, and the first F5 or
+  Ctrl+Shift+B configures through the `cmake: configure (debug)` task.
 * **`dotnet restore`**: needs no hook: `dotnet new` restores each project as it creates it (the templates' default), so the first build is offline.
 * **uv** is not installed on this Mac: the `uv venv --python` / `uv pip install --python` path is written from uv's documented CLI and untested;
   its real-tool test skips.
@@ -173,8 +177,8 @@ the page shows the error in red and brings the Output window to the front.
 | Generator | Created with the real tool | Built and tested with its tasks' commands | Opened in the real app with its main file | F5 in the real app |
 |---|---|---|---|---|
 | Rust (bin, lib) | yes | `cargo build`, `cargo test`; the binary prints Hello, world! | yes | CodeLLDB stops at `main.rs:2` |
-| C (C11 exe, C17 lib, C23 exe) | yes | `cmake --preset debug`, `cmake --build --preset debug`, `ctest --preset debug` (100 %) | yes | CodeLLDB stops at `main.c:7` |
-| C++ (17 exe, 20 lib, 23 exe; GoogleTest; Catch2) | yes | as C; GoogleTest and Catch2 tests discovered and passing | yes | CodeLLDB stops at `main.cpp:6` |
+| C (C11 exe, C17 lib, C23 exe) | yes | `cmake --preset debug`, `cmake --build --preset debug`, `ctest --preset debug` (100 %) | yes, configured by the CMake integration with `debug`, nothing asked | CodeLLDB stops at `main.c:7` |
+| C++ (17 exe, 20 lib, 23 exe; GoogleTest; Catch2) | yes | as C; GoogleTest and Catch2 tests discovered and passing | yes, configured as C | CodeLLDB stops at `main.cpp:6` |
 | C# (console + xUnit, classlib in .sln) | yes | `dotnet build`, `dotnet test`; the program prints Hello, World! | yes | netcoredbg stops at `Program.cs:1` |
 | JavaScript | yes | `node --test` (1 pass); `node src/index.js` | yes | js-debug stops at `index.js:3` |
 | Python (app with .venv; package with pytest) | yes | `python -m hello_py` with launch.json's PYTHONPATH; pytest installed from PyPI into `.venv`, `python -m pytest` (1 passed) | yes, and its `.venv` is the folder's interpreter | debugpy (bundled 1.8.22) stops at `__main__.py:7` |

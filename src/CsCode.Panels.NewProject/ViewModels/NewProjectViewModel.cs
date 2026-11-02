@@ -409,10 +409,12 @@ public sealed class NewProjectViewModel : ObservableObject, IDisposable
             await commands.ExecuteAsync(NewWindowCommand, main is null ? [result.Directory] : [result.Directory, main]).ConfigureAwait(true);
             return;
         }
+        // the page is gone by now: the follow-ups (CMake's first configure, the Python interpreter) report to the Output channel only
+        var progress = new Progress(this, channel);
+        var beforeOpen = _s.FollowUps?.BeforeOpenAsync(generatorId, result, progress) ?? Task.CompletedTask;
         await workspace.OpenFolderAsync(new Uri(Path.TrimEndingDirectorySeparator(result.Directory) + Path.DirectorySeparatorChar)).ConfigureAwait(true);
         if (main is not null && _s.Navigation is { } navigation) await navigation.OpenAsync(new Uri(main)).ConfigureAwait(true);
-        // the page is gone by now: the follow-ups (the Python interpreter, ...) run on the pool and report to the Output channel only
-        if (_s.FollowUps is { } followUps) FollowedUp = Task.Run(() => followUps.RunAsync(generatorId, result, new Progress(this, channel)));
+        if (_s.FollowUps is { } followUps) FollowedUp = Task.WhenAll(beforeOpen, Task.Run(() => followUps.RunAsync(generatorId, result, progress)));
     }
 
     // ---- remembering ------------------------------------------------------------------------------------------------------------------------

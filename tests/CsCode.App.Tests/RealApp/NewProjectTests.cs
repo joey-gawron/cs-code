@@ -5,9 +5,11 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using CsCode.App.Menus;
+using CsCode.App.Notifications;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.App.Views;
+using CsCode.Core.Build;
 using CsCode.Core.Debugging;
 using CsCode.Core.Platform;
 using CsCode.Core.Projects;
@@ -167,6 +169,13 @@ public class NewProjectTests
         if (generatorId == PythonProjectGenerator.GeneratorId)
             Assert.Equal(Path.Combine(target, PythonProjectGenerator.VenvInterpreter),
                 (await host.Get<IPythonEnvironmentService>().GetActiveAsync(workspace.Folders[0], TestContext.Current.CancellationToken))?.Executable);
+        // ... and a C or C++ project is configured with its debug preset, without CMake asking whether to configure or which preset.
+        if (generatorId is CMakeProjectGenerator.CId or CMakeProjectGenerator.CppId)
+        {
+            var cmake = host.Get<ICMakeService>().ProjectFor(target);
+            Assert.Equal((CMakeProjectState.Configured, CMakeProjectGenerator.DebugPreset), (cmake?.State, cmake?.ConfigurePreset));
+            Assert.DoesNotContain(host.Get<NotificationCenter>().History, n => n.Message.Contains("Configure the CMake project", StringComparison.Ordinal));
+        }
 
         // F5 where the language's debugger is on main.
         var debugger = generatorId switch
