@@ -280,7 +280,8 @@ public sealed class CppProviderTests
         var sink = new RecordingSink();
         await provider.DebugAsync(new TestRunRequest(project, ["gtest_tests/MathTest.Adds", "gtest_tests/MathTest.Fails"]), sink, launcher, ct);
         Assert.Equal(TestOutcome.Passed, sink.Result("gtest_tests/MathTest.Adds").Outcome);
-        Assert.Equal((TestOutcome.Failed, "/w/a.cpp:9: boom"), (sink.Result("gtest_tests/MathTest.Fails").Outcome, sink.Result("gtest_tests/MathTest.Fails").Message));
+        var fails = sink.Result("gtest_tests/MathTest.Fails");
+        Assert.Equal((TestOutcome.Failed, "a.cpp:9: boom", new TestLocation("/w/a.cpp", 8)), (fails.Outcome, fails.Message, fails.FailureLocation));
         Assert.Contains("--gtest_break_on_failure", Assert.Single(launcher.Started).Properties["args"].EnumerateArray().Select(a => a.GetString()));
     }
 

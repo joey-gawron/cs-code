@@ -126,7 +126,7 @@ public static partial class GoogleTestFormat
                     continue;
                 }
                 var first = failures.Select(SplitLocation).FirstOrDefault(f => f.File is not null);
-                var message = string.Join("\n", failures.Select(f => SplitLocation(f) is var s && s.File is not null ? $"{s.File}:{s.Line}: {s.Text}" : s.Text));
+                var message = string.Join("\n", failures.Select(f => SplitLocation(f) is var s && s.File is not null ? $"{Path.GetFileName(s.File)}:{s.Line}: {s.Text}" : s.Text));
                 result.Add(new CppTestResult(full, TestOutcome.Failed, duration, message, null, first.File, first.Line));
             }
         }
@@ -223,7 +223,7 @@ public static partial class GoogleTestFormat
                     _failureLine = failureLine;
                 }
                 _failure.Clear();
-                if (f.Groups["file"].Value != "unknown file" && !_skipBlock) _failure.Append(f.Groups["file"].Value).Append(':').Append(f.Groups["line"].Value).Append(": ");
+                if (f.Groups["file"].Value != "unknown file" && !_skipBlock) _failure.Append(Path.GetFileName(f.Groups["file"].Value)).Append(':').Append(f.Groups["line"].Value).Append(": ");
                 return;
             }
             if (_output.Length < TestLimits.MaxOutputPerTest) _output.Append(line).Append('\n');

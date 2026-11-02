@@ -1,6 +1,11 @@
 using System.Text.Json.Nodes;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
+using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
+using CsCode.Core.Text;
 using CsCode.Core.Debugging;
 using CsCode.Core.Languages;
 using CsCode.Dap.Adapters;
@@ -21,6 +26,15 @@ namespace CsCode.App.Tests.RealApp;
 /// </summary>
 public class CppTestExplorerRealAppTests
 {
+    private static void Capture(RealAppHost host, string name)
+    {
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+        var frame = host.Window.CaptureRenderedFrame() ?? throw new InvalidOperationException("No frame rendered");
+        frame.Save(Path.Combine(DevHost.ScreenshotDirectory(), name + ".png"), new PngBitmapEncoderOptions());
+    }
+
     [AvaloniaFact(Timeout = 360_000)]
     public async Task Cpp_tests_are_listed_run_and_debugged_to_a_breakpoint_in_the_real_app()
     {
@@ -63,6 +77,12 @@ public class CppTestExplorerRealAppTests
         var diagnostics = host.Get<IDiagnosticService>();
         Assert.True(await RealAppHost.WaitFor(() => diagnostics.Get(new Uri(gtestSource)).Any(d => d.Source == "Test Explorer" && d.Range.Start.Line == 13)
             && diagnostics.Get(new Uri(catchSource)).Any(d => d.Source == "Test Explorer" && d.Range.Start.Line == 7), 10_000), "the failures in the Error List");
+
+        // what the user sees: the explorer with the results, and the test file with its glyphs (failures marked) and lenses
+        await host.Get<Core.Platform.INavigationService>().OpenAsync(new Uri(gtestSource), TextRange.At(11, 0));
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.EditorTabs.Any(t => t.Title == "gtest_tests.cpp" && t.Controller is not null)), "gtest_tests.cpp opened");
+        await DevScene.SettleAsync(20);
+        Capture(host, "cpp-test-explorer");
 
         // Debug one GoogleTest and one Catch2 test: a breakpoint in each stops the executable there, then the result comes back
         var debug = host.Get<IDebugService>();

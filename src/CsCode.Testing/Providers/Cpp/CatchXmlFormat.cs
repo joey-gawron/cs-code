@@ -153,7 +153,7 @@ public static class CatchXmlFormat
                 continue;
             }
             if (text is null) continue;
-            var where = XmlTestCases.Attr(e, "filename") is { } f ? $"{f}:{XmlTestCases.IntAttr(e, "line")}: " : "";
+            var where = XmlTestCases.Attr(e, "filename") is { } f ? $"{Path.GetFileName(f)}:{XmlTestCases.IntAttr(e, "line")}: " : ""; // the place is the failure location
             failures.Add((section is null ? "" : $"In section \"{section}\":\n") + where + text);
             if (file is null && XmlTestCases.Attr(e, "filename") is { } ff)
             {
@@ -257,7 +257,7 @@ public static class DoctestXmlFormat
                 _ => null,
             };
             if (text is null) continue;
-            var where = XmlTestCases.Attr(e, "filename") is { } f ? $"{f}:{XmlTestCases.IntAttr(e, "line")}: " : "";
+            var where = XmlTestCases.Attr(e, "filename") is { } f ? $"{Path.GetFileName(f)}:{XmlTestCases.IntAttr(e, "line")}: " : ""; // the place is the failure location
             failures.Add((subcase is null ? "" : $"In subcase \"{subcase}\":\n") + where + text);
             if (file is null && XmlTestCases.Attr(e, "filename") is { } ff)
             {

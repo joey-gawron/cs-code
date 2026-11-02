@@ -56,7 +56,7 @@ public sealed class CppParserTests
         Assert.Equal(TestOutcome.Failed, fails.Outcome);
         Assert.Equal("from the test", fails.Output);
         Assert.Equal((Gtest, 9), (fails.FailureFile, fails.FailureLine));
-        Assert.StartsWith(Gtest + ":9: Expected equality of these values:", fails.Message);
+        Assert.StartsWith("gtest_tests.cpp:9: Expected equality of these values:", fails.Message); // the full path is the failure location
         Assert.EndsWith("two and two", fails.Message);
         Assert.Equal((TestOutcome.Skipped, "not yet"), (R("MathTest.Skips").Outcome, R("MathTest.Skips").Message));
         Assert.Equal(TestOutcome.Skipped, R("MathTest.DISABLED_Later").Outcome);
@@ -76,7 +76,7 @@ public sealed class CppParserTests
         foreach (var line in new[] { "[ RUN      ] A.Ok", "[       OK ] A.Ok (1 ms)", "[ RUN      ] A.Crashes", "about to crash", "/w/a.cpp:3: Failure", "Value of: x", "" })
             parser.OnLine(line);
         Assert.Equal("A.Crashes", parser.Running);
-        Assert.Equal(("about to crash", "/w/a.cpp:3: Value of: x"), parser.Pending());
+        Assert.Equal(("about to crash", "a.cpp:3: Value of: x"), parser.Pending());
         Assert.Single(results);
     }
 
@@ -87,7 +87,7 @@ public sealed class CppParserTests
         CppTestResult R(string n) => results.Single(r => r.Name == n);
         Assert.Equal(TestOutcome.Passed, R("MathTest.Adds").Outcome);
         Assert.Equal((TestOutcome.Failed, Gtest, 9), (R("MathTest.Fails").Outcome, R("MathTest.Fails").FailureFile, R("MathTest.Fails").FailureLine));
-        Assert.StartsWith(Gtest + ":9: Expected equality", R("MathTest.Fails").Message);
+        Assert.StartsWith("gtest_tests.cpp:9: Expected equality", R("MathTest.Fails").Message);
         Assert.Equal((TestOutcome.Skipped, "not yet"), (R("MathTest.Skips").Outcome, R("MathTest.Skips").Message));
         Assert.Equal(TestOutcome.Skipped, R("MathTest.DISABLED_Later").Outcome);
         Assert.Equal((TestOutcome.Failed, null), (R("NsTest.Throws").Outcome, R("NsTest.Throws").FailureFile));
@@ -116,12 +116,12 @@ public sealed class CppParserTests
         Assert.True(R("adds numbers").Duration > TimeSpan.Zero);
         var fails = R("fails");
         Assert.Equal((TestOutcome.Failed, Catch, 11, "from catch"), (fails.Outcome, fails.FailureFile, fails.FailureLine, fails.Output));
-        Assert.Equal(Catch + ":11: CHECK( Add(x, 2) == 5 ) with expansion: 4 == 5", fails.Message);
+        Assert.Equal("catch_tests.cpp:11: CHECK( Add(x, 2) == 5 ) with expansion: 4 == 5", fails.Message);
         var sections = R("has sections");
         Assert.Equal((TestOutcome.Failed, 16), (sections.Outcome, sections.FailureLine));
         Assert.StartsWith("In section \"second\":", sections.Message);
         Assert.Equal((TestOutcome.Skipped, "not yet"), (R("skipped one").Outcome, R("skipped one").Message));
-        Assert.Equal((TestOutcome.Failed, "Unexpected exception: boom"), (R("throws").Outcome, R("throws").Message![(Catch.Length + 5)..]));
+        Assert.Equal((TestOutcome.Failed, "catch_tests.cpp:19: Unexpected exception: boom"), (R("throws").Outcome, R("throws").Message));
         Assert.Equal(TestOutcome.Passed, R("Scenario: a scenario").Outcome);
     }
 
