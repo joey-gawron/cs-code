@@ -141,9 +141,9 @@ public sealed class CommandLineTests
             }
             """;
         var parsed = DotNetTestProvider.ParseEvaluation(json);
-        Assert.Equal((true, "/p/bin/Debug/net10.0/p.dll", "net10.0", true), parsed);
+        Assert.Equal(new DotNetTestProvider.Evaluation(true, "/p/bin/Debug/net10.0/p.dll", "net10.0", true), parsed);
         var lib = DotNetTestProvider.ParseEvaluation("""{"Properties":{"IsTestProject":"","TargetPath":"/l.dll","TargetFramework":"net10.0","TargetFrameworks":""},"Items":{"PackageReference":[]}}""");
-        Assert.False(lib!.Value.IsTestProject);
+        Assert.False(lib!.IsTestProject);
         Assert.Null(DotNetTestProvider.ParseEvaluation("MSBUILD : error"));
     }
 
