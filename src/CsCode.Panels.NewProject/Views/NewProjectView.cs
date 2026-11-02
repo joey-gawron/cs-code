@@ -31,6 +31,8 @@ public sealed class NewProjectView : UserControl, IDisposable, IToolWindowFocus
     private static readonly IValueConverter StatusBrush = new FuncValueConverter<bool, IBrush>(error => ThemeBrushes.Get(error ? "errorForeground" : "descriptionForeground"));
     private static readonly IValueConverter NotNull = new FuncValueConverter<object?, bool>(v => v is string s ? s.Length > 0 : v is not null);
 
+    private const int LabelWidth = 130;
+
     private readonly NewProjectViewModel _vm;
     private readonly TextBox _name;
     private bool _disposed;
@@ -71,7 +73,7 @@ public sealed class NewProjectView : UserControl, IDisposable, IToolWindowFocus
         var browse = new Button { Content = "_Browse...", MinHeight = 26, Padding = new Thickness(12, 3), Margin = new Thickness(6, 0, 0, 0) };
         browse.Click += async (_, e) => { e.Handled = true; await _vm.BrowseAsync().ConfigureAwait(true); };
 
-        var form = new Grid { ColumnDefinitions = new ColumnDefinitions("110,*,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto"), RowSpacing = 4 };
+        var form = new Grid { ColumnDefinitions = new ColumnDefinitions($"{LabelWidth},*,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto"), RowSpacing = 4 };
         Place(form, FieldLabel("_Name:", _name), 0, 0);
         Place(form, _name, 0, 1, span: 2);
         Place(form, Message(nameof(NewProjectViewModel.NameError), "errorForeground"), 1, 1, span: 2);
@@ -90,7 +92,7 @@ public sealed class NewProjectView : UserControl, IDisposable, IToolWindowFocus
         var optionsHeader = SectionHeader("Options");
         optionsHeader.Bind(IsVisibleProperty, new Binding(nameof(NewProjectViewModel.HasOptions)));
 
-        var git = new CheckBox { Content = "Create _Git repository", Margin = new Thickness(0, 4, 0, 0) };
+        var git = new CheckBox { Content = "Create _Git repository", Margin = new Thickness(0, 10, 0, 0) };
         git.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(NewProjectViewModel.CreateGitRepository)) { Mode = BindingMode.TwoWay });
         var tool = Message(nameof(NewProjectViewModel.ToolSummary), "descriptionForeground");
         tool.FontSize = 11;
@@ -99,7 +101,7 @@ public sealed class NewProjectView : UserControl, IDisposable, IToolWindowFocus
         {
             Spacing = 10,
             Margin = new Thickness(24, 0, 8, 0),
-            Children = { form, optionsHeader, options, SectionHeader("Version control"), git, tool },
+            Children = { form, optionsHeader, options, git, tool },
         };
 
         // ---- bottom: status, progress, Create and Cancel
@@ -183,7 +185,8 @@ public sealed class NewProjectView : UserControl, IDisposable, IToolWindowFocus
         var description = new TextBlock { FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = ThemeBrushes.Get("descriptionForeground") };
         description.Bind(TextBlock.TextProperty, new Binding(nameof(ChoiceOptionItem.SelectedDescription)));
         description.Bind(IsVisibleProperty, new Binding(nameof(ChoiceOptionItem.SelectedDescription)) { Converter = NotNull });
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("150,*"), RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 2 };
+        // The same first column as Name and Location, so every field starts at one edge.
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions($"{LabelWidth},*"), RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 2 };
         Place(grid, label, 0, 0);
         combo.HorizontalAlignment = HorizontalAlignment.Left;
         Place(grid, combo, 0, 1);

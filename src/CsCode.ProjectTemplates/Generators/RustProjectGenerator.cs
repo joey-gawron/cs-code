@@ -29,14 +29,14 @@ public sealed class RustProjectGenerator(IToolRunner runner) : GeneratorBase(run
     [
         ProjectOption.Choice(KindOption, "Type", "bin",
         [
-            new("bin", "Binary (application)", "src/main.rs: cargo new --bin"),
-            new("lib", "Library", "src/lib.rs with a unit test: cargo new --lib"),
+            new("bin", "Binary (application)", "src/main.rs (cargo --bin)"),
+            new("lib", "Library", "src/lib.rs with a unit test (cargo --lib)"),
         ]),
         ProjectOption.Choice(EditionOption, "Edition", "2024",
             [new("2024", "2024"), new("2021", "2021"), new("2018", "2018"), new("2015", "2015")]),
         ProjectOption.Choice(ProjectOption.VcsOptionId, "Version control", "git",
         [
-            new("git", "Git", "cargo new --vcs git (also: the Create Git repository box)"),
+            new("git", "Git", "cargo --vcs git; follows the Create Git repository box"),
             new("hg", "Mercurial"),
             new("pijul", "Pijul"),
             new("fossil", "Fossil"),

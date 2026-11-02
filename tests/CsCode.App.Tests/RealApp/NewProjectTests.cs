@@ -1,9 +1,11 @@
 using System.Text.Json.Nodes;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using CsCode.App.Menus;
+using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.App.Views;
 using CsCode.Core.Debugging;
@@ -62,6 +64,38 @@ public class NewProjectTests
         var link = welcome.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == "Create a new project");
         Click((Control)link.GetVisualParent()!, host.Window);
         Assert.True(await RealAppHost.WaitFor(() => Page(host) is not null), "the New Project page opened");
+    }
+
+    /// <summary>Screenshots of the page (Rust chosen, with its options) and of the Welcome link, into .scratch/screenshots (never committed).</summary>
+    [AvaloniaFact(Timeout = 60_000)]
+    public async Task Screenshots_of_the_page()
+    {
+        await using var host = await RealAppHost.Create().StartAsync();
+        await host.RunAsync(ShellMenus.Welcome);
+        Capture(host, "new-project-welcome-link");
+        await host.RunAsync(NewProjectHost.OpenCommand);
+        Assert.True(await RealAppHost.WaitFor(() => Page(host) is not null));
+        var vm = (NewProjectViewModel)Page(host)!.DataContext!;
+        Assert.True(await RealAppHost.WaitFor(() => vm.Initialized.IsCompleted, 30_000));
+        vm.SelectedGenerator = vm.Generators.Single(g => g.Id == "rust");
+        Assert.True(await RealAppHost.WaitFor(() => vm.OptionsLoaded.IsCompleted && vm.Options.Count > 0, 30_000));
+        await DevScene.SettleAsync(10);
+        Capture(host, "new-project-rust");
+        vm.SelectedGenerator = vm.Generators.Single(g => g.Id == "dotnet");
+        Assert.True(await RealAppHost.WaitFor(() => vm.OptionsLoaded.IsCompleted && vm.Options.Count > 0, 60_000));
+        await DevScene.SettleAsync(10);
+        Capture(host, "new-project-csharp");
+    }
+
+    private static string Capture(RealAppHost host, string name)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        var frame = host.Window.CaptureRenderedFrame() ?? throw new InvalidOperationException("No frame rendered");
+        var path = Path.Combine(DevHost.ScreenshotDirectory(), name + ".png");
+        frame.Save(path, new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+        return path;
     }
 
     /// <summary>A debugger CsCode's adapter factories find through a setting: the copies the other stages fetched under <c>.scratch/tools</c>.</summary>
