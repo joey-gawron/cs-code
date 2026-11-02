@@ -28,6 +28,8 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
     public ILanguageService? Languages { get; init; }
     public ILoggerFactory? Loggers { get; init; }
     public ILspConnectionFactory? Connections { get; init; }
+    /// <summary>Values other modules add to the servers' settings (the selected Python interpreter); see <see cref="ILanguageServerSettingsContributor"/>.</summary>
+    public IReadOnlyList<ILanguageServerSettingsContributor> SettingsContributors { get; init; } = [];
 
     public static LspServices FromProvider(IServiceProvider sp) => new(
         sp.GetRequiredService<IDocumentManager>(),
@@ -47,5 +49,6 @@ public sealed record LspServices(IDocumentManager Documents, ILanguageFeatureReg
         Languages = sp.GetService<ILanguageService>(),
         Loggers = sp.GetService<ILoggerFactory>(),
         Connections = sp.GetService<ILspConnectionFactory>(),
+        SettingsContributors = sp.GetServices<ILanguageServerSettingsContributor>().ToArray(),
     };
 }
