@@ -91,6 +91,11 @@ public interface INavigationService
     IEditorDocument? ActiveDocument { get; }
     TextPosition? ActiveCaret { get; }
     IEventSource<IEditorDocument?> ActiveDocumentChanged { get; }
+    /// <summary>
+    /// The active editor's caret moved (or another editor became active: its caret; null when none is). Additive (org mode: context keys that
+    /// follow the caret); the default never fires.
+    /// </summary>
+    IEventSource<TextPosition?> ActiveCaretChanged => EventSource.Never<TextPosition?>();
     IReadOnlyList<IEditorDocument> OpenDocuments { get; }
     /// <summary>Apply a workspace edit (open docs edited in-editor as one undo group; closed files edited on disk).</summary>
     ValueTask<bool> ApplyWorkspaceEditAsync(Languages.WorkspaceEdit edit, string? label = null, CancellationToken ct = default);

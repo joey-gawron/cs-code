@@ -1,0 +1,1418 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Org",
+  "scopeName": "source.org",
+  "fileTypes": [
+    "org"
+  ],
+  "patterns": [
+    {
+      "include": "#heading"
+    },
+    {
+      "include": "#block"
+    },
+    {
+      "include": "#keyword-line"
+    },
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#drawer"
+    },
+    {
+      "include": "#property"
+    },
+    {
+      "include": "#planning"
+    },
+    {
+      "include": "#table"
+    },
+    {
+      "include": "#rule"
+    },
+    {
+      "include": "#list-item"
+    },
+    {
+      "include": "#inline"
+    }
+  ],
+  "repository": {
+    "heading": {
+      "patterns": [
+        {
+          "match": "^(\\*{1})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.1.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        },
+        {
+          "match": "^(\\*{2})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.2.org entity.name.type.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        },
+        {
+          "match": "^(\\*{3})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.3.org entity.name.function.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        },
+        {
+          "match": "^(\\*{4})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.4.org variable.other.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        },
+        {
+          "match": "^(\\*{5})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.5.org string.unquoted.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        },
+        {
+          "match": "^(\\*{6})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.6.org keyword.control.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        },
+        {
+          "match": "^(\\*{7})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.7.org constant.numeric.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        },
+        {
+          "match": "^(\\*{8,})[ \\t]+(?:(TODO|NEXT|WAITING|WAIT|HOLD|STARTED|DOING|IN-PROGRESS|SOMEDAY|MAYBE|PROJ|PROJECT)(?=[ \\t]|$)[ \\t]*|(DONE|CANCELLED|CANCELED|KILL|KILLED)(?=[ \\t]|$)[ \\t]*)?(?:(\\[#[A-Z0-9]\\])[ \\t]*)?(.*?)(?:[ \\t]+(:(?:[\\p{L}\\p{N}_@#%]+:)+))?[ \\t]*$",
+          "name": "markup.heading.org",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.heading.org"
+            },
+            "2": {
+              "name": "keyword.control.todo.org"
+            },
+            "3": {
+              "name": "comment.done.org"
+            },
+            "4": {
+              "name": "constant.other.priority.org"
+            },
+            "5": {
+              "name": "entity.name.section.org markup.heading.8.org entity.name.tag.org",
+              "patterns": [
+                {
+                  "include": "#inline"
+                }
+              ]
+            },
+            "6": {
+              "name": "entity.other.attribute-name.tag.org"
+            }
+          }
+        }
+      ]
+    },
+    "block": {
+      "patterns": [
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(python|py)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.python",
+          "patterns": [
+            {
+              "include": "source.python"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(js|javascript|node)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.js",
+          "patterns": [
+            {
+              "include": "source.js"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(ts|typescript)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.ts",
+          "patterns": [
+            {
+              "include": "source.ts"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(tsx)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.tsx",
+          "patterns": [
+            {
+              "include": "source.tsx"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(jsx)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.js.jsx",
+          "patterns": [
+            {
+              "include": "source.js.jsx"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(sh|bash|shell|zsh)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.shell",
+          "patterns": [
+            {
+              "include": "source.shell"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(fish)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.fish",
+          "patterns": [
+            {
+              "include": "source.fish"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(c)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.c",
+          "patterns": [
+            {
+              "include": "source.c"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(cpp|c\\+\\+|cc)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.cpp",
+          "patterns": [
+            {
+              "include": "source.cpp"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(csharp|cs|c#)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.cs",
+          "patterns": [
+            {
+              "include": "source.cs"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(rust|rs)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.rust",
+          "patterns": [
+            {
+              "include": "source.rust"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(go|golang)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.go",
+          "patterns": [
+            {
+              "include": "source.go"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(java)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.java",
+          "patterns": [
+            {
+              "include": "source.java"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(json)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.json",
+          "patterns": [
+            {
+              "include": "source.json"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(yaml|yml)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.yaml",
+          "patterns": [
+            {
+              "include": "source.yaml"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(sql)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.sql",
+          "patterns": [
+            {
+              "include": "source.sql"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(html)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org text.html.basic",
+          "patterns": [
+            {
+              "include": "text.html.basic"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(css)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.css",
+          "patterns": [
+            {
+              "include": "source.css"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(xml)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org text.xml",
+          "patterns": [
+            {
+              "include": "text.xml"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(ruby|rb)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.ruby",
+          "patterns": [
+            {
+              "include": "source.ruby"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(lua)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.lua",
+          "patterns": [
+            {
+              "include": "source.lua"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(makefile|make)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.makefile",
+          "patterns": [
+            {
+              "include": "source.makefile"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(dockerfile|docker)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.dockerfile",
+          "patterns": [
+            {
+              "include": "source.dockerfile"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(powershell|ps1|pwsh)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.powershell",
+          "patterns": [
+            {
+              "include": "source.powershell"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(markdown|md)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org text.html.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(diff|patch)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.diff",
+          "patterns": [
+            {
+              "include": "source.diff"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(swift)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.swift",
+          "patterns": [
+            {
+              "include": "source.swift"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(php)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.php",
+          "patterns": [
+            {
+              "include": "source.php"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(perl)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.perl",
+          "patterns": [
+            {
+              "include": "source.perl"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(r)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.r",
+          "patterns": [
+            {
+              "include": "source.r"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(fsharp|f#)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.fsharp",
+          "patterns": [
+            {
+              "include": "source.fsharp"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(julia)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.julia",
+          "patterns": [
+            {
+              "include": "source.julia"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(clojure|clj)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.clojure",
+          "patterns": [
+            {
+              "include": "source.clojure"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^([ \\t]*)(#\\+begin_src)[ \\t]+(scss)(?=[ \\t]|$)(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_src)\\b.*$",
+          "beginCaptures": {
+            "2": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            },
+            "4": {
+              "name": "comment.line.switches.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "meta.embedded.block.org source.css.scss",
+          "patterns": [
+            {
+              "include": "source.css.scss"
+            }
+          ]
+        },
+        {
+          "begin": "(?i)^[ \\t]*(#\\+begin_(src|example|export|verse))\\b(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_\\2)\\b.*$",
+          "beginCaptures": {
+            "1": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "entity.name.function.language.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "markup.raw.block.org"
+        },
+        {
+          "begin": "(?i)^[ \\t]*(#\\+begin_(\\w+))\\b(.*)$",
+          "end": "(?i)^[ \\t]*(#\\+end_\\2)\\b.*$",
+          "beginCaptures": {
+            "1": {
+              "name": "meta.preprocessor.org"
+            },
+            "3": {
+              "name": "string.unquoted.org"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "meta.preprocessor.org"
+            }
+          },
+          "contentName": "markup.quote.org",
+          "patterns": [
+            {
+              "include": "#inline"
+            }
+          ]
+        }
+      ]
+    },
+    "keyword-line": {
+      "patterns": [
+        {
+          "match": "(?i)^[ \\t]*(#\\+title:)[ \\t]*(.*)$",
+          "captures": {
+            "1": {
+              "name": "meta.preprocessor.org"
+            },
+            "2": {
+              "name": "markup.heading.title.org"
+            }
+          }
+        },
+        {
+          "match": "^[ \\t]*(#\\+[\\w\\-]+:)(.*)$",
+          "captures": {
+            "1": {
+              "name": "meta.preprocessor.org"
+            },
+            "2": {
+              "name": "string.unquoted.value.org"
+            }
+          }
+        }
+      ]
+    },
+    "comment": {
+      "match": "^[ \\t]*#(?:[ \\t].*)?$",
+      "name": "comment.line.number-sign.org"
+    },
+    "drawer": {
+      "match": "^[ \\t]*:(?:[\\w\\-]+):[ \\t]*$",
+      "name": "comment.block.drawer.org"
+    },
+    "property": {
+      "match": "^[ \\t]*(:[^\\s:]+\\+?:)(?:[ \\t]+(.*))?$",
+      "captures": {
+        "1": {
+          "name": "entity.other.attribute-name.property.org"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "#inline"
+            }
+          ]
+        }
+      }
+    },
+    "planning": {
+      "match": "\\b(SCHEDULED|DEADLINE|CLOSED):",
+      "name": "keyword.other.planning.org"
+    },
+    "table": {
+      "begin": "^[ \\t]*(?=\\|)",
+      "end": "$",
+      "name": "meta.table.org",
+      "patterns": [
+        {
+          "match": "\\|[-+|]*-[-+|]*(?:\\||$)",
+          "name": "punctuation.separator.table.org"
+        },
+        {
+          "match": "\\|",
+          "name": "punctuation.separator.table.org"
+        },
+        {
+          "include": "#inline"
+        }
+      ]
+    },
+    "rule": {
+      "match": "^[ \\t]*-{5,}[ \\t]*$",
+      "name": "punctuation.definition.rule.org"
+    },
+    "list-item": {
+      "match": "^([ \\t]*)([-+]|[ \\t]+\\*|\\d+[.)]|[a-zA-Z][.)])(?=[ \\t]|$)(?:[ \\t]+(\\[[ xX\\-]\\]))?(?:[ \\t]+(.*?)[ \\t]+(::)(?=[ \\t]|$))?",
+      "captures": {
+        "2": {
+          "name": "keyword.operator.list.org"
+        },
+        "3": {
+          "name": "constant.other.checkbox.org"
+        },
+        "4": {
+          "name": "markup.bold.term.org"
+        },
+        "5": {
+          "name": "keyword.operator.list.org"
+        }
+      }
+    },
+    "inline": {
+      "patterns": [
+        {
+          "match": "<\\d{4}-\\d{2}-\\d{2}(?:[ \\t]+[^\\s\\d>\\-+.]+)?(?:[ \\t]+\\d{1,2}:\\d{2}(?:-\\d{1,2}:\\d{2})?)?(?:[ \\t]+(?:\\.\\+|\\+\\+|\\+|--?)\\d+[hdwmy])*[ \\t]*>(?:--<\\d{4}-\\d{2}-\\d{2}(?:[ \\t]+[^\\s\\d>\\-+.]+)?(?:[ \\t]+\\d{1,2}:\\d{2}(?:-\\d{1,2}:\\d{2})?)?(?:[ \\t]+(?:\\.\\+|\\+\\+|\\+|--?)\\d+[hdwmy])*[ \\t]*>)?",
+          "name": "constant.other.timestamp.active.org"
+        },
+        {
+          "match": "\\[\\d{4}-\\d{2}-\\d{2}(?:[ \\t]+[^\\s\\d\\]\\-+.]+)?(?:[ \\t]+\\d{1,2}:\\d{2}(?:-\\d{1,2}:\\d{2})?)?(?:[ \\t]+(?:\\.\\+|\\+\\+|\\+|--?)\\d+[hdwmy])*[ \\t]*\\](?:--\\[\\d{4}-\\d{2}-\\d{2}(?:[ \\t]+[^\\s\\d\\]\\-+.]+)?(?:[ \\t]+\\d{1,2}:\\d{2}(?:-\\d{1,2}:\\d{2})?)?(?:[ \\t]+(?:\\.\\+|\\+\\+|\\+|--?)\\d+[hdwmy])*[ \\t]*\\])?",
+          "name": "comment.timestamp.inactive.org"
+        },
+        {
+          "match": "\\b(SCHEDULED|DEADLINE|CLOSED):",
+          "name": "keyword.other.planning.org"
+        },
+        {
+          "match": "\\[\\[([^\\]\\[]+)\\](?:\\[([^\\]\\[]+)\\])?\\]",
+          "name": "markup.underline.link.org"
+        },
+        {
+          "match": "\\b(?:https?|ftp|file|mailto):[^\\s<>\\[\\]\\\"']+[^\\s<>\\[\\]\\\"'.,;:!?)]",
+          "name": "markup.underline.link.org"
+        },
+        {
+          "match": "\\[fn:[\\w\\-]*\\]",
+          "name": "markup.underline.link.footnote.org"
+        },
+        {
+          "match": "\\[(?:\\d*%|\\d*/\\d*)\\]",
+          "name": "constant.numeric.cookie.org"
+        },
+        {
+          "match": "(?:^|(?<=[\\s(\\-'\\\"{\\[]))(\\=)(?=[^\\s\\=])(.*?[^\\s])(\\=)(?=[\\s\\-.,:!?;'\\\")}\\]\\[]|$)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.emphasis.org"
+            },
+            "2": {
+              "name": "markup.inline.raw.org string.other.verbatim.org"
+            },
+            "3": {
+              "name": "punctuation.definition.emphasis.org"
+            }
+          }
+        },
+        {
+          "match": "(?:^|(?<=[\\s(\\-'\\\"{\\[]))(\\~)(?=[^\\s\\~])(.*?[^\\s])(\\~)(?=[\\s\\-.,:!?;'\\\")}\\]\\[]|$)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.emphasis.org"
+            },
+            "2": {
+              "name": "markup.inline.raw.org string.other.code.org"
+            },
+            "3": {
+              "name": "punctuation.definition.emphasis.org"
+            }
+          }
+        },
+        {
+          "match": "(?:^|(?<=[\\s(\\-'\\\"{\\[]))(\\*)(?=[^\\s\\*])(.*?[^\\s])(\\*)(?=[\\s\\-.,:!?;'\\\")}\\]\\[]|$)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.emphasis.org"
+            },
+            "2": {
+              "name": "markup.bold.org"
+            },
+            "3": {
+              "name": "punctuation.definition.emphasis.org"
+            }
+          }
+        },
+        {
+          "match": "(?:^|(?<=[\\s(\\-'\\\"{\\[]))(\\/)(?=[^\\s\\/])(.*?[^\\s])(\\/)(?=[\\s\\-.,:!?;'\\\")}\\]\\[]|$)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.emphasis.org"
+            },
+            "2": {
+              "name": "markup.italic.org"
+            },
+            "3": {
+              "name": "punctuation.definition.emphasis.org"
+            }
+          }
+        },
+        {
+          "match": "(?:^|(?<=[\\s(\\-'\\\"{\\[]))(\\_)(?=[^\\s\\_])(.*?[^\\s])(\\_)(?=[\\s\\-.,:!?;'\\\")}\\]\\[]|$)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.emphasis.org"
+            },
+            "2": {
+              "name": "markup.underline.org"
+            },
+            "3": {
+              "name": "punctuation.definition.emphasis.org"
+            }
+          }
+        },
+        {
+          "match": "(?:^|(?<=[\\s(\\-'\\\"{\\[]))(\\+)(?=[^\\s\\+])(.*?[^\\s])(\\+)(?=[\\s\\-.,:!?;'\\\")}\\]\\[]|$)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.emphasis.org"
+            },
+            "2": {
+              "name": "markup.strikethrough.org comment.strikethrough.org"
+            },
+            "3": {
+              "name": "punctuation.definition.emphasis.org"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

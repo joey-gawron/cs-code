@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Org mode: the engine (org parser, timestamps, agenda, structural edits, org's date prompt) under Engine/, UI-free; the Org Agenda tool
+       window, the org.* commands and settings, the org language (TextMate grammar, language configuration, folding and outline). docs/ORG.md. -->
+  <PropertyGroup>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.Ui/CsCode.Ui.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <!-- UI-facing project: blocking calls (Task.Wait/.Result/GetResult, Thread.Sleep, sync file I/O) are build errors. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="BannedSymbols.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The org language's grammar and configuration, contributed as files (GrammarContribution / LanguageContribution take paths). -->
+    <None Include="Language/org.tmLanguage.json;Language/org.language-configuration.json" CopyToOutputDirectory="PreserveNewest" Link="Org/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.Panels.Org.Tests" />
+  </ItemGroup>
+
+</Project>
