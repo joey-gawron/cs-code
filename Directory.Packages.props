@@ -68,6 +68,12 @@
   <ItemGroup>
   </ItemGroup>
 
+  <!-- ===================== SPELL CHECK (module: SpellCheck, docs/SPELLCHECK.md) ===================== -->
+  <!-- WeCantSpell.Hunspell: managed Hunspell port (MPL-1.1, chosen from its MPL-1.1/GPL-2.0/LGPL-2.1 tri-licence; used unmodified). -->
+  <ItemGroup>
+    <PackageVersion Include="WeCantSpell.Hunspell" Version="7.0.1" />
+  </ItemGroup>
+
   <!-- ===================== PROFILING (module: Profiling) ===================== -->
   <ItemGroup>
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
