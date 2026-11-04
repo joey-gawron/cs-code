@@ -163,6 +163,9 @@ internal sealed class ColorBridge(LanguageBridge b, LangRegistration r) : Bridge
 {
     public ValueTask<IReadOnlyList<ColorInformation>?> ProvideDocumentColorsAsync(ITextDocument document, CancellationToken ct) =>
         Call<IReadOnlyList<ColorInformation>>(LangOps.DocumentColors, document, new LangArgs(), ct, interactive: false);
+
+    public ValueTask<IReadOnlyList<ColorPresentation>?> ProvideColorPresentationsAsync(ITextDocument document, ColorInformation color, CancellationToken ct) =>
+        Call<IReadOnlyList<ColorPresentation>>(LangOps.ColorPresentations, document, new LangArgs { Color = color }, ct);
 }
 
 internal sealed class LinkedEditingBridge(LanguageBridge b, LangRegistration r) : BridgeBase(b, r), ILinkedEditingRangeProvider

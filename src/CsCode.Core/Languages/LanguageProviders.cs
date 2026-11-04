@@ -125,4 +125,12 @@ public interface ICodeLensProvider : ILanguageProvider
 public interface IDocumentColorProvider : ILanguageProvider
 {
     ValueTask<IReadOnlyList<ColorInformation>?> ProvideDocumentColorsAsync(ITextDocument document, CancellationToken ct);
+
+    /// <summary>
+    /// The ways <paramref name="color"/> (a colour this provider reported, with the picker's new components and the range its text now covers)
+    /// can be written in the document (LSP <c>textDocument/colorPresentation</c>): the editor's colour picker offers them and applies the chosen
+    /// one's edit. Additive (colour picker): the default has none, so the picker shows the colour without editing it.
+    /// </summary>
+    ValueTask<IReadOnlyList<ColorPresentation>?> ProvideColorPresentationsAsync(ITextDocument document, ColorInformation color, CancellationToken ct) =>
+        ValueTask.FromResult<IReadOnlyList<ColorPresentation>?>(null);
 }

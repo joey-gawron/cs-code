@@ -184,3 +184,10 @@ public sealed record InlayHintLabelPart(string Value, MarkupContent? Tooltip = n
 public sealed record CodeLens(TextRange Range, Command? Command = null, JsonElement? Data = null);
 
 public sealed record ColorInformation(TextRange Range, double Red, double Green, double Blue, double Alpha);
+
+/// <summary>
+/// One way of writing a colour (LSP <c>ColorPresentation</c>): <paramref name="Label"/> is what the colour picker's header shows and, without a
+/// <paramref name="TextEdit"/>, the text that replaces the colour's range; <paramref name="AdditionalTextEdits"/> are applied with it (an import,
+/// say) and never overlap it. Additive (colour picker).
+/// </summary>
+public sealed record ColorPresentation(string Label, TextEdit? TextEdit = null, IReadOnlyList<TextEdit>? AdditionalTextEdits = null);
