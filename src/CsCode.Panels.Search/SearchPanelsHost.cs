@@ -1,12 +1,15 @@
 using System.Text;
 using System.Text.Json;
 using CsCode.Core.Contributions;
+using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Panels.Search.Engine;
+using CsCode.Panels.Search.SearchEditor;
 using CsCode.Panels.Search.Settings;
 using CsCode.Panels.Search.ViewModels;
+using CsCode.Ui.Threading;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CsCode.Panels.Search;
@@ -48,6 +51,7 @@ public sealed class SearchPanelsHost : IDisposable
     private SettingsViewModel? _liveSettings;
     private string? _pendingSettingsQuery;
     private SettingsScope? _pendingSettingsScope;
+    private readonly SearchEditorService _searchEditor;
 
     public SearchPanelsHost(IServiceProvider services)
     {
@@ -56,7 +60,22 @@ public sealed class SearchPanelsHost : IDisposable
         if (_sp.GetService<IConfigurationService>() is { } config) _store.Add(config.RegisterProperties(SearchSettings.Properties()));
         if (_sp.GetService<ICommandService>() is { } commands) RegisterCommands(commands);
         if (_sp.GetService<IContributionRegistry>() is { } contributions) _store.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, DefaultKeybindings));
+        // The search editor wires itself to the documents, the language features and the active editor now (a .code-search file may open before any
+        // search view does); the engine and the other search services stay lazy until it runs a search.
+        _searchEditor = new SearchEditorService(() => Services, new SearchEditorWiring(
+            _sp.GetService<IUiDispatcher>() ?? AvaloniaUiDispatcher.Instance,
+            _sp.GetService<IWorkspaceService>(),
+            _sp.GetService<IDocumentManager>(),
+            _sp.GetService<ILanguageFeatureRegistry>(),
+            _sp.GetService<INavigationService>(),
+            _sp.GetService<IContextKeyService>(),
+            _sp.GetService<IConfigurationService>(),
+            _sp.GetService<ICommandService>(),
+            _sp.GetService<IWindowService>()), SeedFromSelection, () => _liveFind);
     }
+
+    /// <summary>The search editor (search results in an editable <c>search-result</c> document).</summary>
+    public SearchEditorService SearchEditor => _searchEditor;
 
     /// <summary>
     /// F4 / Shift+F4 step through the results from anywhere (the editor included) while the panel is open. Neither preset keymap binds them,
@@ -67,6 +86,8 @@ public sealed class SearchPanelsHost : IDisposable
     [
         new(NextResult, "f4", When: SearchViewletVisible),
         new(PreviousResult, "shift+f4", When: SearchViewletVisible),
+        // The search editor: Enter on its header (the query, flags, globs) searches again in place, as Enter in VS Code's query box does.
+        new(SearchEditorService.RerunEditorSearch, "enter", When: SearchEditorService.HeaderFocusKey + " && editorTextFocus"),
     ];
 
     /// <summary>Context key set while the Find in Files view exists.</summary>
@@ -311,6 +332,7 @@ public sealed class SearchPanelsHost : IDisposable
 
     public void Dispose()
     {
+        _searchEditor.Dispose();
         _store.Dispose();
         if (_services.IsValueCreated)
         {

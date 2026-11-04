@@ -87,6 +87,7 @@
         <Button Classes="tool" Command="{Binding CancelCommand}" ToolTip.Tip="Cancel search (Esc)" AutomationProperties.Name="Cancel search"><ic:Icon Kind="search-stop" Size="16" /></Button>
         <Button Classes="tool" Command="{Binding ClearCommand}" ToolTip.Tip="Clear search results" AutomationProperties.Name="Clear results"><ic:Icon Kind="clear-all" Size="16" /></Button>
         <Button Classes="tool" Command="{Binding ToggleCollapseCommand}" ToolTip.Tip="Collapse or expand all results" AutomationProperties.Name="Collapse all"><ic:Icon Kind="collapse-all" Size="16" /></Button>
+        <Button Classes="tool" Command="{Binding OpenInEditorCommand}" ToolTip.Tip="Open in Editor (search results as a text document)" AutomationProperties.Name="Open in editor"><ic:Icon Kind="go-to-file" Size="16" /></Button>
       </StackPanel>
     </Grid>
 

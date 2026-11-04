@@ -209,6 +209,20 @@ public sealed class FindInFilesViewModel : ObservableObject, IDisposable
         Include: Include, Exclude: Exclude, UseExcludeSettings: UseExcludeSettings, UseIgnoreFiles: UseIgnoreFiles,
         OpenEditorsOnly: OpenEditorsOnly, Roots: null, Selection: _selectionScope);
 
+    /// <summary>The query the results shown came from (null before a search, or after Clear): Open Results in Editor writes it as the header.</summary>
+    public SearchQuery? LastQuery => _lastQuery;
+
+    /// <summary>The results as they are shown now (dismissed rows left out), in display order: what Open Results in Editor writes. UI thread.</summary>
+    public IReadOnlyList<FileMatches> ResultSnapshot() =>
+        [.. _order.Where(f => f.Matches.Count > 0).Select(f => new FileMatches(f.Uri, [.. f.Matches.Select(m => m.Match)], f.FromMemory, f.DocumentVersion))];
+
+    /// <summary>Opens the results in a search editor (the toolbar's Open in Editor: <c>search.action.openInEditor</c>).</summary>
+    public ICommand OpenInEditorCommand => _openInEditor ??= new RelayCommand(
+        () => _ = _s.Commands?.ExecuteAsync(SearchEditor.SearchEditorService.OpenInEditor).AsTask(),
+        () => _s.Commands?.Has(SearchEditor.SearchEditorService.OpenInEditor) == true);
+
+    private ICommand? _openInEditor;
+
     /// <summary>Starts (or restarts) the search with the current form. Returns immediately; results stream in.</summary>
     public void Start()
     {
