@@ -172,13 +172,15 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         lock (_gate) return _documents.TryGetValue(uri, out var doc) ? doc : null;
     }
 
-    public IEditorDocument CreateUntitled(string? languageId = null)
+    public IEditorDocument CreateUntitled(string? languageId = null) => CreateUntitled(languageId, "");
+
+    public IEditorDocument CreateUntitled(string? languageId, string initialText)
     {
         EditorDocument? doc = null;
         var number = Interlocked.Increment(ref _untitledCounter);
         Services.Ui.Invoke(() =>
         {
-            doc = EditorDocument.CreateUntitled(Services, number, languageId ?? "plaintext", (u, first) => Languages.DetectLanguageId(u, first));
+            doc = EditorDocument.CreateUntitled(Services, number, languageId ?? "plaintext", (u, first) => Languages.DetectLanguageId(u, first), initialText);
             lock (_gate) _documents[doc.Uri] = doc;
             doc.UriChanged.Subscribe(change =>
             {

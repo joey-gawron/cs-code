@@ -204,6 +204,21 @@ public sealed class EditorTab : ShellDocument
         Id = "doc:" + uri;
         Title = TitleFor(uri);
     }
+
+    /// <summary>What Save As proposes for this untitled document (the search editor's <c>query.code-search</c>); null: the dialog's default.</summary>
+    public Uri? SuggestedSaveUri { get; set; }
+
+    /// <summary>Retitles the tab ("Search: query"); null gives it its document's own name back.</summary>
+    public void SetTitle(string? title) => Title = title ?? TitleFor(Uri);
+
+    /// <summary>The document was saved under another name (Save As of an untitled buffer): the tab follows it, title included.</summary>
+    internal void Retarget(Uri uri)
+    {
+        Uri = uri;
+        Title = TitleFor(uri);
+        SuggestedSaveUri = null;
+    }
+
     public bool IsDirty => _doc?.IsDirty ?? false;
 
     /// <summary>A preview tab (italic) is replaced by the next preview open; editing or double-click promotes it.</summary>

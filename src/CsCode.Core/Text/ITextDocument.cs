@@ -47,6 +47,14 @@ public interface IEditorDocument : ITextDocument
     Task ReloadAsync(CancellationToken ct = default);
     IEventSource<IEditorDocument> Saved { get; }
     IEventSource<IEditorDocument> DirtyChanged { get; }
+
+    // ---- additive member (search editor; the default keeps other implementations compiling) ----
+
+    /// <summary>
+    /// Holds an undo group open until the result is disposed: every change meanwhile, over any number of dispatcher callbacks, is ONE undo step
+    /// (the search editor writes a search's results in many small slices). UI thread. Default: no grouping (each edit is its own step).
+    /// </summary>
+    IDisposable OpenUndoGroup() => Disposable.Empty;
 }
 
 public sealed record DocumentEvent(ITextDocument Document);

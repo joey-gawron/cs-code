@@ -51,6 +51,19 @@ public interface IEditorViewFactory
     /// <see cref="OpenDocumentAsync"/>; the caller keeps it open while the view lives), or null when not supported. Disposable. UI thread.
     /// </summary>
     Control? CreateMergeView(Core.Scm.MergeEditorRequest request, IEditorDocument result) => null;
+
+    // ---- additive member (search editor; the default keeps other implementations compiling) ----
+
+    /// <summary>
+    /// New "Untitled-N" buffer holding <paramref name="initialText"/> (the search editor's header): the text is not an undo step and the document
+    /// starts unmodified. The default inserts it as an edit.
+    /// </summary>
+    IEditorDocument CreateUntitled(string? languageId, string initialText)
+    {
+        var doc = CreateUntitled(languageId);
+        if (initialText.Length > 0) doc.ApplyEdits([TextEdit.Insert(TextPosition.Zero, initialText)]);
+        return doc;
+    }
 }
 
 /// <summary>Imperative handle on one editor view (menu/command/navigation code drives the editor through this).</summary>

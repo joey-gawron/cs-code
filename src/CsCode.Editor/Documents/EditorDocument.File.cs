@@ -74,11 +74,14 @@ public sealed partial class EditorDocument : IRelocatableDocument
         return doc;
     }
 
-    /// <summary>A new empty "Untitled-N" buffer; registered with the document manager. Must be called on the UI thread.</summary>
-    internal static EditorDocument CreateUntitled(EditorServices svc, int number, string languageId, Func<Uri, string?, string> detectLanguage)
+    /// <summary>
+    /// A new "Untitled-N" buffer, empty or holding <paramref name="initialText"/> (not an undo step: the document starts unmodified); registered with
+    /// the document manager. Must be called on the UI thread.
+    /// </summary>
+    internal static EditorDocument CreateUntitled(EditorServices svc, int number, string languageId, Func<Uri, string?, string> detectLanguage, string initialText = "")
     {
         var settings = FileSettings.Read(svc.Config, languageId);
-        var doc = new EditorDocument(new Uri($"untitled:Untitled-{number}"), languageId, CreateBuffer(string.Empty, svc.Ui), svc.Ui, settings.UndoLimit)
+        var doc = new EditorDocument(new Uri($"untitled:Untitled-{number}"), languageId, CreateBuffer(initialText, svc.Ui), svc.Ui, settings.UndoLimit)
         {
             _svc = svc,
             _detectLanguage = detectLanguage,

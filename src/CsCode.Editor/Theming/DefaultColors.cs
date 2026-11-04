@@ -103,6 +103,7 @@ public static class DefaultColors
         Def("editor.findMatchBackground", "#515C6A", "#A8AC94");
         Def("editor.findMatchHighlightBackground", "#EA5C0055", "#EA5C0055");
         Def("editor.findRangeHighlightBackground", "#3A3D4166", "#B4B4B44D");
+        Alpha("searchEditor.findMatchBackground", "editor.findMatchHighlightBackground", 0.66); // the search editor's matches (VS Code's default)
         Def("editor.hoverHighlightBackground", "#264F7840", "#ADD6FF26");
         Def("editor.lineHighlightBackground", "#FFFFFF0A", "#0000000A", "", "");
         Def("editor.lineHighlightBorder", "#282828", "#EEEEEE", "#F38518", "#0F4A85");

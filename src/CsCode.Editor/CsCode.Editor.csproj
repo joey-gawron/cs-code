@@ -29,6 +29,8 @@
   <ItemGroup>
     <!-- Language configurations for the languages VS Code ships none for (docs/LANGUAGES.md). -->
     <EmbeddedResource Include="Languages/Configurations/*.language-configuration.json" LogicalName="CsCode.Editor.Languages.Configurations.%(Filename)%(Extension)" />
+    <!-- TextMate grammars of CsCode's own, for languages TextMateSharp.Grammars embeds none for (the search editor's search-result). -->
+    <EmbeddedResource Include="Languages/Grammars/*.tmLanguage.json" LogicalName="CsCode.Editor.Languages.Grammars.%(Filename)%(Extension)" />
     <!-- CsCode's own built-in snippets, one VS Code snippet file per language id (language stage 1; docs/PYTHON.md §6). -->
     <EmbeddedResource Include="Snippets/Builtin/*.json" LogicalName="CsCode.Editor.Snippets.Builtin.%(Filename)%(Extension)" />
   </ItemGroup>

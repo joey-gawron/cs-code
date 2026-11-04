@@ -96,6 +96,38 @@ public sealed class NavigationService : INavigationService, IDisposable
         return tab.Doc;
     }
 
+    // ------------------------------------------------------------------ search editor: untitled editors with text, to the side, titles
+
+    public async ValueTask<IEditorDocument?> OpenUntitledAsync(UntitledEditorOptions options, CancellationToken ct = default)
+    {
+        var tab = await _ui.InvokeAsync(() =>
+        {
+            var t = _well.OpenUntitled(options.LanguageId, options.Text, options.Title, options.SuggestedSaveUri, options.ToSide);
+            if (options.Selection is { } sel)
+            {
+                if (t.Controller is { } c) c.SetSelection(sel, reveal: true);
+                else t.PendingReveal = sel; // applied when the view is created
+            }
+            return t;
+        }).ConfigureAwait(false);
+        return tab.Doc;
+    }
+
+    public async ValueTask<IEditorDocument?> OpenToSideAsync(Uri uri, TextRange? selection = null, CancellationToken ct = default)
+    {
+        var tab = await await _ui.InvokeAsync(() => _well.OpenToSideAsync(uri, ct).AsTask()).ConfigureAwait(false);
+        if (selection is { } sel)
+            await _ui.InvokeAsync(() =>
+            {
+                if (tab.Controller is { } c) c.SetSelection(sel, reveal: true);
+                else tab.PendingReveal = sel;
+            }).ConfigureAwait(false);
+        return tab.Doc;
+    }
+
+    public void SetEditorTitle(Uri document, string? title, Uri? suggestedSaveUri = null) =>
+        _ui.Post(() => { if (_well.Find(document) is { } tab) _well.SetTitle(tab, title, suggestedSaveUri); });
+
     // ------------------------------------------------------------------ workspace edits
 
     public ValueTask<bool> ApplyWorkspaceEditAsync(WorkspaceEdit edit, string? label = null, CancellationToken ct = default) =>
