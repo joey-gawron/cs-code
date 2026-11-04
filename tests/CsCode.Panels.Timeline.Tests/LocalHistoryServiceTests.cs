@@ -199,6 +199,41 @@ public class LocalHistoryServiceTests
     }
 
     [Fact]
+    public async Task Two_processes_sharing_the_folder_keep_each_others_entries()
+    {
+        using var rig = new HistoryRig();
+        // a second CsCode process (another session): its own service and caches over the same History folder
+        var otherDocuments = new Core.Text.DocumentManager();
+        using var other = new LocalHistoryService(rig.Fs, rig.Home, rig.Config, otherDocuments, rig.WorkspaceService, rig.Time);
+        var uri = rig.UriOf("a.txt");
+        using var _ = otherDocuments.Register(new Core.Text.InMemoryTextDocument(uri, "plaintext", ""));
+
+        await rig.SaveAsync("a.txt", "from one");
+        rig.Time.Advance(TimeSpan.FromMinutes(1));
+        rig.Write("a.txt", "from two");
+        otherDocuments.NotifySaved(otherDocuments.Get(uri)!);
+        await other.WhenIdleAsync();
+        rig.Time.Advance(TimeSpan.FromMinutes(1));
+        await rig.SaveAsync("a.txt", "one again");
+        Assert.Equal(["from one", "from two", "one again"], await rig.ContentsAsync("a.txt"));
+        Assert.Equal(3, (await other.GetEntriesAsync(uri)).Count);
+
+        // a save merging into the other process's newest entry compares with that entry's content, not a cached one
+        rig.Time.Advance(TimeSpan.FromSeconds(2));
+        rig.Write("a.txt", "two again");
+        otherDocuments.NotifySaved(otherDocuments.Get(uri)!);
+        await other.WhenIdleAsync();
+        rig.Time.Advance(TimeSpan.FromMinutes(1));
+        await rig.SaveAsync("a.txt", "two again"); // the same as the newest (written by the other process): nothing added
+        Assert.Equal(["from one", "from two", "two again"], await rig.ContentsAsync("a.txt"));
+
+        // files the other process gave history to are listed
+        rig.Write("b.txt", "b");
+        Assert.NotNull(await other.AddEntryAsync(rig.UriOf("b.txt"), "named"));
+        Assert.Equal(2, (await rig.History.GetResourcesAsync()).Count);
+    }
+
+    [Fact]
     public async Task A_damaged_entries_file_is_rebuilt_from_the_copies()
     {
         using var rig = new HistoryRig();

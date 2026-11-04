@@ -19,6 +19,8 @@ namespace CsCode.Panels.Timeline.LocalHistory;
 /// operations at once); all file I/O goes through <see cref="IFileSystem"/>, whose local implementation runs on the I/O lane. The save hook only
 /// enqueues (bounded; a full queue drops the entry and logs it): a save never waits for history. Reads of the saved file happen after the save,
 /// from disk, so the entry is exactly what was written (encoding and line endings included).</para>
+/// <para>Several CsCode processes (one per session) share the folder: every operation reads the file's <c>entries.json</c> again before it
+/// changes it, so an entry another process added is kept; only the folder a file maps to and the newest copy's hash are cached.</para>
 /// </summary>
 public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationParticipant, IMemoryTrimmable, IDisposable
 {
@@ -46,7 +48,6 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
     // Touched only by the queue's consumer.
     private readonly Dictionary<string, Model> _models = new(StringComparer.Ordinal);
     private readonly LinkedList<Model> _recent = new();
-    private Dictionary<string, IndexEntry>? _index;
 
     private long _dropped;
     private volatile bool _disposed;
@@ -70,8 +71,8 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
 
     string IMemoryTrimmable.Name => "Local history";
 
-    /// <summary>The cached entry lists (≤ 256 files) and the index of every file with history: small records, re-read from disk when needed.</summary>
-    long IMemoryTrimmable.EstimatedBytes => (Volatile.Read(ref _cachedModels) * 8L + Volatile.Read(ref _indexed)) * 160;
+    /// <summary>The cached files (≤ 256): their folder, their last entry list and the newest copy's hash; all read again from disk when needed.</summary>
+    long IMemoryTrimmable.EstimatedBytes => Volatile.Read(ref _cachedModels) * 2048L;
 
     long IMemoryTrimmable.Trim(MemoryTrimLevel level)
     {
@@ -82,14 +83,12 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         {
             _models.Clear();
             _recent.Clear();
-            _index = null;
             Volatile.Write(ref _cachedModels, 0);
-            Volatile.Write(ref _indexed, 0);
             return Task.CompletedTask;
         }) ? estimate : 0;
     }
 
-    private int _cachedModels, _indexed;
+    private int _cachedModels;
 
     /// <summary>The folder that holds every file's history (<c>{UserDataDir}/History</c>).</summary>
     public string Home => _home;
@@ -145,8 +144,8 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
     public ValueTask<IReadOnlyList<Uri>> GetResourcesAsync(CancellationToken ct = default) =>
         RunAsync<IReadOnlyList<Uri>>(async token =>
         {
-            var index = await EnsureIndexAsync(token).ConfigureAwait(false);
-            return index.OrderByDescending(p => p.Value.Newest).Select(p => new Uri(p.Key)).ToArray();
+            var all = await ScanAsync(token).ConfigureAwait(false);
+            return all.OrderByDescending(p => p.Newest).Select(p => new Uri(p.Resource)).ToArray();
         }, ct);
 
     public async ValueTask<byte[]?> ReadAsync(LocalHistoryEntry entry, CancellationToken ct = default)
@@ -164,7 +163,6 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
             if (i < 0) return null;
             var renamed = model.Entries[i] with { Source = string.IsNullOrWhiteSpace(source) ? null : source };
             model.Entries[i] = renamed;
-            if (i == model.Entries.Count - 1) model.NewestHash = null; // the newest entry's source changed: no longer the one a save merges into
             await SaveModelAsync(model, token).ConfigureAwait(false);
             Notify(model.Resource);
             return ToEntry(model, renamed);
@@ -176,7 +174,6 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
             var model = await LoadAsync(entry.Resource, token).ConfigureAwait(false);
             var i = model.Entries.FindIndex(e => e.Id == entry.Id);
             if (i < 0) return false;
-            if (i == model.Entries.Count - 1) model.NewestHash = null;
             model.Entries.RemoveAt(i);
             await DeleteQuietlyAsync(EntryUri(model, entry.Id), recursive: false, token).ConfigureAwait(false);
             await SaveModelAsync(model, token).ConfigureAwait(false);
@@ -192,14 +189,12 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
                 await DeleteQuietlyAsync(new Uri(_home), recursive: true, token).ConfigureAwait(false);
                 _models.Clear();
                 _recent.Clear();
-                _index = new Dictionary<string, IndexEntry>(StringComparer.Ordinal);
                 CountCaches();
                 Notify(null);
                 return true;
             }
             var model = await LoadAsync(resource, token).ConfigureAwait(false);
             model.Entries.Clear();
-            model.NewestHash = null;
             await SaveModelAsync(model, token).ConfigureAwait(false);
             Notify(model.Resource);
             return true;
@@ -298,17 +293,17 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         var hash = HistoryFormat.Sha256(bytes);
         if (model.Entries.Count > 0 && model.Entries[^1] is var last && last.SourceOrDefault == source)
         {
-            model.NewestHash ??= await HashOfAsync(model, last, ct).ConfigureAwait(false);
+            var newest = model.KnownNewestHash ?? model.RememberNewest(await HashOfAsync(model, last, ct).ConfigureAwait(false));
             // A save of the same content as the newest save adds nothing (Save All of unchanged files, the old file of a Save As). Other sources
             // record an event (a move, a discard, a name given), so they are added even when the content did not change.
-            if (source == LocalHistorySources.FileSaved && model.NewestHash is { } newest && newest.AsSpan().SequenceEqual(hash)) return null;
+            if (source == LocalHistorySources.FileSaved && newest is not null && newest.AsSpan().SequenceEqual(hash)) return null;
             // mergeWindow: a save soon after the previous one of the same source replaces it (auto save would otherwise flood the history).
             if (timestamp >= last.Timestamp && timestamp - last.Timestamp <= MergeWindowMs)
             {
                 await WriteEntryFileAsync(model, last.Id, bytes, ct).ConfigureAwait(false);
                 var replaced = last with { Timestamp = timestamp };
                 model.Entries[^1] = replaced;
-                model.NewestHash = hash;
+                model.RememberNewest(hash);
                 await SaveModelAsync(model, ct).ConfigureAwait(false);
                 Notify(model.Resource);
                 return ToEntry(model, replaced);
@@ -320,7 +315,7 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         var entry = new StoredEntry(id, timestamp, source == LocalHistorySources.FileSaved ? null : source, null);
         var at = model.Entries.FindLastIndex(e => e.Timestamp <= timestamp) + 1; // a clock that stepped back still keeps the list in order
         model.Entries.Insert(at, entry);
-        model.NewestHash = at == model.Entries.Count - 1 ? hash : null;
+        if (at == model.Entries.Count - 1) model.RememberNewest(hash);
         var kept = await PruneAsync(model, ct).ConfigureAwait(false);
         await SaveModelAsync(model, ct).ConfigureAwait(false);
         Notify(model.Resource);
@@ -335,7 +330,6 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         {
             var oldest = model.Entries[0];
             model.Entries.RemoveAt(0);
-            if (model.Entries.Count == 0) model.NewestHash = null;
             await DeleteQuietlyAsync(EntryUri(model, oldest.Id), recursive: false, ct).ConfigureAwait(false);
         }
         return model.Entries;
@@ -356,14 +350,14 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         if (from == to) return;
         var keys = new List<string>();
         if ((await LoadAsync(new Uri(from), ct).ConfigureAwait(false)).Entries.Count > 0) keys.Add(from);
-        // A folder: every file under it with history follows (the index lists them; it is read once, then kept up to date).
+        // A folder: every file under it with history follows (found by reading every entries.json: a folder rename is rare).
         FileStat? stat = null;
         try { stat = await _fs.StatAsync(target, ct).ConfigureAwait(false); }
         catch (Exception ex) when (IsIoFailure(ex)) { }
         if (stat is not null && (stat.Type & FileType.Directory) != 0)
         {
-            var index = await EnsureIndexAsync(ct).ConfigureAwait(false);
-            keys.AddRange(index.Keys.Where(k => k.StartsWith(from + "/", StringComparison.Ordinal)));
+            var all = await ScanAsync(ct).ConfigureAwait(false);
+            keys.AddRange(all.Select(p => p.Resource).Where(k => k.StartsWith(from + "/", StringComparison.Ordinal)));
         }
         foreach (var key in keys.Distinct(StringComparer.Ordinal))
         {
@@ -386,11 +380,9 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
             dst.Entries.Add(e with { Id = id });
         }
         dst.Entries.Sort(static (a, b) => a.Timestamp.CompareTo(b.Timestamp));
-        dst.NewestHash = null;
         await PruneAsync(dst, ct).ConfigureAwait(false);
         await SaveModelAsync(dst, ct).ConfigureAwait(false);
         src.Entries.Clear();
-        src.NewestHash = null;
         await SaveModelAsync(src, ct).ConfigureAwait(false);
         Notify(src.Resource);
         Notify(dst.Resource);
@@ -405,24 +397,38 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
 
     private sealed class Model(Uri resource, string key, string folder)
     {
+        private byte[]? _newestHash;
+        private (string Id, long Timestamp) _newestHashOf;
+
         public Uri Resource { get; } = resource;
         public string Key { get; } = key;
         public string Folder { get; } = folder;
+        /// <summary>The entries as last read or written, oldest first.</summary>
         public List<StoredEntry> Entries { get; } = [];
-        /// <summary>SHA-256 of the newest entry's copy, once known (null: read it when needed).</summary>
-        public byte[]? NewestHash { get; set; }
         public LinkedListNode<Model>? Node { get; set; }
+
+        /// <summary>SHA-256 of the newest entry's copy, while that entry is the one it was computed for (another process may have merged into it).</summary>
+        public byte[]? KnownNewestHash => Entries.Count > 0 && _newestHashOf == (Entries[^1].Id, Entries[^1].Timestamp) ? _newestHash : null;
+
+        public byte[]? RememberNewest(byte[]? hash)
+        {
+            _newestHash = hash;
+            _newestHashOf = Entries.Count > 0 ? (Entries[^1].Id, Entries[^1].Timestamp) : default;
+            return hash;
+        }
     }
 
-    private sealed record IndexEntry(string Folder, long Newest);
-
+    /// <summary>The model of <paramref name="resource"/>, its entries read from disk now.</summary>
     private async Task<Model> LoadAsync(Uri resource, CancellationToken ct)
     {
         var key = HistoryFormat.Key(resource);
         if (_models.TryGetValue(key, out var cached))
         {
             Touch(cached);
-            return cached;
+            if (await ReloadAsync(cached, ct).ConfigureAwait(false)) return cached;
+            _recent.Remove(cached.Node!); // its folder was deleted and given to another file meanwhile: look again
+            cached.Node = null;
+            _models.Remove(key);
         }
         var baseName = HistoryFormat.Hash(key);
         Model? model = null;
@@ -455,6 +461,25 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         }
         CountCaches();
         return model;
+    }
+
+    /// <summary>Reads the model's entries again; false when its folder now belongs to another file.</summary>
+    private async Task<bool> ReloadAsync(Model model, CancellationToken ct)
+    {
+        var folderPath = Path.Combine(_home, model.Folder);
+        var stored = await ReadEntriesFileAsync(folderPath, ct).ConfigureAwait(false);
+        if (stored is not null && !string.Equals(stored.Resource, model.Key, StringComparison.Ordinal)) return false;
+        IReadOnlyList<StoredEntry> entries = stored?.Entries ?? [];
+        if (stored is null)
+        {
+            FileStat? stat;
+            try { stat = await _fs.StatAsync(new Uri(folderPath), ct).ConfigureAwait(false); }
+            catch (Exception ex) when (IsIoFailure(ex)) { stat = null; }
+            if (stat is not null) entries = await RebuildAsync(folderPath, ct).ConfigureAwait(false); // damaged (gone: no entries, deleted)
+        }
+        model.Entries.Clear();
+        model.Entries.AddRange(entries);
+        return true;
     }
 
     private void Touch(Model model)
@@ -495,21 +520,19 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         if (model.Entries.Count == 0)
         {
             await DeleteQuietlyAsync(FolderUri(model), recursive: true, ct).ConfigureAwait(false);
-            _index?.Remove(model.Key);
-            CountCaches();
             return;
         }
         var bytes = HistoryFormat.Serialize(new StoredHistory(model.Key, model.Entries));
         await _fs.WriteFileAsync(new Uri(Path.Combine(_home, model.Folder, HistoryFormat.EntriesFile)), bytes, createParents: true, ct).ConfigureAwait(false);
-        if (_index is not null) _index[model.Key] = new IndexEntry(model.Folder, model.Entries[^1].Timestamp);
-        CountCaches();
     }
 
-    /// <summary>Every file with history (resource → folder, newest entry), read from the entries.json files once and then kept up to date.</summary>
-    private async Task<Dictionary<string, IndexEntry>> EnsureIndexAsync(CancellationToken ct)
+    /// <summary>
+    /// Every file with history and the time of its newest entry, from every entries.json (Find Entry to Restore, a folder renamed: rare, and
+    /// never cached, so files another process gave history to are found too).
+    /// </summary>
+    private async Task<IReadOnlyList<(string Resource, long Newest)>> ScanAsync(CancellationToken ct)
     {
-        if (_index is not null) return _index;
-        var index = new Dictionary<string, IndexEntry>(StringComparer.Ordinal);
+        var found = new Dictionary<string, long>(StringComparer.Ordinal);
         IReadOnlyList<DirectoryEntry> folders;
         try { folders = await _fs.ReadDirectoryAsync(new Uri(_home), ct).ConfigureAwait(false); }
         catch (Exception ex) when (IsIoFailure(ex)) { folders = []; }
@@ -517,19 +540,12 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         {
             if ((f.Type & FileType.Directory) == 0) continue;
             if (await ReadEntriesFileAsync(Path.Combine(_home, f.Name), ct).ConfigureAwait(false) is not { Entries.Count: > 0 } stored) continue;
-            index[stored.Resource] = new IndexEntry(f.Name, stored.Entries[^1].Timestamp);
+            found[stored.Resource] = stored.Entries[^1].Timestamp;
         }
-        // models changed since their entries.json was written are already on disk (every change writes it): nothing to overlay
-        _index = index;
-        CountCaches();
-        return index;
+        return found.Select(p => (p.Key, p.Value)).ToArray();
     }
 
-    private void CountCaches()
-    {
-        Volatile.Write(ref _cachedModels, _models.Count);
-        Volatile.Write(ref _indexed, _index?.Count ?? 0);
-    }
+    private void CountCaches() => Volatile.Write(ref _cachedModels, _models.Count);
 
     // ------------------------------------------------------------------------------------------------ helpers
 

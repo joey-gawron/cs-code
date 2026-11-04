@@ -81,6 +81,11 @@ History/
   changed by two operations at once. All file I/O goes through `IFileSystem`, whose local implementation runs on the I/O lane; the consumer only
   awaits it (and builds a small JSON document or a SHA-256 of ≤ 256 KB in between). The public API's synchronous part is an enqueue.
 * `Changed` fires on the consumer's thread; the Timeline posts a coalesced reload to the UI thread.
+* **Several processes.** Each CsCode session is a process of its own (docs/SESSIONS.md), and all share the History folder. Every operation reads
+  the file's `entries.json` again before changing it (a small read on the I/O lane), so an entry another process added is kept, and the newest
+  copy's cached hash is used only while that entry is the one it was computed for; Find Entry to Restore and folder renames read every
+  `entries.json` each time. Two processes changing the same file's history in the same few milliseconds can still lose one entry (there is no
+  lock between processes); test `Two_processes_sharing_the_folder_keep_each_others_entries`.
 
 ## The Timeline window
 
@@ -176,9 +181,9 @@ VS Code keeps a remote window's local history on the remote host (`~/.vscode-ser
 
 ## Memory
 
-Per file, at most `maxFileEntries` small records are cached (256 files, least recently used dropped); the index of every file with history
-(built the first time Find Entry to Restore or a folder rename needs it, then kept up to date) holds one small record per file. Both are an
-`IMemoryTrimmable` ("Local history": Moderate and Aggressive trims drop them; they are read again from disk). The window's view-model exists only
+Per file, its folder, its entry list as last read (at most `maxFileEntries` small records) and the newest copy's hash are cached, for 256 files
+(least recently used dropped); an `IMemoryTrimmable` ("Local history": Moderate and Aggressive trims drop them). Nothing else is kept: the list
+of every file with history is read from disk each time it is needed. The window's view-model exists only
 while the window is shown and drops every subscription and its timer when hidden (test `A_hidden_window_keeps_neither_its_view_nor_its_view_model`,
 `LeakAssert.NotRetainedAsync`). On disk the history is bounded per file (`maxFileEntries × maxFileSize`), not in total: as in VS Code, there is no
 limit on the number of files, and files deleted or renamed outside CsCode keep theirs until deleted (Delete All).
@@ -200,7 +205,7 @@ limit on the number of files, and files deleted or renamed outside CsCode keep t
   VS Code's hash values, the layout and `entries.json`, merge window (also by setting and across sources), unchanged saves (also after a
   restart), pruning at `maxFileEntries` (copies deleted, `0` keeps none), exclusions (relative, absolute, `false`), `maxFileSize`, disabled
   history, untitled and History-folder files, **saves never wait for history I/O**, persistence across a restart (names, ids, times, merge with
-  the restored newest entry), a damaged `entries.json`, a hash collision, renames and moves of files and folders (and after a restart), a move
+  the restored newest entry), two processes sharing the folder, a damaged `entries.json`, a hash collision, renames and moves of files and folders (and after a restart), a move
   onto a file with history, rename / delete / delete all, the next save's source, the resource list order, unsafe ids, a remote (`ssh:`) file,
   trimming.
 * `tests/CsCode.Panels.Timeline.Tests/TimelineTests.cs` (headless window): rows newest first with relative times, following saves, the active
