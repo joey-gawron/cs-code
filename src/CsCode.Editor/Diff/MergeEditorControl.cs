@@ -121,8 +121,9 @@ public sealed class MergeEditorControl : UserControl, IDisposable
     public IEventSource<object?> Completed => _completed;
 
     internal int Id => _id;
-    internal ThreeWayMerge? Merge => _merge;
-    internal MergeResolution? Resolution => _resolution;
+    /// <summary>The merge (null until computed) and the choices made so far.</summary>
+    public ThreeWayMerge? Merge => _merge;
+    public MergeResolution? Resolution => _resolution;
     internal CodeEditorControl? IncomingPane => _incomingPane;
     internal CodeEditorControl? CurrentPane => _currentPane;
     internal CodeEditorControl? ResultPane => _resultPane;
@@ -343,7 +344,7 @@ public sealed class MergeEditorControl : UserControl, IDisposable
     }
 
     /// <summary>Takes <paramref name="sides"/> for conflict <paramref name="k"/>: its text in the result is replaced in ONE undo step.</summary>
-    internal void Set(int k, MergeSides sides, bool incomingFirst = false)
+    public void Set(int k, MergeSides sides, bool incomingFirst = false)
     {
         if (_resolution is null || k < 0 || k >= _starts.Length || _result.IsReadOnly) return;
         _resolution.Set(k, sides, incomingFirst);

@@ -592,7 +592,7 @@ public sealed class DocumentWell : IDisposable
         _mru.Remove(tab);
         var doc = (tab as EditorTab)?.Doc;
         tab.Dispose();
-        if (doc is not null && !EditorTabs.Any(t => ReferenceEquals(t.Doc, doc)))
+        if (doc is not null && !EditorTabs.Any(t => ReferenceEquals(t.Doc, doc)) && !_held.ContainsKey(doc))
             _ = CloseDocumentAsync(doc);
         if (tab is not EditorTab) _singletons.Where(kv => ReferenceEquals(kv.Value, tab)).Select(kv => kv.Key).ToList().ForEach(k => _singletons.Remove(k));
         if (wasActive)
@@ -637,6 +637,28 @@ public sealed class DocumentWell : IDisposable
     {
         try { await _editors.CloseDocumentAsync(doc); }
         catch (Exception) { /* editor-side cleanup failure is not actionable by the shell */ }
+    }
+
+    // ---------------------------------------------------------------- documents held open without a tab (a merge editor's result)
+
+    private readonly Dictionary<IEditorDocument, int> _held = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Keeps <paramref name="doc"/> open until the result is disposed, also when no tab shows it (the merge editor edits the file's document in a
+    /// tab of its own). Releasing the last hold closes the document when no editor tab shows it. UI thread.
+    /// </summary>
+    public IDisposable HoldDocument(IEditorDocument doc)
+    {
+        _held[doc] = _held.GetValueOrDefault(doc) + 1;
+        var released = false;
+        return Disposable.Create(() =>
+        {
+            if (released) return;
+            released = true;
+            if (--_held[doc] > 0) return;
+            _held.Remove(doc);
+            if (!EditorTabs.Any(t => ReferenceEquals(t.Doc, doc))) _ = CloseDocumentAsync(doc);
+        });
     }
 
     // ---------------------------------------------------------------- memory policy
