@@ -62,9 +62,9 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     internal enum Sources
     {
         None = 0,
-        Diagnostics = 1, Highlights = 2, Find = 4, Scm = 8, Breakpoints = 16, Cursors = 32,
-        Merge = 64, // merge conflict blocks (MergeConflictFeature)
-        All = Diagnostics | Highlights | Find | Scm | Breakpoints | Cursors | Merge,
+        Diagnostics = 1, Highlights = 2, Find = 4, Scm = 8, Breakpoints = 16, Cursors = 32, Bookmarks = 64,
+        Merge = 128, // merge conflict blocks (MergeConflictFeature)
+        All = Diagnostics | Highlights | Find | Scm | Breakpoints | Cursors | Bookmarks | Merge,
     }
 
     public ScrollDecorations(CodeEditorControl view, Grid host)
@@ -113,6 +113,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     internal List<LineMarker> FindMatches { get; } = [];
     internal List<LineMarker> Scm { get; } = [];
     internal List<LineMarker> Breakpoints { get; } = [];
+    internal List<LineMarker> Bookmarks { get; } = [];
     internal List<LineMarker> Cursors { get; } = [];
     internal List<LineMarker> Merge { get; } = [];
     internal int MarksVersion { get; private set; }
@@ -125,6 +126,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     {
         yield return Merge;
         yield return Scm;
+        yield return Bookmarks;
         yield return Breakpoints;
         yield return Highlights;
         yield return FindMatches;
@@ -261,6 +263,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
         if (dirty.HasFlag(Sources.Find)) CollectRanges(doc, FindMatches, _v.Feature<FindSearch>()?.Matches.Select(m => (m.Start, m.End, MarkerKind.FindMatch)));
         if (dirty.HasFlag(Sources.Scm)) CollectScm(doc.LineCount);
         if (dirty.HasFlag(Sources.Breakpoints)) CollectBreakpoints(doc.LineCount);
+        if (dirty.HasFlag(Sources.Bookmarks)) CollectBookmarks(doc.LineCount);
         if (dirty.HasFlag(Sources.Cursors)) CollectCursors(doc);
         if (dirty.HasFlag(Sources.Merge)) CollectMerge(doc.LineCount);
         MarksVersion++;
@@ -340,6 +343,15 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
         foreach (var m in f.Marks()) Merge.Add(new LineMarker(Math.Clamp(m.Line, 0, last), Math.Clamp(m.EndLine, 0, last), m.Kind));
     }
 
+    /// <summary>Bookmarks are always marked (the Bookmarks extension's default), in the left lane with the breakpoints (Visual Studio's marks column).</summary>
+    private void CollectBookmarks(int lineCount)
+    {
+        Bookmarks.Clear();
+        if (_v.Feature<BookmarkFeature>() is not { } f) return;
+        foreach (var b in f.Bookmarks.OrderBy(b => b.Line))
+            if (b.Line >= 0 && b.Line < lineCount) Bookmarks.Add(new LineMarker(b.Line, b.Line, MarkerKind.Bookmark));
+    }
+
     private void CollectCursors(AvaloniaEdit.Document.TextDocument doc)
     {
         Cursors.Clear();
@@ -411,6 +423,7 @@ internal sealed class DecorationBrushes
         markers[(int)MarkerKind.Modified] = B("editorOverviewRuler.modifiedForeground");
         markers[(int)MarkerKind.Deleted] = B("editorOverviewRuler.deletedForeground");
         markers[(int)MarkerKind.Breakpoint] = B("debugIcon.breakpointForeground");
+        markers[(int)MarkerKind.Bookmark] = B("bookmarks.overviewRuler");
         markers[(int)MarkerKind.WordHighlight] = B("editorOverviewRuler.wordHighlightForeground");
         markers[(int)MarkerKind.WordHighlightStrong] = B("editorOverviewRuler.wordHighlightStrongForeground");
         markers[(int)MarkerKind.FindMatch] = B("editorOverviewRuler.findMatchForeground");

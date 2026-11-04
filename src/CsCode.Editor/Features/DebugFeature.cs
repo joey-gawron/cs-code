@@ -55,6 +55,11 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal CodeEditorControl View => _v;
     /// <summary>The breakpoint glyph margin: the code-action lightbulb never goes left of its right edge (<see cref="CodeActionFeature"/>).</summary>
     internal Control Margin => _margin;
+    /// <summary>
+    /// Glyphs another feature draws in this margin, under the breakpoints and the stop arrow (bookmarks: <see cref="BookmarkFeature"/>), as Visual
+    /// Studio's indicator margin shows both: called with the margin's width after its background is filled. The hook places its own glyphs.
+    /// </summary>
+    internal Action<DrawingContext, TextView, double>? Underlay { get; set; }
     internal bool IsFileDocument => _v.Document.Uri.IsFile;
 
     public void OnThemeChanged() => _margin.InvalidateVisual();
@@ -265,6 +270,7 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
             if (textView is null || !textView.VisualLinesValid) return;
             var palette = _owner._v.Palette;
             context.FillRectangle(palette.Gutter, new Rect(0, 0, Bounds.Width, Bounds.Height));
+            _owner.Underlay?.Invoke(context, textView, Bounds.Width); // bookmarks, under the breakpoints
             var stop = _owner._v.Controller.StopLine;
             foreach (var vl in textView.VisualLines)
             {

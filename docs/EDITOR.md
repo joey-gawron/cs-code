@@ -172,6 +172,9 @@ Numbers refer to the brief's MUST list.
 18. **Overview ruler and minimap** (marks for problems, find matches, occurrences, source-control changes, breakpoints and the carets on the
     scrollbar; a token-coloured minimap with a draggable slider, drawn off the UI thread): see §7f.
 
+19. **Bookmarks** (Visual Studio's; toggle, next / previous across files and in the document, clear, list, a glyph in the indicator margin and
+    a mark on the overview ruler, kept through edits, renames and restarts): see §7g.
+
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
 Inlay hints' label parts (lang-2): each part is its own text. A hint with a tooltip, a part with a location or command, or one its provider can
@@ -335,7 +338,9 @@ and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`,
 multi-cursor's `editor.action.addSelectionToNextFindMatch`, `moveSelectionToNextFindMatch`, `selectHighlights`, `insertCursorAbove`, `insertCursorBelow`, `cursorUndo`, `removeSecondaryCursors` (§7b),
 the peek's `editor.action.peekDefinition`, `peekDeclaration`, `peekTypeDefinition`, `peekImplementation`, `referenceSearch.trigger` (Peek References), `closeReferenceSearch` (§7c)
 and `editor.action.linkedEditing` (Start Linked Editing, §7d),
-and `editor.action.toggleMinimap` (View: Toggle Minimap, §7f).
+and `editor.action.toggleMinimap` (View: Toggle Minimap, §7f),
+and the bookmarks' `bookmarks.toggle`, `toggleEnabled`, `toggleAllEnabled`, `jumpToNext`, `jumpToPrevious`, `jumpToNextInDocument`,
+`jumpToPreviousInDocument`, `clear`, `clearFromAllFiles`, `list`, `showWindow` (§7g).
 
 ### 7a. Clipboard and the right-click menu
 
@@ -669,6 +674,56 @@ minimap, click / drag / wheel, the slider's visibility, folding, each source of 
 theme changes, disposal, sticky scroll's insets, a 1M-line file, typing that renders nothing on the keystroke, and screenshots in the dark and
 light themes written to `.scratch/screenshots/minimap-*.png`).
 
+### 7g. Bookmarks
+
+Visual Studio's bookmarks (VS Code users know them from the Bookmarks extension): `Bookmarks/BookmarkService.cs` (Core's `IBookmarkService`,
+registered by `AddCsCodeEditor`), `Bookmarks/BookmarkCommands.cs` and, per view, `Features/BookmarkFeature.cs`. The Bookmark Window is the
+shell's (docs/SHELL.md).
+
+* **Commands** (palette category *Bookmarks*, Visual Studio's wording; Edit > Bookmarks; the editor's right-click *Bookmarks* submenu, beside
+  *Breakpoint*, with Add or Remove Bookmark and Enable or Disable Bookmark for the caret line, Next, Previous, Clear Bookmarks in Document,
+  Bookmark Window):
+  `bookmarks.toggle` (each caret's line), `bookmarks.toggleEnabled`, `bookmarks.toggleAllEnabled`, `bookmarks.jumpToNext` / `jumpToPrevious`
+  (across files, in path order then by line, wrapping; a disabled bookmark is skipped, as in Visual Studio), `jumpToNextInDocument` /
+  `jumpToPreviousInDocument`, `bookmarks.clear` (the document's), `bookmarks.clearFromAllFiles` (asks first, as Visual Studio does),
+  `bookmarks.list` (a quick pick of every bookmark: its label or line text, `file:line`, folder; picking one goes there) and
+  `bookmarks.showWindow`. They act at the caret of the view that last had the keyboard; Next, Previous, List and Clear All also work without
+  one. In that view's document the caret goes to the start of the line, scrolling only when it is off screen; another document is opened
+  through `INavigationService`. A file that no longer exists loses its bookmarks when navigation reaches it (the status bar says so) and the
+  next one is taken.
+* **Keys** (only while an editor has the keyboard): the Visual Studio keymap has Ctrl+K Ctrl+N / Ctrl+K Ctrl+P (next / previous) and
+  Ctrl+K Ctrl+W (Bookmark Window), with ⌘ on a Mac, where ⌘K ⌘K toggles. Visual Studio's Ctrl+K Ctrl+K (toggle) and Ctrl+K Ctrl+L (clear) are
+  this keymap's Indent / Outdent Lines, and ⌘K ⌘L its Toggle Outlining on a Mac, so they were left as they are: Toggle Bookmark has no key on
+  Linux and Windows, Clear All Bookmarks none anywhere (Edit > Bookmarks, the palette and the right-click menu have both). The VS Code keymap
+  has the Bookmarks extension's Ctrl+Alt+K / L / J (toggle, next, previous; ⌥⌘K / L / J).
+* **The glyph**: a ribbon in `bookmarks.iconForeground` (#157EFB by default; an outline when disabled) on the line's first visual row, level
+  with its line number (the row's `VisualYPosition.TextTop`, one default line high), also when the line wraps or carries a code lens. With a
+  debugger composed it is drawn in the breakpoint margin, under the breakpoints and the stop arrow: the margin calls `DebugFeature.Underlay`
+  right after filling its background (that hook is the only change to the margin). Without one, and in large-file mode (which keeps
+  bookmarks: they are not a language feature), the feature adds a margin of its own, as wide, that takes no width while the document has no
+  bookmark. A click in the margin never toggles a bookmark: it stays the breakpoint's. Only documents the document manager knows (files,
+  untitled buffers) have bookmarks; the sides of a diff do not.
+* **The overview ruler** marks them in the left lane (Visual Studio's marks column) in `bookmarks.overviewRuler` (the extension's colour id and
+  default, #157EFB88), under a breakpoint and over a source-control change on the same row; the minimap does not show them.
+* **Edits**: the service follows every change of an open document (`IDocumentManager.Changed`, so also a tab without a live view) the way the
+  editor moves breakpoints (`BreakpointShift`): lines added or removed above move a bookmark, a deleted line takes its bookmark with it, a
+  joined line keeps the bookmark of the line whose text survives. A keystroke in a document without bookmarks costs one set lookup, one
+  without a line break one call that returns at once.
+* **Persistence**: per workspace in `IStateStorage` (key `bookmarks`: URI, line, label, enabled), written 400 ms after the last change on a
+  pool thread and at exit (the shell disposes the service before its last state flush), through `IWorkspaceStateScope`, so a folder switch
+  never writes one folder's bookmarks into another's; read off the UI thread when the service starts and when another folder opens. Lines are
+  kept while a file is closed; when it opens again a bookmark past its end moves to its last line (one per line). An untitled buffer's
+  bookmarks are never saved and go when it closes; Save As carries a document's bookmarks to its new name. At most 10,000 are kept.
+* **Files**: as an `IFileOperationParticipant` (registered by the shell after the remote module, `AddBookmarkFileTracking`), a rename or
+  move done in CsCode (Explorer, workspace edits) moves the bookmarks of the file, or of every file under a folder, and a delete removes them.
+
+Tests: `BookmarkServiceTests` (toggling, the order, Next / Previous, edits, one write per burst of typing, the round trip through the
+workspace state, a file that shrank, renames and deletes of files and folders, untitled buffers, another folder, a closed document not
+retained), `BookmarkViewTests` (the commands at one and several carets, the glyph's pixels in its own margin and in the breakpoint margin, a
+click that stays the breakpoint's, a wrapped line, the ruler, Next / Previous across files, a file that is gone, List, Clear All, Save As,
+large-file mode, the right-click submenu's items, a closed view not retained); Platform's `BookmarkKeysTests` (both keymaps, Linux and Mac);
+the shell's `BookmarksWindowTests` and `RealApp/BookmarkRealAppTests` (the real keymap and menus, a restart, an Explorer rename and delete).
+
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
 ### 7g. Merge conflicts and the merge editor
@@ -712,6 +767,11 @@ Not done, or done only in part — none of this is faked:
   text (it marks whole rows) are not read; the ruler has three fixed lanes (`editor.overviewRulerLanes` 1 and 2 are drawn as 3) and does
   not mark selection highlights, bracket matches or the debugger's stop line; `editor.scrollbar.scrollByPage` is not read (a track press
   always jumps). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
+* **Bookmarks** (§7g): undo that brings a deleted line back does not bring its bookmark back (breakpoints neither); a file renamed or
+  deleted outside CsCode keeps its bookmarks under the old path until navigation finds it gone; no bookmark folders (Visual Studio's Bookmark
+  Window has them) and no inline rename there (an input box); a label shows in the Bookmark Window and the list, not in the editor (the
+  margin's tooltip stays the breakpoint's); the minimap does not mark them; with the VS Code keymap, Ctrl+Alt+K / L / J are AltGr+K / L / J
+  on some keyboard layouts (as with the extension in VS Code).
 * `editor.cursorStyle`, `editor.cursorBlinking` and `editor.smoothScrolling` are not applied (AvaloniaEdit offers no equivalent). Font ligatures are on by default (`editor.fontLigatures`; VS Code defaults to off, but the bundled Fira Code is chosen for them, and they keep one glyph per character): `false` turns them off. AvaloniaEdit 12 has no font-feature setting, so `EditorFontFeatures`, a line transformer, then gives each element's run properties `-liga, -calt` (reaching the private `VisualLineElement.TextRunProperties` setter by reflection; `CodeFontTests` fails if an upgrade removes it). `true` (the default) leaves the font's own ligatures (Fira Code's keep one glyph per character, so carets stay on columns) and a string is VS Code's CSS feature list (`"'ss01', 'zero'"`). The code panels follow the same setting through `ui:CodeFontFeatures`. `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.

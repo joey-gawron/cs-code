@@ -73,6 +73,12 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
             }, new CommandMetadata("editor.action.toggleMinimap", "View: Toggle Minimap", "View")));
             // The right-click menu's items, its submenus and the clipboard keys: the shell builds menus from these, it does not know them.
             _disposables.Add(EditorMenus.Contribute(this, services.Contributions));
+            // bookmarks.* (docs/EDITOR.md §7g) and the right-click Bookmarks submenu
+            if (services.Bookmarks is { } bookmarks)
+            {
+                _disposables.Add(Bookmarks.BookmarkCommands.Register(this, commands, bookmarks));
+                _disposables.Add(Bookmarks.BookmarkCommands.Contribute(services.Contributions));
+            }
         }
         // Capability context keys (editorHasRenameProvider, ...) follow servers that come and go.
         _disposables.Add(services.Features.ProvidersChanged.Subscribe(_ => services.Ui.Post(() =>
