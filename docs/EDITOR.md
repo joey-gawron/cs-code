@@ -609,6 +609,7 @@ ruler (the ruler over the vertical scrollbar), or minimap | gutter | text | rule
 | centre | find matches while the find panel is open (`editorOverviewRuler.findMatchForeground`), occurrence highlights (`wordHighlightForeground`, writes `wordHighlightStrongForeground`) |
 | right | errors, warnings, information (`editorOverviewRuler.errorForeground`, `warningForeground`, `infoForeground`; hints are not marked, as in VS Code) |
 | all | the caret lines, every caret of multi-cursor (`editorCursor.foreground`; `editor.hideCursorInOverviewRuler` hides them) |
+| all | merge conflict sides, under the caret lines (`editorOverviewRuler.currentContentForeground`, `incomingContentForeground`, `commonContentForeground`; §7g) |
 
 A mark is placed where its lines are in the scrollable height over the scrollbar's track (between its arrow buttons), from AvaloniaEdit's height
 tree, so folded lines take no room, wrapped lines their rows, and marks line up with the thumb. Laying out does one height-tree lookup per
@@ -664,6 +665,18 @@ light themes written to `.scratch/screenshots/minimap-*.png`).
 
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
+### 7g. Merge conflicts and the merge editor
+
+Conflict blocks (`<<<<<<<` / `|||||||` / `=======` / `>>>>>>>`) in any document are found once per version on the editor worker
+(`MergeConflictTracker`: a chunked pass over the rope with no text materialised when there is no `<<<<<<<`), tinted with VS Code's `merge.*`
+colours and marked on the overview ruler (`MergeConflictFeature`), offered "Accept Current Change | Accept Incoming Change | Accept Both
+Changes | Compare Changes" as code lens through `ILanguageFeatureRegistry` (so §7e draws them), and resolved by the `merge-conflict.*` commands
+and the right-click items shown while the caret is in a block (`mergeConflictAtCursor`), each in one undo step. The 3-way merge editor
+(`Diff/MergeEditorControl`, `IEditorViewFactory.CreateMergeView`) shows Incoming and Current as read-only panes over the file's own document
+as Result, with checkbox lenses per conflict. Settings `merge-conflict.codeLens.enabled`, `merge-conflict.decorators.enabled`. Design,
+commands, threading and limits: docs/SOURCE-CONTROL.md ("Merge conflicts in the editor", "Merge editor"). Tests: `MergeConflictViewTests`,
+`MergeEditorViewTests`.
+
 ## 8. Known gaps (honest list)
 
 Not done, or done only in part — none of this is faked:
@@ -677,6 +690,8 @@ Not done, or done only in part — none of this is faked:
 * **Code lens** (§7e): no keyboard access to a lens (VS Code's "Show CodeLens Commands For Current Line" is not implemented); a lens on an
   empty line is not shown (§5); split views of one document ask (and resolve) separately; lenses
   and semantic tokens are not `IMemoryTrimmable` (both are bounded and die with the view).
+* **Merge conflicts** (§7g): the merge-conflict lenses come from a provider asked for every document (it answers from the shared per-version
+  scan, nothing when there are no markers); the merge editor's gaps are listed in docs/SOURCE-CONTROL.md, "What is left".
 * **Semantic highlighting** (§7e): only the first full provider and the first range provider are used (VS Code also picks one); custom token
   types and modifiers declared by a server's VS Code extension (`semanticTokenTypes` / `semanticTokenScopes` contributions) are not known beyond
   the few super-types listed in §7e; `editor.semanticTokenColorCustomizations` is not read.
