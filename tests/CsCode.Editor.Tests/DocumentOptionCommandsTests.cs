@@ -86,6 +86,7 @@ public class DocumentOptionCommandsTests
     public void The_encoding_list_has_VS_Codes_ids_and_labels_and_the_code_page_encodings_round_trip()
     {
         Assert.Equal(("utf8", "UTF-8"), FileEncoding.Choices[0]);
+        Assert.Equal(39, FileEncoding.Choices.Count); // every code page of the list is provided by .NET's CodePagesEncodingProvider
         Assert.Contains(("shiftjis", "Japanese (Shift JIS)"), FileEncoding.Choices);
         Assert.Contains(("koi8r", "Cyrillic (KOI8-R)"), FileEncoding.Choices);
         Assert.Equal("UTF-8", FileEncoding.ShortLabel("utf8"));

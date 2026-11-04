@@ -405,12 +405,29 @@ resource operations of workspace edits run the `IFileOperationParticipant`s arou
 its edit is applied before the move, so references and imports follow the file; in a workspace edit without a second confirmation), then
 `DidRename/DidCreate/DidDeleteFilesAsync`. Participants are resolved on first use (the language client itself depends on the navigation service).
 
+**Auto save** (`Services/AutoSave.cs`, VS Code's `files.autoSave`, read per document so a `"[lang]"` section can set it, and live): `afterDelay` saves a
+dirty document `files.autoSaveDelay` ms (1000) after its last edit, every edit starting the wait again (one timer per document, re-armed on the typing
+path without allocating); `onFocusChange` saves an editor's document when the editor loses the keyboard (to another editor, a tool window, the
+palette or a prompt; a menu or popup over it does not count) or stops being the active editor, and every dirty document when a CsCode window loses
+activation; `onWindowChange` saves every dirty document when a CsCode window (the main one or a floating one) loses activation. Turning auto save on
+saves the dirty documents at once, as VS Code does. Never an untitled or read-only document, and never one whose "changed on disk" question is
+open (`EditorDocument.IsExternalChangePending`; a delayed save waits until it is answered, then saves). Saves go through `DocumentWell.SaveAsync(tab,
+reason)`: the will-save participants with `DocumentSaveReason.AfterDelay` / `FocusOut`, then the editor's save for that reason, which after a delay
+skips format on save and leaves the carets' lines alone (docs/EDITOR.md §7); encoding and writing run on the IO lane. One document is never saved
+twice at once (edits made meanwhile are saved after); a failing save is logged and reported once until one succeeds. Closing a dirty editor saves it
+instead of asking when it auto-saves on focus change, or after a delay of at most 1000 ms (VS Code treats it as being saved), and in every mode while
+the window closes (VS Code saves on shutdown); `onWindowChange` asks while the window stays (the question does not leave the window). Each document is
+tracked while a tab shows it and released with its last tab (`AutoSaveTests`, `AutoSaveRealAppTests`).
+
 **Explorer** (virtualised flat rows, 20k siblings expand in well under a second): lazy folders, off-thread read/sort, VS file icons, persisted expansion, create/rename (F2 inline)/delete (trash, confirmed)/duplicate/cut/copy/paste/move (model; with the file-operation participants),
 reveal active file, `files.exclude`, watcher batches applied by diffing only the affected loaded directories, type-ahead, filter box (loaded nodes), context menu incl. contributed items, empty state, multi-root.
 **Error List** (counts and chips, search, group by file, sort, double-click navigates, aggregation and sorting on a worker at <= 10 Hz, 50k rows apply as one property change).
 **Output** (channel dropdown, clear, shows the most recent 5,000 lines of a channel; the ring keeps 2 MB). **Find Results** (target of `cscode.references.show`; preview lines read lazily).
 
 **Status bar items owned by the shell:** Ln/Col, indent, encoding, EOL, language mode (picker), diagnostics counts (computed off-thread), memory (with UI stall counters in its tooltip), debug state, language-server status, notification bell.
+The indentation ("Spaces: 4" / "Tab Size: 4"), encoding (VS Code's short label: "UTF-8", "Windows 1252") and EOL ("LF" / "CRLF") items run the
+editor's `changeEditorIndentation`, `workbench.action.editor.changeEncoding` and `workbench.action.editor.changeEOL` (docs/EDITOR.md §7) and follow
+the active document's `OptionsChanged` (its encoding, line ending or the indentation chosen for it) and the settings.
 Other modules (Vim mode, remote indicator) register their own through `IStatusBarService`; text may use `$(icon-name)`. The Vim adapter's items:
 `vim.mode` (`-- INSERT --`, `recording @q`), `vim.cmdline` (the `:` `/` `?` command line with its cursor, or Vim's last message), `vim.showcmd`
 (pending keys), all leftmost, and `vim.toggle` on the right (*Vim* / *Vim: Off*, runs Toggle Vim Mode); all but the toggle disappear when Vim is off.
@@ -522,7 +539,8 @@ Every other id has exactly one registration; the test fails when a new duplicate
 `cscode.shell.liveEditorViews` (8), `cscode.shell.confirmMultiFileEdits` (true), `cscode.diagnostics.uiStallLogMs` (0; Debug builds default to 100),
 `cscode.toolbars.standard`, `cscode.toolbars.debug` (true: the toolbar groups View > Toolbars shows; the setting is the
 state, so settings.json and other windows agree), plus the ones it reads:
-`workbench.colorTheme`, `workbench.startupEditor`, `files.exclude`, `editor.fontFamily`, `editor.tabSize`, `editor.insertSpaces`. They are declared through `IConfigurationService.RegisterProperties`.
+`workbench.colorTheme`, `workbench.startupEditor`, `files.exclude`, `editor.fontFamily`, `editor.tabSize`, `editor.insertSpaces`, `files.autoSave`, `files.autoSaveDelay`
+(auto save, above). They are declared through `IConfigurationService.RegisterProperties`.
 
 ## Threading and isolation (binding rules, and how they are enforced)
 
