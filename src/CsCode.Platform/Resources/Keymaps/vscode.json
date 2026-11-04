@@ -29,6 +29,11 @@
   { "key": "f8",                 "command": "editor.action.marker.nextInFiles",   "when": "editorFocus" },
   { "key": "shift+f8",           "command": "editor.action.marker.prevInFiles",   "when": "editorFocus" },
 
+  // ---- bookmarks (docs/EDITOR.md §7g): the Bookmarks extension's keys ----
+  { "key": "ctrl+alt+k",         "command": "bookmarks.toggle",                   "when": "editorTextFocus", "mac": "cmd+alt+k" },
+  { "key": "ctrl+alt+l",         "command": "bookmarks.jumpToNext",               "when": "editorTextFocus", "mac": "cmd+alt+l" },
+  { "key": "ctrl+alt+j",         "command": "bookmarks.jumpToPrevious",           "when": "editorTextFocus", "mac": "cmd+alt+j" },
+
   // ---- editing ----
   { "key": "f2",                 "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly" },
   { "key": "ctrl+shift+f2",      "command": "editor.action.linkedEditing",        "when": "editorTextFocus && !editorReadonly", "mac": "cmd+shift+f2" }, // Start Linked Editing

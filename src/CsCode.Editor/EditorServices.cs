@@ -23,6 +23,7 @@ public sealed class EditorServices : IDisposable
     private readonly DedicatedLane _ownedIoLane;
     private readonly Lazy<INavigationService?> _navigation;
     private readonly Lazy<IDebugService?> _debug;
+    private readonly Lazy<IBookmarkService?> _bookmarks;
 
     internal EditorServices(IServiceProvider? sp, IUiThread ui, DedicatedLane? io = null)
     {
@@ -50,6 +51,7 @@ public sealed class EditorServices : IDisposable
         _navigation = new Lazy<INavigationService?>(Opt<INavigationService>);
         Memory = Opt<IMemoryMonitor>();
         _debug = new Lazy<IDebugService?>(Opt<IDebugService>);
+        _bookmarks = new Lazy<IBookmarkService?>(Opt<IBookmarkService>); // the bookmark service is built over this object: resolved on first use
         AppPaths = Opt<IAppPaths>();
         EditorConfig = Opt<IEditorConfigSource>() ?? new EditorConfigResolver(FileSystem);
         LoggerFactory = Opt<ILoggerFactory>() ?? NullLoggerFactory.Instance;
@@ -75,6 +77,8 @@ public sealed class EditorServices : IDisposable
     public INavigationService? Navigation => _navigation.Value;
     public IMemoryMonitor? Memory { get; }
     public IDebugService? Debug => _debug.Value;
+    /// <summary>The workspace's bookmarks (<c>AddCsCodeEditor</c> registers them); null in a composition without them.</summary>
+    public IBookmarkService? Bookmarks => _bookmarks.Value;
     public IAppPaths? AppPaths { get; }
     public IEditorConfigSource EditorConfig { get; }
     public ILoggerFactory LoggerFactory { get; }

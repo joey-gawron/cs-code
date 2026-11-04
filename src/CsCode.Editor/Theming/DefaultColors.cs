@@ -215,6 +215,10 @@ public static class DefaultColors
         Def("debugIcon.breakpointStackframeForeground", "#89D185", "#57A64A");
         Def("debugToolBar.background", "#333333", "#F3F3F3");
 
+        // ---- bookmarks (docs/EDITOR.md §7g): the Bookmarks extension's overview ruler colour id and default; the glyph in its gutter icon's blue ----
+        Def("bookmarks.iconForeground", "#157EFB", "#157EFB", "#6FC3DF", "#0F4A85");
+        Def("bookmarks.overviewRuler", "#157EFB88", "#157EFB88", "#6FC3DF", "#0F4A85");
+
         // ---- workbench: lists, trees, inputs, buttons ----
         Def("list.activeSelectionBackground", "#04395E", "#0060C0", "#000000", "#0F4A85");
         Def("list.activeSelectionForeground", "#FFFFFF", "#FFFFFF");

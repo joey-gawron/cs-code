@@ -153,6 +153,7 @@ internal static class EditorMenus
         keys.Set(CanCutCopyKey, view.Clipboard.CanCopy);
         keys.Set(HasSurroundSnippetsKey, view.Feature<ISnippetFeature>() is { } snippets && snippets.HasSurroundSnippets);
         keys.Set("editorHasSelection", view.Editor.SelectionLength > 0);
+        Bookmarks.BookmarkCommands.PrepareContextKeys(view, keys); // the Bookmarks submenu: Add or Remove, Enable or Disable
     }
 
     // ------------------------------------------------------------------ commands behind the items

@@ -35,6 +35,14 @@
   { "key": "f8",                 "command": "editor.action.marker.nextInFiles",   "when": "editorFocus" },
   { "key": "shift+f8",           "command": "editor.action.marker.prevInFiles",   "when": "editorFocus" },
 
+  // ---- bookmarks (docs/EDITOR.md §7g): Visual Studio's Ctrl+K chords where this keymap has them free. Ctrl+K Ctrl+K (Toggle Bookmark) and
+  // Ctrl+K Ctrl+L (Clear Bookmarks) are Indent / Outdent Lines here, and Cmd+K Cmd+L is Toggle Outlining on a Mac: those two stay unbound
+  // (Edit > Bookmarks, the palette, the editor's right-click menu); Cmd+K Cmd+K is free on a Mac (Indent is Cmd+] there) ----
+  { "mac": "cmd+k cmd+k",        "command": "bookmarks.toggle",                   "when": "editorTextFocus" },
+  { "key": "ctrl+k ctrl+n",      "command": "bookmarks.jumpToNext",               "when": "editorTextFocus", "mac": "cmd+k cmd+n" },
+  { "key": "ctrl+k ctrl+p",      "command": "bookmarks.jumpToPrevious",           "when": "editorTextFocus", "mac": "cmd+k cmd+p" },
+  { "key": "ctrl+k ctrl+w",      "command": "bookmarks.showWindow",               "when": "editorTextFocus", "mac": "cmd+k cmd+w" }, // View > Bookmark Window
+
   // ---- editing ----
   { "key": "f2",                 "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly" },
   { "key": "ctrl+shift+f2",      "command": "editor.action.linkedEditing",        "when": "editorTextFocus && !editorReadonly", "mac": "cmd+shift+f2" }, // Start Linked Editing
