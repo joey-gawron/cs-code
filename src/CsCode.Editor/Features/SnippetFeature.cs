@@ -7,6 +7,7 @@ using AvaloniaEdit.Rendering;
 using CsCode.Core.Lifecycle;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
+using CsCode.Editor.Editing;
 using CsCode.Editor.Snippets;
 using CsCode.Editor.View;
 
@@ -16,6 +17,11 @@ namespace CsCode.Editor.Features;
 /// The snippet session of one view: inserts a resolved snippet as ONE undo unit, anchors every tab stop in the buffer (so they follow edits),
 /// walks them with Tab / Shift+Tab, keeps mirrors in sync while the user types into the primary placeholder (applying <c>${1/…/…/}</c>
 /// transforms), highlights the active stop, and ends with Esc, after the final stop, or when the caret leaves the snippet.
+/// <para>
+/// With several carets (multi-cursor) the snippet goes in at every caret as ONE undo step, each copy resolved for its own caret (selected text,
+/// line, word, indentation; the clipboard spread one line per caret as a paste is), and the session holds one <i>instance</i> per caret: a tab
+/// stop is then that stop in every instance, selected at once as carets, so typing fills them all; each instance keeps its own mirrors.
+/// </para>
 /// </summary>
 internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
 {
@@ -25,17 +31,29 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
         public IReadOnlyList<Occurrence> Occurrences { get; } = occurrences;
         public IReadOnlyList<string>? Choices { get; } = choices;
         public Occurrence Primary => Occurrences.First(o => o.IsPrimary);
+
+        /// <summary>The primary occurrence of instance <paramref name="instance"/> (one per caret the snippet went in at), if it has one.</summary>
+        public Occurrence? PrimaryOf(int instance)
+        {
+            foreach (var o in Occurrences)
+                if (o.IsPrimary && o.Instance == instance) return o;
+            return null;
+        }
     }
 
-    private sealed record Occurrence(TextAnchor Start, TextAnchor End, bool IsPrimary, SnippetTransform? Transform);
+    /// <summary>One place of a tab stop: <see cref="IsPrimary"/> is the one typed into (one per instance), the others mirror it.</summary>
+    private sealed record Occurrence(TextAnchor Start, TextAnchor End, bool IsPrimary, SnippetTransform? Transform, int Instance = 0);
 
     private readonly CodeEditorControl _v;
     private readonly DisposableStore _d = new();
     private readonly SnippetRenderer _renderer;
     private List<Stop>? _stops;
     private TextAnchor? _spanStart, _spanEnd;
+    private List<(TextAnchor Start, TextAnchor End)>? _instanceSpans; // several carets: where each instance is (null: one instance, _spanStart/_spanEnd)
+    private int _primaryInstance;
     private int _current;
     private bool _updatingMirrors;
+    private bool _mirrorsPending; // typed at several carets: the mirrors follow once the carets' batch is applied
     private bool _disposed;
 
     public SnippetFeature(CodeEditorControl view)
@@ -47,6 +65,7 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
         _d.Add(view.Document.Changed.Subscribe(_ => OnDocumentChanged()));
         _d.Add(view.Controller.CaretChanged.Subscribe(_ => OnCaretChanged()));
         _d.Add(Disposable.Create(() => view.TextArea.RemoveHandler(InputElement.KeyDownEvent, OnKeyDown)));
+        _d.Add(view.MultiCursor.BatchApplied.Subscribe(_ => OnCaretBatchApplied()));
         _d.Add(view.Factory.Snippets.Changed.Subscribe(language => view.Post(() => _ = RefreshSurroundAsync())));
         _d.Add(view.Document.LanguageIdChanged.Subscribe(document => view.Post(() => _ = RefreshSurroundAsync())));
         _ = RefreshSurroundAsync();
@@ -83,11 +102,19 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
             return;
         }
         var target = _v.Controller.Selections[0]; // remembered: the picker takes the focus
+        var carets = _v.MultiCursor.IsActive ? _v.MultiCursor.Current : null;
         var version = _v.Document.Version;
         var items = all.Select(s => new QuickPickItem(s.Prefixes.FirstOrDefault() ?? s.Name, s.Name, s.Description, Tag: s)).ToArray();
         var picked = await window.ShowQuickPickAsync(items, new QuickPickOptions(Title: surround ? "Surround With" : "Insert Snippet", Placeholder: "Select a snippet", MatchOnDescription: true)).ConfigureAwait(true);
         if (_disposed || picked?.Tag is not SnippetDefinition chosen) return;
         _v.Controller.Focus();
+        if (carets is not null && _v.Document.Version == version)
+        {
+            // several carets: the snippet goes in at each (they are put back if anything collapsed them meanwhile)
+            if (!_v.MultiCursor.IsActive) _v.MultiCursor.SetCarets(carets, reveal: false);
+            await InsertAtCaretsAsync(chosen.Body, null).ConfigureAwait(true);
+            return;
+        }
         await InsertAsync(chosen.Body, _v.Document.Version == version ? target : null).ConfigureAwait(true);
     }
 
@@ -103,6 +130,11 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
     internal async Task InsertAsync(string body, TextRange? replace)
     {
         if (_v.Document.IsReadOnly || _disposed) return;
+        if (replace is null && _v.MultiCursor.IsActive)
+        {
+            await InsertAtCaretsAsync(body, null).ConfigureAwait(true);
+            return;
+        }
         var doc = _v.Document;
         var range = replace ?? _v.Controller.Selections[0];
         var clipboard = body.Contains("CLIPBOARD", StringComparison.Ordinal) ? await ReadClipboardAsync().ConfigureAwait(true) : null;
@@ -136,25 +168,108 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
         if (!doc.ApplyEdits([new TextEdit(range, resolved.Text)])) return;
         _v.Editor.CaretOffset = a + resolved.Text.Length;
         if (!resolved.HasTabstops) return;
+        StartSession([(a, resolved)], primaryInstance: 0);
+    }
 
+    /// <summary>
+    /// The snippet at every caret (multi-cursor), as ONE undo step: each caret's range (its selection, or what <paramref name="rangeOf"/> says:
+    /// a completion's typed prefix around it) is replaced by the snippet resolved for that caret, and a session with one instance per caret starts.
+    /// </summary>
+    internal async Task InsertAtCaretsAsync(string body, Func<CaretRange, (int Start, int End)>? rangeOf)
+    {
+        if (_v.Document.IsReadOnly || _disposed) return;
+        var clipboard = body.Contains("CLIPBOARD", StringComparison.Ordinal) ? await ReadClipboardAsync().ConfigureAwait(true) : null;
+        if (_disposed) return;
+        var doc = _v.Document;
         var buffer = doc.Buffer;
-        _spanStart = buffer.CreateAnchor(a);
-        _spanStart.MovementType = AnchorMovementType.BeforeInsertion;
-        _spanEnd = buffer.CreateAnchor(a + resolved.Text.Length);
-        _spanEnd.MovementType = AnchorMovementType.AfterInsertion;
-        _stops = new List<Stop>(resolved.Groups.Count);
-        foreach (var g in resolved.Groups)
+        var set = _v.MultiCursor.Current;
+        // the clipboard spread one line per caret when the counts match, as a paste is (editor.multiCursorPaste "spread"; VS Code does the same)
+        string[]? clipLines = null;
+        if (clipboard is not null && _v.Settings.MultiCursorPaste != "full")
         {
-            var occurrences = g.Ranges.Select(r =>
-            {
-                var s = buffer.CreateAnchor(a + r.Start);
-                s.MovementType = AnchorMovementType.BeforeInsertion;
-                var e = buffer.CreateAnchor(a + r.Start + r.Length);
-                e.MovementType = AnchorMovementType.AfterInsertion;
-                return new Occurrence(s, e, r.IsPrimary, r.Transform);
-            }).ToList();
-            _stops.Add(new Stop(g.Index, occurrences, g.Choices));
+            var lines = ClipboardTextExtensions.SplitLines(clipboard);
+            if (lines.Length == set.Count) clipLines = lines;
         }
+        var languageConfig = _v.LanguageConfiguration.Base;
+        var workspace = _v.Services.Provider?.GetService(typeof(IWorkspaceService)) as IWorkspaceService;
+        var edits = new OffsetEdit[set.Count];
+        var resolved = new ResolvedSnippet[set.Count];
+        var carets = new CaretRange[set.Count];
+        var previousEnd = 0;
+        var delta = 0;
+        for (var i = 0; i < set.Count; i++)
+        {
+            var c = set[i];
+            var (a, b) = rangeOf?.Invoke(c) ?? (c.Start, c.End);
+            a = Math.Clamp(Math.Max(a, previousEnd), 0, buffer.TextLength); // the ranges of neighbouring carets never overlap
+            b = Math.Clamp(Math.Max(a, b), a, buffer.TextLength);
+            previousEnd = b;
+            var line = buffer.GetLineByOffset(a);
+            var lineText = buffer.GetText(line.Offset, line.Length);
+            var index = i;
+            var ctx = new SnippetVariableContext
+            {
+                FilePath = doc.IsUntitled ? doc.Uri.AbsolutePath : doc.Uri.LocalPath,
+                WorkspaceName = workspace?.Name,
+                WorkspaceFolder = workspace?.PrimaryFolder?.LocalPath,
+                SelectedText = buffer.GetText(a, b - a),
+                CurrentLine = lineText,
+                LineIndex = line.LineNumber - 1,
+                CurrentWord = WordAt(lineText, a - line.Offset),
+                Clipboard = () => clipLines is not null ? clipLines[index] : clipboard,
+                LineComment = languageConfig.LineComment,
+                BlockCommentStart = languageConfig.BlockComment?.Open,
+                BlockCommentEnd = languageConfig.BlockComment?.Close,
+                CursorIndex = i,
+            };
+            var indentation = new SnippetIndentation(lineText[..Math.Min(lineText.Length, LeadingWhitespace(lineText))], _v.Settings.TabSize, _v.Settings.InsertSpaces, doc.EndOfLine);
+            resolved[i] = SnippetResolver.Resolve(body, ctx, indentation);
+            edits[i] = new OffsetEdit(a, b, resolved[i].Text);
+            carets[i] = CaretRange.At(a + delta + resolved[i].Text.Length);
+            delta += edits[i].Delta;
+        }
+        End(); // a new snippet replaces an active one
+        _v.MultiCursor.ApplyBatch(set, new CaretEditBatch(edits, carets, set.PrimaryIndex));
+        if (!resolved[0].HasTabstops) return;
+        var starts = new (int Start, ResolvedSnippet Snippet)[set.Count];
+        delta = 0;
+        for (var i = 0; i < set.Count; i++)
+        {
+            starts[i] = (edits[i].Start + delta, resolved[i]);
+            delta += edits[i].Delta;
+        }
+        StartSession(starts, set.PrimaryIndex);
+    }
+
+    /// <summary>Anchors the tab stops of every instance (a resolved snippet inserted at <c>Start</c>) and activates the first stop.</summary>
+    private void StartSession(IReadOnlyList<(int Start, ResolvedSnippet Snippet)> instances, int primaryInstance)
+    {
+        var buffer = _v.Document.Buffer;
+        TextAnchor Anchor(int offset, AnchorMovementType movement)
+        {
+            var anchor = buffer.CreateAnchor(Math.Clamp(offset, 0, buffer.TextLength));
+            anchor.MovementType = movement;
+            return anchor;
+        }
+        // every instance comes from the same snippet: its n-th group is the n-th stop of the session
+        var first = instances[0].Snippet;
+        var occurrences = new List<Occurrence>[first.Groups.Count];
+        for (var g = 0; g < occurrences.Length; g++) occurrences[g] = new List<Occurrence>();
+        var spans = new List<(TextAnchor Start, TextAnchor End)>(instances.Count);
+        for (var i = 0; i < instances.Count; i++)
+        {
+            var (a, resolved) = instances[i];
+            spans.Add((Anchor(a, AnchorMovementType.BeforeInsertion), Anchor(a + resolved.Text.Length, AnchorMovementType.AfterInsertion)));
+            for (var g = 0; g < Math.Min(occurrences.Length, resolved.Groups.Count); g++)
+                foreach (var r in resolved.Groups[g].Ranges)
+                    occurrences[g].Add(new Occurrence(Anchor(a + r.Start, AnchorMovementType.BeforeInsertion), Anchor(a + r.Start + r.Length, AnchorMovementType.AfterInsertion), r.IsPrimary, r.Transform, i));
+        }
+        _spanStart = spans[0].Start;
+        _spanEnd = spans[^1].End;
+        _instanceSpans = instances.Count > 1 ? spans : null;
+        _primaryInstance = Math.Clamp(primaryInstance, 0, instances.Count - 1);
+        _stops = new List<Stop>(occurrences.Length);
+        for (var g = 0; g < occurrences.Length; g++) _stops.Add(new Stop(first.Groups[g].Index, occurrences[g], first.Groups[g].Choices));
         _current = 0;
         Activate();
     }
@@ -165,6 +280,23 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
     {
         if (_stops is null) return;
         var stop = _stops[_current];
+        if (_instanceSpans is { } spans)
+        {
+            // several instances: the stop in each, selected at once as carets (the instance of the primary caret stays primary)
+            var carets = new List<CaretRange>(spans.Count);
+            var primary = 0;
+            for (var i = 0; i < spans.Count; i++)
+            {
+                if (stop.PrimaryOf(i) is not { } o || o.Start.IsDeleted || o.End.IsDeleted) continue;
+                if (i == _primaryInstance) primary = carets.Count;
+                carets.Add(o.Start.Offset >= o.End.Offset ? CaretRange.At(o.End.Offset) : CaretRange.Select(o.Start.Offset, o.End.Offset));
+            }
+            if (carets.Count > 0) _v.MultiCursor.Move(CaretSet.Create(carets, primary, _v.Settings.MultiCursorLimit));
+            _v.TextView.InvalidateLayer(KnownLayer.Selection);
+            if (stop.Choices is { Count: > 1 } several) _ = OfferChoicesAsync(stop, several);
+            if (stop.Index == 0) End(); // the final stop ($0) ends the session, the carets staying there
+            return;
+        }
         var p = stop.Primary;
         var area = _v.TextArea;
         if (p.Start.Offset == p.End.Offset)
@@ -189,6 +321,14 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
         if (window is null) return;
         var picked = await window.ShowQuickPickAsync(choices.Select(c => new QuickPickItem(c)).ToList(), new QuickPickOptions(Title: "Choose a value", Placeholder: "")).ConfigureAwait(true);
         if (picked is null || _stops is null || _disposed) return;
+        if (_instanceSpans is not null)
+        {
+            // the choice goes into the stop of every instance, as typing would (the mirrors follow on the change)
+            var choiceEdits = stop.Occurrences.Where(o => o.IsPrimary && !o.Start.IsDeleted && !o.End.IsDeleted)
+                .Select(o => new TextEdit(new TextRange(_v.Document.PositionAt(o.Start.Offset), _v.Document.PositionAt(o.End.Offset)), picked.Label)).ToArray();
+            if (choiceEdits.Length > 0) _v.Document.ApplyEdits(choiceEdits);
+            return;
+        }
         var p = stop.Primary;
         if (p.Start.IsDeleted || p.End.IsDeleted) return;
         _v.Document.ApplyEdits([new TextEdit(new TextRange(_v.Document.PositionAt(p.Start.Offset), _v.Document.PositionAt(p.End.Offset)), picked.Label)]);
@@ -228,26 +368,25 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
     private void OnDocumentChanged()
     {
         if (_stops is null || _updatingMirrors || _disposed) return;
-        var stop = _stops[_current];
-        if (stop.Occurrences.Count < 2) return;
-        var primary = stop.Primary;
-        if (primary.Start.IsDeleted || primary.End.IsDeleted) return;
-        var doc = _v.Document;
-        var typed = doc.GetText(new TextRange(doc.PositionAt(primary.Start.Offset), doc.PositionAt(primary.End.Offset)));
-        var edits = new List<TextEdit>();
-        foreach (var m in stop.Occurrences.Where(o => !o.IsPrimary))
+        if (_v.MultiCursor.IsApplyingBatch)
         {
-            if (m.Start.IsDeleted || m.End.IsDeleted) continue;
-            var text = m.Transform is null ? typed : SnippetTransforms.Apply(typed, m.Transform);
-            var range = new TextRange(doc.PositionAt(m.Start.Offset), doc.PositionAt(m.End.Offset));
-            if (doc.GetText(range) != text) edits.Add(new TextEdit(range, text));
+            // typed at several carets: their batch must not be edited while it is applied; the mirrors follow right after it, in its undo step
+            _mirrorsPending = true;
+            return;
         }
+        var edits = MirrorEdits();
         if (edits.Count == 0) return;
+        var doc = _v.Document;
         _updatingMirrors = true;
         try
         {
+            if (_v.MultiCursor.IsActive)
+            {
+                _v.MultiCursor.ApplyMapped(edits, keepSelections: true, typing: true); // the carets follow the mirrors
+                return;
+            }
             var caret = _v.Editor.CaretOffset;
-            doc.ApplyEdits(edits); // inside the typing group when this change came from a keystroke: ONE Ctrl+Z
+            doc.ApplyEdits(edits.Select(e => new TextEdit(new TextRange(doc.PositionAt(e.Start), doc.PositionAt(e.End)), e.Text)).ToArray()); // inside the typing group when this change came from a keystroke: ONE Ctrl+Z
             _v.Editor.CaretOffset = Math.Min(caret, doc.Length);
         }
         finally
@@ -256,11 +395,49 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
         }
     }
 
+    /// <summary>A batch at several carets was applied: the mirrors it left behind are brought up to date, joined to its undo step.</summary>
+    private void OnCaretBatchApplied()
+    {
+        if (!_mirrorsPending || _updatingMirrors) return;
+        _mirrorsPending = false;
+        if (_stops is null || _disposed) return;
+        var edits = MirrorEdits();
+        if (edits.Count == 0) return;
+        _updatingMirrors = true;
+        try { _v.MultiCursor.ApplyMapped(edits, keepSelections: true, typing: true); }
+        finally { _updatingMirrors = false; }
+    }
+
+    /// <summary>The edits that make every mirror of the current stop show its instance's primary (transforms applied), in document order.</summary>
+    private List<OffsetEdit> MirrorEdits()
+    {
+        var edits = new List<OffsetEdit>();
+        if (_stops is null) return edits;
+        var stop = _stops[_current];
+        if (stop.Occurrences.Count < 2) return edits;
+        var buffer = _v.Document.Buffer;
+        var instances = _instanceSpans?.Count ?? 1;
+        for (var i = 0; i < instances; i++)
+        {
+            if (stop.PrimaryOf(i) is not { } primary || primary.Start.IsDeleted || primary.End.IsDeleted || primary.End.Offset < primary.Start.Offset) continue;
+            var typed = buffer.GetText(primary.Start.Offset, primary.End.Offset - primary.Start.Offset);
+            foreach (var m in stop.Occurrences)
+            {
+                if (m.IsPrimary || m.Instance != i || m.Start.IsDeleted || m.End.IsDeleted || m.End.Offset < m.Start.Offset) continue;
+                var text = m.Transform is null ? typed : SnippetTransforms.Apply(typed, m.Transform);
+                if (buffer.GetText(m.Start.Offset, m.End.Offset - m.Start.Offset) != text) edits.Add(new OffsetEdit(m.Start.Offset, m.End.Offset, text));
+            }
+        }
+        edits.Sort((x, y) => x.Start != y.Start ? x.Start.CompareTo(y.Start) : x.End.CompareTo(y.End));
+        return edits;
+    }
+
     private void OnCaretChanged()
     {
         if (_stops is null || _spanStart is null || _spanEnd is null || _updatingMirrors) return;
         var caret = _v.Editor.CaretOffset;
-        if (caret < _spanStart.Offset || caret > _spanEnd.Offset) End(); // left the snippet: the session is over
+        var inside = _instanceSpans is { } spans ? spans.Any(s => caret >= s.Start.Offset && caret <= s.End.Offset) : caret >= _spanStart.Offset && caret <= _spanEnd.Offset;
+        if (!inside) End(); // left the snippet: the session is over
         else _v.TextView.InvalidateLayer(KnownLayer.Selection);
     }
 
@@ -269,6 +446,8 @@ internal sealed class SnippetFeature : ISnippetFeature, IThemeAware, IDisposable
         if (_stops is null) return;
         _stops = null;
         _spanStart = _spanEnd = null;
+        _instanceSpans = null;
+        _mirrorsPending = false;
         if (!_disposed) _v.TextView.InvalidateLayer(KnownLayer.Selection);
     }
 

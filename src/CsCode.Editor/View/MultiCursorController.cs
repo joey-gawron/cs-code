@@ -297,20 +297,39 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     /// Applies a batch as ONE undo step and makes its carets current. Typed characters (<paramref name="typing"/>) continue the previous typed
     /// batch's undo step while nothing else happened in between, as single-caret typing does. Undo restores the carets from before, redo those after.
     /// </summary>
-    internal void ApplyBatch(CaretSet before, CaretEditBatch batch, bool typing = false)
+    internal void ApplyBatch(CaretSet before, CaretEditBatch batch, bool typing = false) =>
+        ApplyCore(before, batch.Edits, () => CaretSet.Create(batch.Carets, batch.Primary, Limit), typing);
+
+    /// <summary>
+    /// Line commands at every caret (move / copy / delete / comment / indent lines): <paramref name="edits"/> in offsets of the current text, as
+    /// ONE batch and undo step; the carets after it are known as line/column positions of the new text (a moved line keeps its column), so
+    /// they are made offsets once the edits are applied. <paramref name="after"/>: anchor and active of each caret, the primary at <paramref name="primary"/>.
+    /// </summary>
+    internal void ApplyLineEdits(CaretSet before, IReadOnlyList<OffsetEdit> edits, IReadOnlyList<(TextPosition Anchor, TextPosition Active)> after, int primary)
+    {
+        var sorted = edits.Where(e => !e.IsNoOp).OrderBy(e => e.Start).ThenBy(e => e.End).ToArray();
+        ApplyCore(before, sorted, () =>
+        {
+            var doc = _v.Document;
+            var carets = after.Select(p => new CaretRange(doc.OffsetAt(doc.Validate(p.Anchor)), doc.OffsetAt(doc.Validate(p.Active)))).ToArray();
+            return CaretSet.Create(carets, primary, Limit);
+        }, typing: false);
+    }
+
+    private void ApplyCore(CaretSet before, OffsetEdit[] edits, Func<CaretSet> carets, bool typing)
     {
         var doc = _v.Document;
         if (doc.IsReadOnly || _disposed) return;
-        var after = CaretSet.Create(batch.Carets, batch.Primary, Limit);
         var continues = typing && _typingRun is { } run && run.Version == doc.Version && ReferenceEquals(run.Set, _set);
-        if (batch.Edits.Length == 0)
+        if (edits.Length == 0)
         {
             // nothing to edit (closers over-typed at every caret): the carets move, and no empty undo step is made; a typed run goes on
-            SetCarets(after);
+            SetCarets(carets());
             _typingRun = continues && IsActive ? (doc.Version, _set!) : null;
             return;
         }
-        var record = before.Count <= UndoSnapshotLimit && after.Count <= UndoSnapshotLimit;
+        var record = before.Count <= UndoSnapshotLimit;
+        CaretSet after;
         _applying = true;
         try
         {
@@ -318,7 +337,9 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
             try
             {
                 if (record && !continues) doc.AddUndoMarker(StartMarker(before));
-                MultiCaretOperations.Apply(doc.Buffer, batch.Edits);
+                MultiCaretOperations.Apply(doc.Buffer, edits);
+                after = carets();
+                record &= after.Count <= UndoSnapshotLimit;
                 if (record)
                 {
                     if (continues && _lastEndMarker is { } previous) previous.Carets = null; // the run's last marker restores its final carets
@@ -339,7 +360,19 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         }
         SetCarets(after);
         _typingRun = typing && IsActive ? (doc.Version, _set!) : null;
+        _batchApplied.Fire(typing); // a snippet session brings its mirrors up to date (joining the typed run's step)
     }
+
+    private readonly Emitter<bool> _batchApplied = new();
+
+    /// <summary>
+    /// Raised after a batch was applied and its carets made current (argument: it was typing). Features that must not edit the buffer while a
+    /// batch is applied (a snippet's mirrors) do their follow-up edits here, through <see cref="ApplyMapped(IReadOnlyList{OffsetEdit}, bool, bool)"/>.
+    /// </summary>
+    internal IEventSource<bool> BatchApplied => _batchApplied;
+
+    /// <summary>True while a batch of this controller is being applied to the buffer (inside its one change event).</summary>
+    internal bool IsApplyingBatch => _applying;
 
     private Action<bool> StartMarker(CaretSet before)
     {
@@ -572,7 +605,8 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         return starts.Count == 0 ? [line.Offset] : starts;
     }
 
-    private void Move(CaretSet moved)
+    /// <summary>The carets move to <paramref name="moved"/> (a key, a snippet's next tab stop): a typed run ends.</summary>
+    internal void Move(CaretSet moved)
     {
         _typingRun = null;
         SetCarets(moved);
@@ -940,5 +974,6 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         _pendingRestore = null;
         _lastEndMarker = null;
         _typingRun = null;
+        _batchApplied.Clear();
     }
 }
