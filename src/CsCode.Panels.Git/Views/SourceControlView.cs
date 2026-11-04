@@ -274,6 +274,7 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
             ],
             // a conflicted file: resolve every block to one side (the editor's merge-conflict commands, VS Code's scm/resourceState/context items)
             [
+                row.Group == ScmGroup.Merge && _vm.CanOpenMergeEditor ? new MenuEntry("Resolve in _Merge Editor", () => _vm.RunFileCommandAsync(GitHost.OpenMergeEditor, row)) : null,
                 row.Group == ScmGroup.Merge && _vm.HasCommand(GitHost.AcceptAllCurrent) ? new MenuEntry("Accept All C_urrent", () => _vm.RunFileCommandAsync(GitHost.AcceptAllCurrent, row)) : null,
                 row.Group == ScmGroup.Merge && _vm.HasCommand(GitHost.AcceptAllIncoming) ? new MenuEntry("Accept All _Incoming", () => _vm.RunFileCommandAsync(GitHost.AcceptAllIncoming, row)) : null,
             ]);

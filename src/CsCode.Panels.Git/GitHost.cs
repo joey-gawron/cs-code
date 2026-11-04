@@ -65,7 +65,7 @@ public sealed partial class GitHost : IDisposable
         Config = services.GetService<IConfigurationService>();
         Commands = services.GetService<ICommandService>();
         Bindings = services.GetService<IKeybindingService>();
-        if (Commands is { } commands) RegisterCommands(commands);
+        if (Commands is { } commands) { RegisterCommands(commands); RegisterMergeCommands(commands); }
         if (services.GetService<IContributionRegistry>() is { } contributions) _store.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, Menus));
         _store.Add(git.RepositoriesChanged.Subscribe(_ => OnRepositoriesChanged()));
         if (Navigation is not null) _store.Add(Navigation.ActiveDocumentChanged.Subscribe(_ => UpdateStatusBar()));

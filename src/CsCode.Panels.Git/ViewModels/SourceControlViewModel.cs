@@ -255,6 +255,9 @@ public sealed class SourceControlViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>Whether a command (the editor's merge-conflict commands, the merge editor) is registered: its menu items show only then.</summary>
     public bool HasCommand(string id) => _host.Commands?.Has(id) == true;
 
+    /// <summary>Whether the shell has a merge editor (Resolve in Merge Editor on merge rows).</summary>
+    public bool CanOpenMergeEditor => _host.MergeEditors is not null && HasCommand(GitHost.OpenMergeEditor);
+
     /// <summary>Runs a command on a row's file (its URI as the argument): Accept All Current / Incoming of a merge row.</summary>
     public async Task RunFileCommandAsync(string id, ScmFileRow row)
     {

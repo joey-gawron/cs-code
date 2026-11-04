@@ -3,6 +3,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using CsCode.Core.Contributions;
+using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Core.Scm;
 using CsCode.Core.Text;
@@ -173,6 +174,116 @@ public sealed class MergeConflictTests
         await vm.StageAllAsync();
         Assert.Empty(Unmerged(h));
         Assert.Contains("<<<<<<<", h.Repo.Git("show", ":c.txt"), StringComparison.Ordinal); // staged as it was, markers and all
+        window.Close();
+    }
+
+    private sealed class RecordingMergeEditors : IMergeEditorService
+    {
+        public List<MergeEditorRequest> Requests { get; } = new();
+        public ValueTask OpenMergeEditorAsync(MergeEditorRequest request, CancellationToken ct = default) { lock (Requests) Requests.Add(request); return ValueTask.CompletedTask; }
+    }
+
+    [AvaloniaFact]
+    public async Task Resolve_in_merge_editor_reads_the_three_stages_and_completing_the_merge_model_leaves_the_file_and_index_resolved()
+    {
+        var editors = new RecordingMergeEditors();
+        using var h = await CreateConflictAsync(s => s.AddSingleton<IMergeEditorService>(editors));
+        await h.Commands.ExecuteAsync(GitHost.OpenMergeEditor, h.Repo.FileUri("c.txt"));
+        var request = Assert.Single(editors.Requests);
+        Assert.Equal((Base, Ours, Theirs), (request.Base, request.Current, request.Incoming));
+        Assert.Equal(("HEAD", "topic"), (request.CurrentLabel, request.IncomingLabel)); // the names on git's markers
+        Assert.Equal("Merging: c.txt", request.Title);
+        Assert.Equal(h.Repo.FileUri("c.txt"), request.Result);
+
+        // what the merge editor does: the 3-way model, a side taken per conflict, the result saved, then Complete Merge's completion
+        var merge = ThreeWayMerge.Compute(request.Base, request.Current, request.Incoming);
+        var conflict = Assert.Single(merge.Conflicts);
+        Assert.Single(MergeConflictParser.Parse(h.Repo.Read("c.txt"))); // as many as git found
+        var resolution = new MergeResolution(merge);
+        resolution.Set(conflict.ConflictIndex, MergeSides.Both, incomingFirst: true);
+        h.Repo.Write("c.txt", resolution.ResultText());
+        await request.Complete!(CancellationToken.None);
+
+        Assert.Equal("line 1\ntheirs\nours\nline 3\n", h.Repo.Read("c.txt"));
+        Assert.Empty(Unmerged(h));
+        Assert.Equal("line 1\ntheirs\nours\nline 3\n", h.Repo.Git("show", ":c.txt"));
+        await WaitFor(() => !h.Repository.Status.Entries.Any(e => e.IsConflict), "no conflicts left");
+        h.Repo.Git("commit", "-q", "--no-edit");
+        Assert.Equal("", h.Repo.Git("status", "--porcelain").Trim());
+
+        // a file without conflicts says so
+        await h.Commands.ExecuteAsync(GitHost.OpenMergeEditor, h.Repo.FileUri("other.txt"));
+        Assert.Single(editors.Requests);
+        Assert.Contains(h.Window.Messages, m => m.Message.Contains("no merge conflicts", StringComparison.Ordinal));
+    }
+
+    [AvaloniaFact]
+    public async Task The_merge_model_agrees_with_git_merge_file_on_files_with_clean_and_conflicting_changes()
+    {
+        Assert.SkipUnless(TestRepo.GitAvailable, "git is not installed");
+        using var dir = new TempDirectory("cscode-merge-file-");
+        string Run(string flag, string ours, string b, string theirs)
+        {
+            var paths = new[] { dir.WriteFile("current", ours), dir.WriteFile("base", b), dir.WriteFile("incoming", theirs) };
+            var psi = new System.Diagnostics.ProcessStartInfo("git") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (var a in new[] { "merge-file", "-p", flag, paths[0], paths[1], paths[2] }) psi.ArgumentList.Add(a);
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            var output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            return output;
+        }
+        static string All(ThreeWayMerge merge, MergeSides sides)
+        {
+            var r = new MergeResolution(merge);
+            for (var k = 0; k < merge.Conflicts.Count; k++) r.Set(k, sides);
+            return r.ResultText();
+        }
+
+        // conflicts far apart, clean changes on both sides: every mode agrees, and so does the number of conflicts
+        const string b = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\n";
+        const string ours = "a\nB ours\nc\nd\ne\nf\ng\nH ours\ni\nj\nk\nl\nm\nadded at the end\n";
+        const string theirs = "a\nB theirs\nB2 theirs\nc\nd\nE theirs\nf\ng\nH theirs\ni\nj\nk\nl\nM theirs\n";
+        var merge = ThreeWayMerge.Compute(b, ours, theirs);
+        Assert.Equal(Run("--ours", ours, b, theirs), All(merge, MergeSides.Current));
+        Assert.Equal(Run("--theirs", ours, b, theirs), All(merge, MergeSides.Incoming));
+        Assert.Equal(Run("--union", ours, b, theirs), All(merge, MergeSides.Both));
+        Assert.Equal(MergeConflictParser.Parse(Run("--diff3", ours, b, theirs)).Count, merge.Conflicts.Count);
+
+        // conflicts three lines apart: git's default (merge) style joins them into one block (the lines between go into both sides), its diff3
+        // style and the model keep two; taking one side everywhere still gives git's text (a union does not: docs/SOURCE-CONTROL.md)
+        const string near = "a\nb\nc\nd\ne\nf\ng\n";
+        const string nearOurs = "a\nB ours\nc\nd\ne\nF ours\ng\n";
+        const string nearTheirs = "A theirs\nb\nc\nd\ne\nF theirs\ng\n";
+        var joined = ThreeWayMerge.Compute(near, nearOurs, nearTheirs);
+        Assert.Equal(2, joined.Conflicts.Count);
+        Assert.Equal(2, MergeConflictParser.Parse(Run("--diff3", nearOurs, near, nearTheirs)).Count);
+        Assert.Single(MergeConflictParser.Parse(Run("-q", nearOurs, near, nearTheirs)));
+        Assert.Equal(Run("--ours", nearOurs, near, nearTheirs), All(joined, MergeSides.Current));
+        Assert.Equal(Run("--theirs", nearOurs, near, nearTheirs), All(joined, MergeSides.Incoming));
+        await Task.CompletedTask;
+    }
+
+    [AvaloniaFact]
+    public async Task A_conflicted_file_gets_a_resolve_in_merge_editor_lens_and_its_merge_row_the_menu_item()
+    {
+        var registry = new LanguageFeatureRegistry();
+        using var h = await CreateConflictAsync(s =>
+        {
+            s.AddSingleton<IMergeEditorService>(new RecordingMergeEditors());
+            s.AddSingleton<ILanguageFeatureRegistry>(registry);
+        });
+        var conflicted = new InMemoryTextDocument(h.Repo.FileUri("c.txt"), "plaintext", h.Repo.Read("c.txt"));
+        var lenses = new List<CodeLens>();
+        foreach (var p in registry.GetProviders<ICodeLensProvider>(conflicted))
+            if (await p.ProvideCodeLensesAsync(conflicted, CancellationToken.None) is { } found) lenses.AddRange(found);
+        var lens = Assert.Single(lenses);
+        Assert.Equal(("Resolve in Merge Editor", GitHost.OpenMergeEditor, 1), (lens.Command!.Title, lens.Command.CommandId, lens.Range.Start.Line));
+        var clean = new InMemoryTextDocument(h.Repo.FileUri("other.txt"), "plaintext", h.Repo.Read("other.txt"));
+        foreach (var p in registry.GetProviders<ICodeLensProvider>(clean)) Assert.Null(await p.ProvideCodeLensesAsync(clean, CancellationToken.None));
+
+        var (view, vm, window) = Show(h);
+        await WaitFor(() => vm.Rows.OfType<ScmFileRow>().Any(r => r.Group == ScmGroup.Merge), "merge row");
+        Assert.Contains(view.MenuFor(vm.Rows.OfType<ScmFileRow>().Single(r => r.Group == ScmGroup.Merge)), e => e.Header == "Resolve in _Merge Editor");
         window.Close();
     }
 
