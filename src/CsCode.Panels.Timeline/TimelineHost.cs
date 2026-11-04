@@ -139,7 +139,7 @@ public sealed class TimelineHost : IDisposable
         Reg(Create, "Create Entry", Category, _ => CreateEntryAsync(), enabled);
         Reg(RestoreViaPicker, "Find Entry to Restore", Category, _ => RestoreViaPickerAsync());
         Reg(DeleteAll, "Delete All", Category, _ => DeleteAllAsync());
-        Reg(DeleteAllOfFile, "Delete All Entries of the File", Category, inv => DeleteAllOfFileAsync(inv.Arg<Uri>(0) ?? Live?.Resource));
+        Reg(DeleteAllOfFile, "Delete All Entries of the File", Category, inv => DeleteAllOfFileAsync(UriOf(inv) ?? Live?.Resource));
         Reg(CompareWithFile, "Compare with File", Category, inv => WithItem(inv, CompareWithFileAsync));
         Reg(CompareWithPrevious, "Compare with Previous", Category, inv => WithItem(inv, CompareWithPreviousAsync));
         Reg(Open, "Show Contents", Category, inv => WithItem(inv, ShowContentsAsync));
@@ -155,6 +155,15 @@ public sealed class TimelineHost : IDisposable
         LocalHistoryEntry entry => LocalHistoryTimelineProvider.ToItem(entry),
         _ => null,
     } : Live?.Selected?.Item;
+
+    /// <summary>A file argument: a URI or a URI string (keybindings and macros pass strings), else null.</summary>
+    private static Uri? UriOf(CommandInvocation inv) => inv.Args.Count > 0 ? inv.Args[0] switch
+    {
+        Uri uri => uri,
+        string s when Uri.TryCreate(s, UriKind.Absolute, out var parsed) => parsed,
+        System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.String } j when Uri.TryCreate(j.GetString(), UriKind.Absolute, out var parsed) => parsed,
+        _ => null,
+    } : null;
 
     private Task WithItem(CommandInvocation inv, Func<TimelineItem, Task> run) =>
         ItemOf(inv) is { } item ? run(item) : Status("Select an entry in the Timeline first");

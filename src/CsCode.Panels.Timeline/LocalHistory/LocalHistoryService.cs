@@ -123,7 +123,7 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         _pendingSources[HistoryFormat.Key(resource)] = (source, _time.GetUtcNow() + PendingSourceLifetime);
 
     private string? TakePendingSource(Uri resource) =>
-        _pendingSources.TryRemove(HistoryFormat.Key(resource), out var pending) && pending.Expires >= _time.GetUtcNow() ? pending.Source : null;
+        !_pendingSources.IsEmpty && _pendingSources.TryRemove(HistoryFormat.Key(resource), out var pending) && pending.Expires >= _time.GetUtcNow() ? pending.Source : null;
 
     // ------------------------------------------------------------------------------------------------ public API (queued)
 

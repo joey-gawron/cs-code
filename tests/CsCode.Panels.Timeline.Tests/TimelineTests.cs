@@ -255,7 +255,7 @@ public class TimelineTests
         Assert.Equal("checkpoint", (await rig.History.History.GetEntriesAsync(uri))[^1].SourceLabel);
 
         rig.Window.MessageActionResponses.Enqueue("Delete All");
-        await rig.Commands.ExecuteAsync(TimelineHost.DeleteAllOfFile, uri);
+        await rig.Commands.ExecuteAsync(TimelineHost.DeleteAllOfFile, uri.AbsoluteUri); // a URI string, as a keybinding passes it
         Assert.Empty(await rig.History.History.GetEntriesAsync(uri));
         Assert.Single(await rig.History.History.GetEntriesAsync(rig.History.UriOf("b.txt")));
 
