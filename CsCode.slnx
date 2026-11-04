@@ -15,6 +15,7 @@
     <Project Path="src/CsCode.Panels.Org/CsCode.Panels.Org.csproj" />
     <Project Path="src/CsCode.Panels.Search/CsCode.Panels.Search.csproj" />
     <Project Path="src/CsCode.Panels.Terminal/CsCode.Panels.Terminal.csproj" />
+    <Project Path="src/CsCode.Panels.Timeline/CsCode.Panels.Timeline.csproj" />
     <Project Path="src/CsCode.Platform/CsCode.Platform.csproj" />
     <Project Path="src/CsCode.Profiling/CsCode.Profiling.csproj" />
     <Project Path="src/CsCode.ProjectTemplates/CsCode.ProjectTemplates.csproj" />
@@ -45,6 +46,7 @@
     <Project Path="tests/CsCode.Panels.Search.Tests/CsCode.Panels.Search.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Terminal.Tests/CsCode.Panels.Terminal.Tests.csproj" />
     <Project Path="tests/CsCode.Panels.Testing.Tests/CsCode.Panels.Testing.Tests.csproj" />
+    <Project Path="tests/CsCode.Panels.Timeline.Tests/CsCode.Panels.Timeline.Tests.csproj" />
     <Project Path="tests/CsCode.Platform.Tests/CsCode.Platform.Tests.csproj" />
     <Project Path="tests/CsCode.ProjectTemplates.Tests/CsCode.ProjectTemplates.Tests.csproj" />
     <Project Path="tests/CsCode.Sessions.Tests/CsCode.Sessions.Tests.csproj" />
