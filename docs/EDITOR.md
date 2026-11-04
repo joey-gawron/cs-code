@@ -275,6 +275,12 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
 * `TextView.Redraw(offset, length)` **also drops the line before the range**: it compares the range start with each line's end *including the
   delimiter* inclusively, so a range starting at a line's first character takes the previous line too. The colorizer starts its row redraw one
   character into the first line (`TokenRedrawTests`).
+* **An inline object hangs below the text**: `InlineObjectRun.Baseline` is `TextBlock.GetBaselineOffset(element)` and only NaN means "use the
+  height", but Avalonia's default is 0, so the object's top sat on the baseline and its whole height went below it. Every inlay hint made its row
+  taller, and the gutter glyphs, centred on the row, drifted below their line numbers (most visibly on a wrapped Python line with a type hint).
+  An inlay hint is now a box one text line high with its `BaselineOffset` set to the text's baseline (`A_hint_keeps_its_row_the_height_of_the_text`).
+  Whatever else stretches a row, the breakpoint and test glyphs sit on the text of the line's first row (`VisualYPosition.TextMiddle`), level
+  with the number that `TextTop` places (`The_glyph_sits_level_with_the_line_number_on_a_wrapped_line_whose_first_row_is_stretched`).
 
 TextMateSharp 2.0.3:
 

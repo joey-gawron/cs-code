@@ -60,7 +60,13 @@ public static class ViewTestHelpers
             .SelectMany(t => t.Inlines!.OfType<Run>()).Where(r => r.FontWeight == FontWeight.Bold).Select(r => r.Text ?? "").ToList();
 
     /// <summary>Number of pixels in <paramref name="frame"/> (inside <paramref name="region"/>) within <paramref name="tolerance"/> per channel of <paramref name="target"/>.</summary>
-    public static int CountPixels(Bitmap frame, Color target, int tolerance, PixelRect? region = null)
+    public static int CountPixels(Bitmap frame, Color target, int tolerance, PixelRect? region = null) => ScanPixels(frame, target, tolerance, region).Count;
+
+    /// <summary>The first and last pixel rows of <paramref name="frame"/> (inside <paramref name="region"/>) that have a pixel of <paramref name="target"/>; null when none does.</summary>
+    public static (int Top, int Bottom)? PixelRows(Bitmap frame, Color target, int tolerance, PixelRect? region = null) =>
+        ScanPixels(frame, target, tolerance, region) is { Count: > 0 } s ? (s.Top, s.Bottom) : null;
+
+    private static (int Count, int Top, int Bottom) ScanPixels(Bitmap frame, Color target, int tolerance, PixelRect? region)
     {
         using var ms = new MemoryStream();
         frame.Save(ms, new PngBitmapEncoderOptions());
@@ -68,7 +74,7 @@ public static class ViewTestHelpers
         var wb = WriteableBitmap.Decode(ms);
         using var fb = wb.Lock();
         var area = region ?? new PixelRect(0, 0, fb.Size.Width, fb.Size.Height);
-        var count = 0;
+        var (count, top, bottom) = (0, -1, -1);
         var bgra = fb.Format == PixelFormat.Bgra8888;
         var row = new byte[fb.RowBytes];
         for (var y = Math.Max(0, area.Y); y < Math.Min(fb.Size.Height, area.Bottom); y++)
@@ -78,9 +84,12 @@ public static class ViewTestHelpers
             {
                 var o = x * 4;
                 var (r, g, b) = bgra ? (row[o + 2], row[o + 1], row[o]) : (row[o], row[o + 1], row[o + 2]);
-                if (Math.Abs(r - target.R) <= tolerance && Math.Abs(g - target.G) <= tolerance && Math.Abs(b - target.B) <= tolerance) count++;
+                if (Math.Abs(r - target.R) > tolerance || Math.Abs(g - target.G) > tolerance || Math.Abs(b - target.B) > tolerance) continue;
+                count++;
+                if (top < 0) top = y;
+                bottom = y;
             }
         }
-        return count;
+        return (count, top, bottom);
     }
 }

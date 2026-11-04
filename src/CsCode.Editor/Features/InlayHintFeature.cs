@@ -193,6 +193,12 @@ internal sealed class InlayHintFeature : ISettingsAware, IThemeAware, IDisposabl
                 // only a hint with something to show or follow takes the pointer; a plain one lets clicks reach the text
                 IsHitTestVisible = hint.CanResolve || hint.Tooltip is not null || hint.LabelParts?.Any(x => x.Tooltip is not null || x.Location is not null || x.Command is not null) == true,
             };
+            // AvaloniaEdit takes an inline object's baseline from TextBlock.BaselineOffset and treats only NaN as unset, but Avalonia's default
+            // is 0: the hint hung below the text and made its row taller (the glyphs and the text then drifted apart). A box one text line high
+            // on the text's baseline keeps every row the height of the text, as in VS Code.
+            var textView = owner._v.TextView;
+            border.Height = Math.Max(1, textView.DefaultLineHeight - 2);
+            TextBlock.SetBaselineOffset(border, textView.DefaultBaseline - 1);
             if (border.IsHitTestVisible) owner.Hook(border, placed);
             return new InlineObjectElement(0, border);
         }
