@@ -197,6 +197,13 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
     /// <summary>A diff editor over the request's two sides (<see cref="Diff.DiffEditorControl"/>). UI thread.</summary>
     public Control? CreateDiffView(Core.Scm.DiffEditorRequest request) => new Diff.DiffEditorControl(this, request);
 
+    /// <summary>A 3-way merge editor (<see cref="Diff.MergeEditorControl"/>) whose Result pane edits <paramref name="result"/>. UI thread.</summary>
+    public Control? CreateMergeView(Core.Scm.MergeEditorRequest request, IEditorDocument result) =>
+        result is EditorDocument doc ? new Diff.MergeEditorControl(this, request, doc) : null;
+
+    /// <summary>The live merge editors by id (their input panes' lenses name them).</summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<int, Diff.MergeEditorControl> MergeEditors { get; } = new();
+
     /// <summary>
     /// A read-only document over fixed text, NOT registered with the document manager (no language server sees it, no tab owns it): one side of
     /// a diff. Coloured like a file of <paramref name="languageId"/>. Release it with <see cref="ReleaseSnapshotDocument"/>. UI thread.

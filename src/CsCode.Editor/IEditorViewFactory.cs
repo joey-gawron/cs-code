@@ -43,6 +43,14 @@ public interface IEditorViewFactory
 
     /// <summary>A diff editor view for <paramref name="request"/> (disposable; the shell disposes it with its tab), or null when not supported. UI thread.</summary>
     Control? CreateDiffView(Core.Scm.DiffEditorRequest request) => null;
+
+    // ---- additive members (merge editor; the default keeps other implementations compiling) ----
+
+    /// <summary>
+    /// A 3-way merge editor for <paramref name="request"/> whose Result pane edits <paramref name="result"/> (the file's open document, from
+    /// <see cref="OpenDocumentAsync"/>; the caller keeps it open while the view lives), or null when not supported. Disposable. UI thread.
+    /// </summary>
+    Control? CreateMergeView(Core.Scm.MergeEditorRequest request, IEditorDocument result) => null;
 }
 
 /// <summary>Imperative handle on one editor view (menu/command/navigation code drives the editor through this).</summary>

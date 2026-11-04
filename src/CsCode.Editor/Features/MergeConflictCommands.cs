@@ -101,6 +101,17 @@ internal static class MergeConflictCommands
         Cmd(Next, "Next Conflict", _ => NavigateAsync(factory, forward: true));
         Cmd(Previous, "Previous Conflict", _ => NavigateAsync(factory, forward: false));
         Cmd(Compare, "Compare Current Conflict", inv => CompareAsync(factory, inv));
+        // the merge editor's input-pane checkboxes (lenses); no title: not a palette command
+        if (!commands.Has(Diff.MergeEditorControl.ToggleCommand))
+            store.Add(commands.Register(Diff.MergeEditorControl.ToggleCommand, async inv =>
+            {
+                await services.Ui.InvokeAsync(() =>
+                {
+                    if (inv.Arg<int?>(0) is { } id && factory.MergeEditors.TryGetValue(id, out var editor) && inv.Arg<int?>(1) is { } conflict)
+                        editor.Toggle(conflict, ArgString(inv, 2) == "current" ? MergeSides.Current : MergeSides.Incoming);
+                }).ConfigureAwait(false);
+                return null;
+            }, new CommandMetadata(Diff.MergeEditorControl.ToggleCommand)));
         store.Add(services.Contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, Menus));
         return store;
     }
