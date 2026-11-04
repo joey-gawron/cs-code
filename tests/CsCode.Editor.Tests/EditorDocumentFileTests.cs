@@ -416,6 +416,44 @@ public class EditorDocumentFileTests
         doc.Dispose();
     }
 
+    // The Explorer's rename and move (docs/SHELL.md): the open document follows its file without being closed or saved.
+    [AvaloniaFact]
+    public async Task A_moved_file_keeps_its_document_with_unsaved_changes_and_undo_and_is_watched_at_its_new_path()
+    {
+        using var host = TestHost.Create();
+        host.Dir.WriteFile("a.txt", "on disk\n");
+        var doc = await Open(host, host.FileUri("a.txt"));
+        doc.ApplyEdits([TextEdit.Insert(TextPosition.Zero, "unsaved ")]);
+        var old = doc.Uri;
+        var events = new List<string>();
+        host.Documents.Closed.Subscribe(e => events.Add("closed " + e.Document.Uri));
+        host.Documents.Opened.Subscribe(e => events.Add("opened " + e.Document.Uri));
+        Directory.CreateDirectory(host.Dir.Combine("sub"));
+        File.Move(host.Dir.Combine("a.txt"), host.Dir.Combine("sub", "b.cs"));
+        var target = new Uri(host.Dir.Combine("sub", "b.cs"));
+
+        await doc.RelocateAsync(target);
+
+        Assert.Equal(target, doc.Uri);
+        Assert.Equal("csharp", doc.LanguageId); // detected again from the new name, as after Save As
+        Assert.True(doc.IsDirty);
+        Assert.True(doc.CanUndo);
+        Assert.Equal("unsaved on disk\n", doc.GetText());
+        Assert.Equal("on disk\n", File.ReadAllText(target.LocalPath)); // nothing written
+        Assert.Null(host.Documents.Get(old));
+        Assert.Same(doc, host.Documents.Get(target));
+        Assert.Equal(["closed " + old, "opened " + target], events);
+        await Task.Delay(300);
+        Assert.Empty(host.Window.Messages); // the move itself is no change on disk
+
+        // the new path is watched: a change there meets the unsaved changes
+        host.Window.MessageActionResponses.Enqueue("Keep my changes");
+        File.WriteAllText(target.LocalPath, "changed elsewhere\n");
+        await TestHost.WaitUntil(() => host.Window.Messages.Count == 1, "the changed-on-disk question for the new path");
+        Assert.Contains("'b.cs' has changed on disk", host.Window.Messages[0].Message);
+        doc.Dispose();
+    }
+
     [AvaloniaFact]
     public async Task Saving_an_untitled_buffer_with_a_cancelled_dialog_leaves_it_untouched()
     {

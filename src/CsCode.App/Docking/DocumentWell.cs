@@ -357,6 +357,49 @@ public sealed class DocumentWell : IDisposable
         return false;
     }
 
+    // ---------------------------------------------------------------- files that moved (Explorer rename, move, drag and drop)
+
+    /// <summary>
+    /// <paramref name="from"/> (a file, or a folder and everything in it) was moved to <paramref name="to"/>: every editor of a file in it follows
+    /// it to the new path in place, with its unsaved changes, undo history, view and tab position (VS Code re-points its editors the same way).
+    /// A document that cannot follow (<see cref="IRelocatableDocument"/>) is closed and reopened at the new path with its unsaved text. The
+    /// closed-editors history follows too. UI thread; call after the move.
+    /// </summary>
+    public async ValueTask RelocateAsync(Uri from, Uri to)
+    {
+        var prefix = from.AbsoluteUri.TrimEnd('/');
+        Uri? Moved(Uri uri)
+        {
+            var text = uri.AbsoluteUri;
+            if (text.Equals(prefix, StringComparison.Ordinal)) return to;
+            return text.StartsWith(prefix + "/", StringComparison.Ordinal) ? new Uri(to.AbsoluteUri.TrimEnd('/') + text[prefix.Length..]) : null;
+        }
+        foreach (var group in EditorTabs.Where(t => Moved(t.Uri) is not null).GroupBy(t => t.Doc).ToArray())
+        {
+            var target = Moved(group.First().Uri)!;
+            if (group.Key is IRelocatableDocument relocatable && !group.Key.IsUntitled)
+            {
+                await relocatable.RelocateAsync(target);
+                foreach (var tab in group) tab.Relocate(target);
+                continue;
+            }
+            // The document cannot change its path: closed here and opened there, its unsaved text put back as one edit.
+            var first = group.First();
+            var (dirty, text, preview, pinned) = (first.IsDirty, first.IsDirty ? first.Doc.GetText() : null, first.IsPreview, first.IsPinned);
+            foreach (var tab in group) await CloseAsync(tab, prompt: false);
+            var reopened = await OpenAsync(target, preview, preserveFocus: true);
+            if (pinned) Pin(reopened);
+            if (dirty && text is not null)
+            {
+                var doc = reopened.Doc;
+                doc.ApplyEdits([new TextEdit(new TextRange(doc.PositionAt(0), doc.PositionAt(doc.Length)), text)]);
+            }
+        }
+        for (var node = _closed.First; node is not null; node = node.Next)
+            if (Moved(node.Value) is { } moved) node.Value = moved;
+        _tabsChanged.Fire(null);
+    }
+
     // ---------------------------------------------------------------- pin / split
 
     public void Pin(EditorTab tab)
