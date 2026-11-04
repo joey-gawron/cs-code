@@ -126,6 +126,25 @@ public class DocumentOptionCommandsTests
         Assert.Equal("a\nbb\nccc\n", File.ReadAllText(host.Dir.Combine("a.txt")));
     }
 
+    [AvaloniaFact]
+    public async Task Change_End_of_Line_Sequence_keeps_a_folded_region_folded()
+    {
+        using var host = ViewHost.Create();
+        var (doc, view, _) = await host.OpenAsync("head\r\n  a\r\n  b\r\n  c\r\ntail\r\n", "region.txt");
+        var folding = view.Feature<Features.FoldingFeature>()!;
+        await ViewHost.WaitFor(() => folding.RangeCount >= 1, "the indentation fold");
+        view.Controller.SetSelection(TextRange.At(0, 0));
+        folding.Fold();
+        ViewHost.Pump();
+        Assert.Equal([0], folding.FoldedStartLines);
+
+        host.Window.QuickPickResponses.Enqueue(0); // LF
+        await host.Commands.ExecuteAsync("workbench.action.editor.changeEOL");
+        ViewHost.Pump();
+        Assert.Equal("head\n  a\n  b\n  c\ntail\n", doc.GetText());
+        Assert.Equal([0], folding.FoldedStartLines); // each line ending moved on its own: the fold kept its lines
+    }
+
     // ---- indentation ----
 
     [AvaloniaFact]

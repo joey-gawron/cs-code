@@ -6,6 +6,7 @@ using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Editor.Documents;
+using CsCode.TestDoubles;
 using Xunit;
 
 namespace CsCode.App.Tests;
@@ -104,6 +105,37 @@ public class AutoSaveRealAppTests
             .First(n => n.Message.Contains("has changed on disk", StringComparison.Ordinal) && !n.IsCompleted);
         question.InvokeCommand.Execute(question.Actions.Single(a => a.Title == "Keep my changes"));
         Assert.True(await RealAppHost.WaitFor(() => Read(path) == "mine disk v1\n", 10_000), Read(path)); // saved once answered
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_closed_document_is_released_by_auto_save_and_the_status_bar()
+    {
+        await using var host = RealAppHost.Create(h =>
+        {
+            AddSettings(h, """
+                "vim.enable": false,
+                "files.autoSave": "afterDelay"
+                """);
+            h.Files.WriteFile("a.txt", "one\n");
+            h.Files.WriteFile("b.txt", "two\n");
+        });
+        await host.StartAsync();
+        var well = host.Shell.Well;
+        var keep = await well.OpenAsync(new Uri(host.Files.Combine("b.txt")));
+        await LeakAssert.NotRetainedAsync(async () =>
+        {
+            var tab = await well.OpenAsync(new Uri(host.Files.Combine("a.txt")));
+            Assert.True(await RealAppHost.WaitFor(() => tab.Controller is not null), "the editor was not presented");
+            var doc = tab.Doc;
+            doc.ApplyEdits([new TextEdit(TextRange.At(0, 0), "x")]); // a delayed save now waits for it
+            await DevScene.SettleAsync(5); // the status bar follows its options
+            Assert.True(await well.CloseAsync(tab)); // closing saves it (a short-enough delay counts as being saved)
+            await DevScene.SettleAsync(10);
+            return [doc];
+        });
+        Assert.Equal("xone\n", Read(host.Files.Combine("a.txt")));
+        Assert.Equal(1, host.Shell.AutoSave!.TrackedCount);
+        Assert.Same(keep, well.ActiveEditor);
     }
 
     [AvaloniaFact(Timeout = 120_000)]
