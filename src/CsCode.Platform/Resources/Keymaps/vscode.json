@@ -68,6 +68,7 @@
   { "key": "shift+f3",           "command": "editor.action.previousMatchFindAction", "when": "editorFocus", "mac": "cmd+shift+g" },
   { "key": "ctrl+shift+f",       "command": "workbench.action.findInFiles",       "mac": "cmd+shift+f" },
   { "key": "ctrl+shift+h",       "command": "workbench.action.replaceInFiles",    "mac": "cmd+shift+h" },
+  { "key": "ctrl+shift+r",       "command": "search.action.rerunEditorSearch",    "when": "inSearchEditor", "mac": "cmd+shift+r" }, // Search Again in a search editor
 
   // ---- command surfaces ----
   { "key": "ctrl+shift+p",       "command": "workbench.action.showCommands",      "mac": "cmd+shift+p" },

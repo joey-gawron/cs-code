@@ -32,10 +32,17 @@ public sealed class AvaloniaShellHost(Func<TopLevel?> topLevel) : IShellHost
     public async ValueTask<Uri?> PickSaveAsync(SaveDialogOptions options, CancellationToken ct)
     {
         if (topLevel() is not { } tl) return null;
+        // A proposed file (the search editor's query.code-search): its folder to start in, its name to suggest.
+        var proposed = options.DefaultUri is { IsFile: true } d ? d.LocalPath : null;
+        var folder = proposed is not null && Path.GetDirectoryName(proposed) is { Length: > 0 } dir
+            ? await tl.StorageProvider.TryGetFolderFromPathAsync(new Uri(dir)).ConfigureAwait(true)
+            : null;
         var file = await tl.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = options.Title,
             FileTypeChoices = options.Filters?.Select(f => new FilePickerFileType(f.Name) { Patterns = f.Extensions.Select(e => "*." + e.TrimStart('.')).ToArray() }).ToArray(),
+            SuggestedFileName = proposed is null ? null : Path.GetFileName(proposed),
+            SuggestedStartLocation = folder,
         }).ConfigureAwait(true);
         return file?.Path;
     }

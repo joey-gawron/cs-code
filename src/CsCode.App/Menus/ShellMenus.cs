@@ -107,6 +107,7 @@ public static class ShellMenus
             M("_Find...", KnownCommands.Find, "hasOpenEditors", IconKey.Search),
             M("R_eplace...", KnownCommands.Replace, "hasOpenEditors && !editorReadonly"),
             M("Find in F_iles...", "workbench.action.findInFiles", "workspaceFolderCount"),
+            M("New Search E_ditor", "search.action.openNewEditor", "workspaceFolderCount"),
             S,
             M("_Format Document", KnownCommands.FormatDocument, "hasOpenEditors && !editorReadonly"),
             M("Format Document _With...", "editor.action.formatDocument.multiple", "hasOpenEditors && !editorReadonly"),

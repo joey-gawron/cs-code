@@ -199,11 +199,14 @@ public class LanguageMatrixTests
     private static string Highlighting(BuiltinLanguageSupportInfo l) =>
         (TreeSitterLanguageSupport.GrammarFor(l.Id), l.GrammarScope) switch
         {
-            (null, { } scope) => $"TextMate `{scope}` (VS Code `{l.GrammarSource}`)",
-            ({ } grammar, { } scope) => $"TextMate `{scope}` (VS Code `{l.GrammarSource}`); tree-sitter `{grammar}` as an option",
+            (null, { } scope) => $"TextMate `{scope}` ({GrammarOrigin(l)})",
+            ({ } grammar, { } scope) => $"TextMate `{scope}` ({GrammarOrigin(l)}); tree-sitter `{grammar}` as an option",
             ({ } grammar, null) => $"tree-sitter `{grammar}` (default)",
             _ => "none (plain text)",
         };
+
+    /// <summary>A VS Code extension's grammar, or one of CsCode's own (Languages/Grammars: the search editor's search-result).</summary>
+    private static string GrammarOrigin(BuiltinLanguageSupportInfo l) => l.HasOwnGrammar ? "CsCode's own" : $"VS Code `{l.GrammarSource}`";
 
     private static string Configuration(BuiltinLanguageSupportInfo l, LanguageConfiguration c)
     {
