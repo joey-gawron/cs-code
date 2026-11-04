@@ -909,9 +909,18 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
             if (FindNode(new Uri(key + "/")) is { IsDirectory: true, Children: not null } node) await ReloadDirectoryAsync(node).ConfigureAwait(true);
     }
 
-    /// <summary>The items not inside another one of them (a folder dragged with something in it carries it).</summary>
-    private static List<Uri> Outermost(IReadOnlyList<Uri> uris) =>
-        [.. uris.Where(u => !uris.Any(o => !ReferenceEquals(o, u) && Key(u).StartsWith(Key(o) + "/", StringComparison.Ordinal))).DistinctBy(Key)];
+    /// <summary>The items not inside another one of them (a folder dragged with something in it carries it), in their order. Linear in the items
+    /// times the depth: a drag can carry thousands of selected rows.</summary>
+    private static List<Uri> Outermost(IReadOnlyList<Uri> uris)
+    {
+        var keys = new HashSet<string>(uris.Select(Key), StringComparer.Ordinal);
+        return [.. uris.DistinctBy(Key).Where(u =>
+        {
+            for (var parent = ParentKey(Key(u)); parent.Length > 0; parent = ParentKey(parent))
+                if (keys.Contains(parent)) return false;
+            return true;
+        })];
+    }
 
     private static string Key(Uri uri) => uri.AbsoluteUri.TrimEnd('/');
     private static string ParentKey(string key) => key[..Math.Max(0, key.LastIndexOf('/'))];

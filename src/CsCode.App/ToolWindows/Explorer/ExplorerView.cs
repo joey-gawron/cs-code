@@ -362,9 +362,9 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
     /// multi-root workspace, which CsCode does not).</summary>
     internal IReadOnlyList<ExplorerNode> DraggedNodes(ExplorerNode pressed, bool includeRoots = false)
     {
-        var selected = _list.SelectedItems?.OfType<ExplorerNode>().ToList() ?? [];
-        var nodes = selected.Contains(pressed) ? selected : [pressed];
-        return [.. nodes.Where(n => includeRoots || !n.IsRoot).OrderBy(n => _vm.Rows.IndexOf(n))];
+        var selected = new HashSet<ExplorerNode>(_list.SelectedItems?.OfType<ExplorerNode>() ?? []);
+        if (!selected.Contains(pressed)) return pressed.IsRoot && !includeRoots ? [] : [pressed];
+        return [.. _vm.Rows.Where(n => selected.Contains(n) && (includeRoots || !n.IsRoot))]; // one pass over the rows: row order
     }
 
     private async Task DragAsync(PointerPressedEventArgs press, ExplorerNode pressed)
