@@ -23,7 +23,7 @@ dedicated I/O thread, `FswFileWatcher`, `InMemoryConfiguration`, `EditorConfigRe
 `DiagnosticService`), so the module runs and is testable on its own. Nothing ever references another module's concrete types.
 
 Contract additions (additive only — no existing member was renamed or removed): `IEditorViewFactory.DisposeView`; `IEditorViewController.GetViewState`,
-`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; `IEditorViewFactory.CreateUntitled(languageId, initialText)` (§7g); the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
+`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; `IEditorViewFactory.CreateUntitled(languageId, initialText)` (§7h); the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
 `ReplayText`, `ReplayKey`, `OpenUndoGroup`, `StartNewUndoStep` (below); `SetSelections` (multi-cursor, §7b; `Selections` lists the primary
 first, then the other carets in document order). The later additions are default interface members, so other implementations keep
 compiling. **No change was made to CsCode.Core.**
@@ -174,6 +174,8 @@ Numbers refer to the brief's MUST list.
 
 19. **Bookmarks** (Visual Studio's; toggle, next / previous across files and in the document, clear, list, a glyph in the indicator margin and
     a mark on the overview ruler, kept through edits, renames and restarts): see §7g.
+20. **Colour decorators and the colour picker** (a swatch in front of every colour a colour provider or the built-in CSS colour finder reports;
+    the picker writes the chosen presentation live, one undo step, Escape reverts): see §7i.
 
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
@@ -329,7 +331,9 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.codeLens` (true), `editor.codeLensFontSize` (0 = 90 % of the editor's), `editor.codeLensFontFamily` ("" = the editor's) and
 `editor.semanticHighlighting.enabled` (`configuredByTheme`) (§7e; registered by the factory too),
 and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`, `.renderCharacters` (true, VS Code's default), `.maxColumn`, `.showSlider`, `.scale`,
-`editor.overviewRulerLanes`, `editor.overviewRulerBorder`, `editor.hideCursorInOverviewRuler`, `debug.showBreakpointsInOverviewRuler` (§7f).
+`editor.overviewRulerLanes`, `editor.overviewRulerBorder`, `editor.hideCursorInOverviewRuler`, `debug.showBreakpointsInOverviewRuler` (§7f),
+and the colour decorators' `editor.colorDecorators` (true), `editor.colorDecoratorsLimit` (500), `editor.colorDecoratorsActivatedOn`
+(`clickAndHover`) and `editor.defaultColorDecorators` (`auto`) (§7i; registered by the factory too).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
@@ -341,6 +345,7 @@ and `editor.action.linkedEditing` (Start Linked Editing, §7d),
 and `editor.action.toggleMinimap` (View: Toggle Minimap, §7f),
 and the bookmarks' `bookmarks.toggle`, `toggleEnabled`, `toggleAllEnabled`, `jumpToNext`, `jumpToPrevious`, `jumpToNextInDocument`,
 `jumpToPreviousInDocument`, `clear`, `clearFromAllFiles`, `list`, `showWindow` (§7g).
+and `editor.action.showOrFocusStandaloneColorPicker` (Show or Focus Standalone Color Picker, §7i).
 
 ### 7a. Clipboard and the right-click menu
 
@@ -493,7 +498,7 @@ References (`NavigationFeature.FindDefinitionsAsync`, `FindReferenceLocationsAsy
   multi-cursor's, so they take Esc first when they have something to close), from the list and from the embedded editor (whose own popups and
   carets keep their Esc and Enter first); with Vim on, Esc in Normal mode calls `EditorModalSurface.ClosePeek`, which closes a peek of the
   view or of the peek the view is embedded in, while the Esc that leaves Insert, Visual or an operator only changes the mode (VS Code's Vim),
-  so `i`, typing, Esc and more edits work in the embedded editor; `CloseInfoPopups` (every Vim Esc) closes hover and parameter hints only. Enter in the list or in a read-only embedded editor, a double-click in either, or a click on the
+  so `i`, typing, Esc and more edits work in the embedded editor; `CloseInfoPopups` (every Vim Esc) closes hover, parameter hints and the colour picker (§7i), not the peek. Enter in the list or in a read-only embedded editor, a double-click in either, or a click on the
   title opens the location as Go to Definition does (this view when it is the same file, else a tab through the shell) and closes the peek. The
   ✕ button closes it. While a peek is open the context key `referenceSearchVisible` (VS Code's) is true.
 * **Lifetime**: closing the peek disposes the embedded editor (it leaves the factory's views) and releases its snapshot document; disposing the
@@ -620,7 +625,7 @@ ruler (the ruler over the vertical scrollbar), or minimap | gutter | text | rule
 | centre | find matches while the find panel is open (`editorOverviewRuler.findMatchForeground`), occurrence highlights (`wordHighlightForeground`, writes `wordHighlightStrongForeground`) |
 | right | errors, warnings, information (`editorOverviewRuler.errorForeground`, `warningForeground`, `infoForeground`; hints are not marked, as in VS Code) |
 | all | the caret lines, every caret of multi-cursor (`editorCursor.foreground`; `editor.hideCursorInOverviewRuler` hides them) |
-| all | merge conflict sides, under the caret lines (`editorOverviewRuler.currentContentForeground`, `incomingContentForeground`, `commonContentForeground`; §7g) |
+| all | merge conflict sides, under the caret lines (`editorOverviewRuler.currentContentForeground`, `incomingContentForeground`, `commonContentForeground`; §7j) |
 
 A mark is placed where its lines are in the scrollable height over the scrollbar's track (between its arrow buttons), from AvaloniaEdit's height
 tree, so folded lines take no room, wrapped lines their rows, and marks line up with the thumb. Laying out does one height-tree lookup per
@@ -724,7 +729,7 @@ click that stays the breakpoint's, a wrapped line, the ruler, Next / Previous ac
 large-file mode, the right-click submenu's items, a closed view not retained); Platform's `BookmarkKeysTests` (both keymaps, Linux and Mac);
 the shell's `BookmarksWindowTests` and `RealApp/BookmarkRealAppTests` (the real keymap and menus, a restart, an Explorer rename and delete).
 
-### 7g. What the search editor uses
+### 7h. What the search editor uses
 
 The search editor (CsCode.Panels.Search, docs/PANELS-SEARCH.md "Search editor") is an ordinary editor tab over a `search-result` document; the editor
 gives it four things. **The `search-result` language** (`.code-search`), built in with a TextMate grammar of CsCode's own
@@ -738,9 +743,66 @@ no selection. **Untitled buffers with text**: `IEditorViewFactory.CreateUntitled
 starts unmodified). Tests: `SearchResultEditorTests` (the grammar's scopes, highlights following edits and asked again, no requests for other
 documents, the shifting rules, a double-click taken and one left to the word selection).
 
+### 7i. Colour decorators and the colour picker
+
+`Features/ColorDecoratorFeature.cs` (one per view, not in large-file mode), with `ColorPickerSession`, `ColorPickerWidget`, `DefaultColorProvider`
+and the pure `ColorFormats`: VS Code's colour decorators and colour picker.
+
+* **Asking.** Every `IDocumentColorProvider` of the document (a language server's `textDocument/documentColor`: vscode-css-language-server for
+  CSS, SCSS and Less, ...) is asked 500 ms after the text stops changing, at once when a provider comes or goes or a setting changes, off the
+  UI thread with a 5 s deadline, latest wins (a newer request cancels the older one). Each provider's answer is placed when it arrives and
+  replaces that provider's colours only, so a slow or hung provider neither delays the others nor makes its earlier swatches flicker away; an
+  answer for older text is dropped (the next request is already scheduled). A keystroke costs one timer change.
+* **Drawing.** A swatch in front of each colour, with VS Code's metrics: a square of 0.8 em (the editor's font size, Ctrl+wheel zoom included)
+  with a 0.1 em border (`#eee` in dark themes, black in light ones), 0.2 em from the text on each side, its bottom on the text's baseline (the
+  line keeps its height); a translucent colour shows over a white and grey checkerboard. It is an inline object of no document length anchored
+  to the colour's start: typing before it moves it, typing right in front of the colour leaves it in front of the colour, a colour deleted whole
+  loses it, and the swatches follow every edit until the next answer replaces them. The caret has one stop on each side and never two for one
+  offset: coming from the left it stops before the swatch (where a click or typing puts it) and the next key goes past the colour's first
+  character; coming from the right it stops after the swatch; Left from a swatch at a line start goes to the line above. At most
+  `editor.colorDecoratorsLimit` swatches are kept (default 500, the first in the document); values above 10,000 are read as 10,000 (VS Code
+  allows 1,000,000; the cap bounds the anchors a view holds). A colour two providers report at one place is drawn once.
+* **The built-in provider** (`editor.defaultColorDecorators`: `auto`, the default, `always`, `never`; VS Code's default document colour
+  provider): finds `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb()` / `rgba()` and `hsl()` / `hsla()` (commas or spaces, CSS Color 4's
+  `/ alpha`, percentages, `deg`) in any file, never inside a word (`a#fff`, `&#123;`, `#abc-def`, `#region` are not colours). `auto` uses it
+  only for documents no registered provider serves (CSS without its server, a TypeScript theme file, Markdown...), `always` beside the
+  servers (a colour a server reports too is drawn once, the server's). It scans the document's immutable snapshot on the editor worker in
+  slices of about 6 ms, at most 10,000 colours; its presentations are `rgb()` / `rgba()`, `hsl()` / `hsla()` and hex (an upper-case hex stays
+  upper case).
+* **Opening the picker.** A click on a swatch (it never moves the caret), the pointer resting on a swatch or on the colour's text for 300 ms
+  (`editor.colorDecoratorsActivatedOn`: `clickAndHover`, the default, `hover` or `click`; the editor's hover stays away while a picker the
+  pointer opened is up: over a colour the picker is the hover), or **Show or Focus Standalone Color Picker**
+  (`editor.action.showOrFocusStandaloneColorPicker`, Command Palette; no default key, as in VS Code). The command focuses an open picker, else
+  opens it for the colour at the caret, else over the selection or the caret (VS Code's standalone picker: the picked colour's presentation is
+  written there; a selected colour starts the picker at that colour). The picker sits under the colour's line (above when there is no room)
+  on the view's widget layer, follows scrolling, and shows a header with the new colour and the current presentation's text (a click cycles
+  through the presentations: rgb, hsl, hex for CSS) beside the original colour (a click goes back to it), and under it a saturation/value
+  square, an alpha strip and a hue strip, each dragged with the pointer. Colours: `editorWidget.background` / `editorWidget.border`.
+* **Editing.** Each pick asks the colour's provider for the new colour's presentations (`ProvideColorPresentationsAsync`, LSP
+  `textDocument/colorPresentation`) off the UI thread with a 3 s deadline. Latest wins: while one request is out, further picks only change
+  what is asked next (a drag asks for the colour under the pointer when the previous answer lands), and an answer for older text is never
+  applied. The chosen presentation (when the picker opens, the one written like the colour: the same label, else the same function or a hex,
+  VS Code's guess) is applied at once: its text edit (else its label over the colour's range) and its additional edits; the picker follows the
+  colour's new range and the swatch shows the new colour. All the edits of one opening are ONE undo step (the first opens a step, the others
+  continue it through `EditorDocument.BeginUndoGroup(continueLast: true)`; a save in between starts a new step, which is counted). **Escape**
+  (in the picker, or in the text while it is open) undoes them and closes it; **Enter**, a click in the text or on another swatch keep them;
+  an edit from anywhere else (another view of the document, a language server, an undo) closes it and keeps what it applied. A picker the
+  hover opened does not take the keyboard and closes 300 ms after the pointer left it and its swatch, unless it was used; typing in the text
+  closes it.
+* `editor.colorDecorators: false` (per language too) removes the swatches and closes the picker; the four settings are read live, per
+  language, and registered by the factory so the Settings panel lists them.
+
+Tests: `ColorFormatsTests` (detection, presentations, VS Code's guess, HSV and HSL), `ColorDecoratorViewTests` (swatches at the colours'
+offsets following edits, their metrics and pixels in a screenshot written to `.scratch/screenshots/editor-color-picker.png`, the caret's stops,
+an answer for older text dropped, the limit live, the setting live and per language, hung and throwing providers beside a good one, large-file
+mode, the built-in provider with `auto` / `always` / `never` and its sliced, bounded scan, the picker by click, hover and command, picks through
+the square and strips applied as one undo step, Escape and Enter, presentations cycled and the original colour, additional edits, latest-wins
+requests, an edit from elsewhere, a provider without presentations, and `LeakAssert` over the view, the feature, the picker and a swatch),
+`FeatureProviderTests.Color_presentations…` and `ThreadingTests` (LSP), `ProtocolCodecTests` and `BridgeThreadingTests` (remote).
+
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
-### 7g. Merge conflicts and the merge editor
+### 7j. Merge conflicts and the merge editor
 
 Conflict blocks (`<<<<<<<` / `|||||||` / `=======` / `>>>>>>>`) in any document are found once per version on the editor worker
 (`MergeConflictTracker`: a chunked pass over the rope with no text materialised when there is no `<<<<<<<`), tinted with VS Code's `merge.*`
@@ -765,7 +827,7 @@ Not done, or done only in part — none of this is faked:
 * **Code lens** (§7e): no keyboard access to a lens (VS Code's "Show CodeLens Commands For Current Line" is not implemented); a lens on an
   empty line is not shown (§5); split views of one document ask (and resolve) separately; lenses
   and semantic tokens are not `IMemoryTrimmable` (both are bounded and die with the view).
-* **Merge conflicts** (§7g): the merge-conflict lenses come from a provider asked for every document (it answers from the shared per-version
+* **Merge conflicts** (§7j): the merge-conflict lenses come from a provider asked for every document (it answers from the shared per-version
   scan, nothing when there are no markers); the merge editor's gaps are listed in docs/SOURCE-CONTROL.md, "What is left".
 * **Semantic highlighting** (§7e): only the first full provider and the first range provider are used (VS Code also picks one); custom token
   types and modifiers declared by a server's VS Code extension (`semanticTokenTypes` / `semanticTokenScopes` contributions) are not known beyond
@@ -786,6 +848,16 @@ Not done, or done only in part — none of this is faked:
   Window has them) and no inline rename there (an input box); a label shows in the Bookmark Window and the list, not in the editor (the
   margin's tooltip stays the breakpoint's); the minimap does not mark them; with the VS Code keymap, Ctrl+Alt+K / L / J are AltGr+K / L / J
   on some keyboard layouts (as with the extension in VS Code).
+* **Colour decorators** (§7i): the picker has no keyboard control of the colour (VS Code's arrow keys on the square and strips) and no
+  insert / close buttons; over a colour the picker takes the hover's place instead of sharing one popup with it as VS Code does (a diagnostic
+  on the colour shows once the pointer rests beside it); the standalone picker writes the colour as it is picked (VS Code writes it on Enter);
+  `editor.colorDecoratorsActivatedOn` also governs resting on the colour's text (VS Code's hover there follows `editor.hover.enabled`,
+  which is not read); with Vim on, the keys Vim takes do not close a picker the pointer opened (Vim's Escape does, through
+  `EditorModalSurface.CloseInfoPopups`; it closes when the pointer leaves); a provider without presentations (a
+  server that does not implement `colorPresentation`) gets a picker that shows the colour and edits nothing; split views of one document ask
+  separately; colours are not `IMemoryTrimmable` (bounded, and they die with the view). As with a focused editor (§1), a picker that has the
+  keyboard when the shell destroys its view keeps the view reachable until focus moves; the shell moves it first. The remote server's
+  dispatch of `colorPresentations` is covered by the codec and threading tests only, not end to end.
 * `editor.cursorStyle`, `editor.cursorBlinking` and `editor.smoothScrolling` are not applied (AvaloniaEdit offers no equivalent). Font ligatures are on by default (`editor.fontLigatures`; VS Code defaults to off, but the bundled Fira Code is chosen for them, and they keep one glyph per character): `false` turns them off. AvaloniaEdit 12 has no font-feature setting, so `EditorFontFeatures`, a line transformer, then gives each element's run properties `-liga, -calt` (reaching the private `VisualLineElement.TextRunProperties` setter by reflection; `CodeFontTests` fails if an upgrade removes it). `true` (the default) leaves the font's own ligatures (Fira Code's keep one glyph per character, so carets stay on columns) and a string is VS Code's CSS feature list (`"'ss01', 'zero'"`). The code panels follow the same setting through `ui:CodeFontFeatures`. `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.
@@ -799,6 +871,7 @@ Not done, or done only in part — none of this is faked:
 
 * `EditorDocumentFuzzTests` (oracle comparison), `EditorDocumentFileTests` (encodings, EOL, atomic save, watcher, conflicts, large files), `LanguageServiceTests`, `ThemeTests` (real Dark+/Monokai/TypeScript/Python/C# JSON), `TextMateTests` (golden scopes), `SnippetEngineTests`, `EditingOperationsTests`, `EditorConfigTests`.
 * Language rendering: `CodeLensViewTests`, `SemanticTokenTests` (§7e).
+* Colour decorators and the picker: `ColorDecoratorViewTests`, `ColorFormatsTests` (§7i).
 * View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`, `MultiCursorViewTests` (and the pure `MultiCaretModelTests`), `ScrollDecorationsViewTests` (and the pure `ScrollDecorationsModelTests`).
 * Hostile/perf/leak: `HostileProviderTests`, `BlockingDetectorTests`, `KeystrokeAllocationTests`, `PerfMemoryTests` (opens 1/10/50 MB files, tokeniser memory, 500× open/close, 500× recreate, popups open). Leak failures print the chain of strong references (`RetentionPath`).
 * Typing cost (perf-typing): `TextAreaWatermarkBindingTests` (bytes per keystroke in 0.5–6 MB documents, the watermark unbound), `FoldRedrawFilterTests` (visual lines built per keystroke inside an expanded fold; folding, a folded region edited while collapsed, a multi-change update), `CachedLineNumberMarginTests` (no number laid out while typing, the stock margin's exact pixels), `TokenRedrawTests` (the line above the caret is not rebuilt; a line built before the next layout is redrawn), `FoldingMarginLeakTests.Typing_keeps_the_markers…`.

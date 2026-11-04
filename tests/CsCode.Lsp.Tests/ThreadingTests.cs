@@ -86,6 +86,7 @@ public class ThreadingTests
             ("inlayHints", () => r.GetProviders<IInlayHintsProvider>(doc)[0].ProvideInlayHintsAsync(doc, range, Ct)),
             ("codeLens", () => r.GetProviders<ICodeLensProvider>(doc)[0].ProvideCodeLensesAsync(doc, Ct)),
             ("documentColor", () => r.GetProviders<IDocumentColorProvider>(doc)[0].ProvideDocumentColorsAsync(doc, Ct)),
+            ("colorPresentation", () => r.GetProviders<IDocumentColorProvider>(doc)[0].ProvideColorPresentationsAsync(doc, new ColorInformation(range, 1, 0, 0, 1), Ct)),
             ("linkedEditing", () => r.GetProviders<ILinkedEditingRangeProvider>(doc)[0].ProvideLinkedEditingRangesAsync(doc, pos, Ct)),
             ("callHierarchy", () => r.GetProviders<ICallHierarchyProvider>(doc)[0].PrepareCallHierarchyAsync(doc, pos, Ct)),
             ("callHierarchy.incoming", () => r.GetProviders<ICallHierarchyProvider>(doc)[0].IncomingCallsAsync(hier, Ct)),

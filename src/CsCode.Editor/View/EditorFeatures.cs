@@ -29,6 +29,7 @@ internal static class EditorFeatures
             new Features.HighlightFeature(view),
             new Features.BreadcrumbFeature(view),
             new Features.InlayHintFeature(view),
+            new Features.ColorDecoratorFeature(view), // colour swatches in front of colours and the colour picker (after the inlay hints' generator)
             new Features.CodeLensFeature(view), // its zone generator goes first in the generator list (a zone opens its line)
             new Features.SemanticTokensFeature(view), // its colorizer goes right after the grammar's
             new Features.InactiveRegionsFeature(view), // after every colorizer: it fades the colours they chose

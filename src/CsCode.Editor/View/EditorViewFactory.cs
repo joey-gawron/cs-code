@@ -54,6 +54,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         // multi-cursor's settings (editor.multiCursorLimit, editor.multiCursorPaste), so the Settings panel lists them
         _disposables.Add(services.Config.RegisterProperties(MultiCursorController.Properties));
         _disposables.Add(services.Config.RegisterProperties(Features.LinkedEditingFeature.Properties)); // editor.linkedEditing
+        _disposables.Add(services.Config.RegisterProperties(Features.ColorDecoratorFeature.Properties)); // editor.colorDecorators*, editor.defaultColorDecorators
         _disposables.Add(services.Config.RegisterProperties(LanguageRenderSettings.Properties)); // editor.codeLens*, editor.semanticHighlighting.enabled
         _disposables.Add(services.Config.RegisterProperties(Features.FormatterChoice.Properties)); // editor.defaultFormatter
         _disposables.Add(services.Config.RegisterProperties(Features.CodeActionsOnSaveParticipant.Properties)); // editor.codeActionsOnSave(Timeout)

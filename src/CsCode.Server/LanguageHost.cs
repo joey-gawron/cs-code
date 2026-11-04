@@ -192,6 +192,7 @@ internal sealed class LanguageHost : IDisposable
             (ICodeLensProvider l, LangOps.CodeLens) when doc is not null => Resolvable(await l.ProvideCodeLensesAsync(doc, ct).ConfigureAwait(false), x => x),
             (ICodeLensProvider l, LangOps.ResolveCodeLens) when a.CodeLens is { } lens => await l.ResolveCodeLensAsync(Original(a.Origin, lens), ct).ConfigureAwait(false),
             (IDocumentColorProvider c, LangOps.DocumentColors) when doc is not null => await c.ProvideDocumentColorsAsync(doc, ct).ConfigureAwait(false),
+            (IDocumentColorProvider c, LangOps.ColorPresentations) when doc is not null && a.Color is { } color => await c.ProvideColorPresentationsAsync(doc, color, ct).ConfigureAwait(false),
             (ILinkedEditingRangeProvider l, LangOps.LinkedEditing) when doc is not null && a.Position is { } pos => await l.ProvideLinkedEditingRangesAsync(doc, pos, ct).ConfigureAwait(false),
             (ICallHierarchyProvider h, LangOps.PrepareCallHierarchy) when doc is not null && a.Position is { } pos => await h.PrepareCallHierarchyAsync(doc, pos, ct).ConfigureAwait(false),
             (ICallHierarchyProvider h, LangOps.IncomingCalls) when a.HierarchyItem is { } item => await h.IncomingCallsAsync(item, ct).ConfigureAwait(false),

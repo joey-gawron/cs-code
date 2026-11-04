@@ -156,7 +156,7 @@ Providers are registered **per feature interface**, only while the server advert
 | semanticTokens full + **delta** + **range** | implemented | `ISemanticTokensProvider` (+ additive `ISemanticTokensRangeProvider`); previous result cached (bounded, `IMemoryTrimmable`); capped at `maxSemanticTokens`; coloured over the grammar by the editor (docs/EDITOR.md §7e; range requests for the viewport of documents over 5000 lines) |
 | inlayHint | implemented | label parts (tooltip, location, command) mapped; `inlayHint/resolve` through Core's `IInlayHintsProvider.ResolveInlayHintAsync` (lang-2): the client offers `resolveSupport` for `tooltip`, `label.tooltip`, `label.location`, `label.command` (not `textEdits`: hints are not inserted), and a server with `resolveProvider` (rust-analyzer) sends them on resolve, which echoes the server's own hint (kept weakly beside the Core one, `data` included) |
 | codeLens (+resolve) | implemented | drawn above their lines by the editor, resolved near the viewport, commands through `workspace/executeCommand` or the editor's mapping of VS Code's reference commands (docs/EDITOR.md §7e) |
-| documentColor | implemented / partial | `colorPresentation` not implemented |
+| documentColor + colorPresentation | implemented | colours capped at 5000; `textDocument/colorPresentation` through Core's `IDocumentColorProvider.ProvideColorPresentationsAsync` (Interactive, latest wins), drawn and picked by the editor (docs/EDITOR.md §7i) |
 | linkedEditingRange, callHierarchy, typeHierarchy | implemented | additive Core interfaces; UI: linked editing in the editor (docs/EDITOR.md §7d), the Hierarchy window (docs/NAVIGATION.md) |
 | `workspace/executeCommand` bridge | implemented | `executeCommandProvider.commands` registered into `ICommandService` (optional dependency) |
 | diagnostics: `publishDiagnostics` (version-checked), pull (`textDocument/diagnostic`, `workspace/diagnostic`) | implemented | cleared on close (push-only servers) and on stop/crash |
@@ -289,6 +289,9 @@ and `TaskTerminals` (`ITaskTerminalHost`).
   `VirtualDocumentService`, registered by `AddCsCodeCore` as the `cscode-virtual` scheme's `IFileSystemProvider`).
 * `Core/Languages/LanguageModels.cs`: `MarkupContent.IsTrusted` (lang-2): `command:` links of trusted content run their command (CsCode's own
   content only, never a server's text: rust-analyzer's hover actions).
+* `Core/Languages/LanguageModels.cs` + `LanguageProviders.cs` (colour picker): `ColorPresentation` (label, optional text edit, additional edits) and
+  `IDocumentColorProvider.ProvideColorPresentationsAsync` (default: none); the client sends `textDocument/colorPresentation`, the remote bridge
+  forwards it (`LangOps.ColorPresentations`, `LangArgs.Color`).
 * `Core/Languages/LanguageServers.cs`: `LanguageServerState.Unresponsive` appended to the enum. **A `switch` expression over the enum without a
   discard arm in other modules will need a case.**
 * New file `Core/Languages/AdditionalLanguageProviders.cs`: `ISemanticTokensRangeProvider`, `ILinkedEditingRangeProvider` (+`LinkedEditingRanges`),
@@ -322,6 +325,6 @@ that inherited `DOTNET_ROOT_<ARCH>`. The fake-server tests use an
 independent in-proc peer (`Harness/FakeLspServer`: own framing over `System.IO.Pipelines`, document mirror applying real LSP change semantics).
 
 ## 12. Known limits
-`workspaceSymbol/resolve` is not exposed; non-UTF-16 encodings don't convert ranges in closed files; `colorPresentation`,
+`workspaceSymbol/resolve` is not exposed; non-UTF-16 encodings don't convert ranges in closed files;
 notebooks and proposed features are absent; `Dispose()` (sync) blocks up to 15 s — prefer `DisposeAsync` off the UI thread; the manager starts
 observing documents when `ILanguageServerManager` is first resolved (resolve it at startup).

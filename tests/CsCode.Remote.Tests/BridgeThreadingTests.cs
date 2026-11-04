@@ -109,6 +109,7 @@ public class BridgeThreadingTests
                 ("inlayHints", () => pIInlayHintsProvider.ProvideInlayHintsAsync(doc, r, CancellationToken.None)),
                 ("codeLens", () => pICodeLensProvider.ProvideCodeLensesAsync(doc, CancellationToken.None)),
                 ("colors", () => pIDocumentColorProvider.ProvideDocumentColorsAsync(doc, CancellationToken.None)),
+                ("colorPresentations", () => pIDocumentColorProvider.ProvideColorPresentationsAsync(doc, new ColorInformation(r, 1, 0, 0, 1), CancellationToken.None)),
                 ("linkedEditing", () => pILinkedEditingRangeProvider.ProvideLinkedEditingRangesAsync(doc, p, CancellationToken.None)),
             };
             var failures = new List<string>();

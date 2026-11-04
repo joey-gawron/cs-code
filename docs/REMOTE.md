@@ -189,7 +189,7 @@ announced (`lang/registered`: feature, selector, owner, trigger characters / leg
 in the local `ILanguageFeatureRegistry` — the server's selector restricted to the `ssh` scheme — forwarding every call as `lang/invoke`. All 21 feature
 interfaces are bridged (completion + resolve, hover, definition kinds, references, highlights, rename + prepare, formatting (document/range/on-type),
 signature help, code actions + resolve, document/workspace symbols, folding, selection ranges, semantic tokens (full/range), inlay hints, code lens +
-resolve, colours, linked editing, call/type hierarchy). Resolve calls name the original item (`OriginToken`): language clients resolve by the
+resolve, colours + presentations (`colorPresentations`, the colour picker; an older server answers null), linked editing, call/type hierarchy). Resolve calls name the original item (`OriginToken`): language clients resolve by the
 instance they produced, so the server keeps the last 8 resolvable lists. Remote failures and timeouts (5 s interactive, 35 s background) answer "no
 result" like a slow local server; cancellation propagates. Bridges, mirrored diagnostics (owner `remote:<host>`) and forwarded commands disappear with
 the connection.

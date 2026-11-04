@@ -213,6 +213,7 @@ internal sealed class HoverFeature : IThemeAware, IDisposable
 
             var prepared = await PrepareAsync(contents, folded, cts.Token).ConfigureAwait(true);
             if (cts.IsCancellationRequested || _disposed || _word != word || doc.Version != version) return;
+            if (_v.Feature<ColorDecoratorFeature>()?.Session is { IsHoverOpened: true }) return; // resting on a colour: its picker is the hover
             Present(offset, diagnostics, prepared, evaluated);
         }
         catch (OperationCanceledException)
