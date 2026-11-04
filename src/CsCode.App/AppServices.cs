@@ -22,6 +22,7 @@ using CsCode.Panels.NewProject;
 using CsCode.Panels.Search;
 using CsCode.Panels.Testing;
 using CsCode.Panels.Terminal;
+using CsCode.Panels.Timeline;
 using CsCode.Platform;
 using CsCode.Profiling;
 using CsCode.Remote;
@@ -70,6 +71,7 @@ public static class AppServices
         services.AddCsCodeNewProject(); // File > New > Project...: the New Project page and its generators (docs/NEW-PROJECT.md)
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         services.AddCodeActionsOnSave(); // after AddCsCodeRemote (see there): editor.codeActionsOnSave, the first will-save participant
+        services.AddCsCodeTimeline(); // after AddCsCodeRemote (see there): local history (save hook, renames follow) and the Timeline window (docs/LOCAL-HISTORY.md)
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });

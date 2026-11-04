@@ -118,6 +118,7 @@ public static class ShellMenus
             M("Go to _File...", KnownCommands.QuickOpen),
             S,
             new MenuNode("_Tool Windows", Dynamic: "toolWindows", Children: []),
+            M("Time_line", "timeline.focus", icon: IconKey.History), // local history and git commits of the active file (docs/LOCAL-HISTORY.md)
             Sub("Tool_bars", Views.ToolbarView.Groups.Select(g =>
                 new MenuNode("_" + g.Title, ToggleToolbar, CheckWhen: "config." + g.SettingKey, Argument: g.Id)).ToArray()),
             S,
