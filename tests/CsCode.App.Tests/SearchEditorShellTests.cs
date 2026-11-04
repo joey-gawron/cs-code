@@ -1,5 +1,7 @@
 using Avalonia.Headless.XUnit;
+using CsCode.App;
 using CsCode.App.Docking;
+using CsCode.App.Input;
 using CsCode.App.Tests.Hosting;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Languages;
@@ -92,6 +94,7 @@ public sealed class SearchEditorShellTests
     public async Task In_the_real_composition_a_new_search_editor_searches_and_its_results_lead_to_the_file()
     {
         using var env = new RealAppHome();
+        env.WriteUserSettings("{ \"search.searchOnType\": false }"); // so only Enter can search again below
         env.Workspace.WriteFile("src/a.cs", "using System;\nclass Alpha { }\n");
         env.Workspace.WriteFile("src/b.cs", "class Beta { }\n");
         await using var run = new RealAppRun(env);
@@ -117,5 +120,18 @@ public sealed class SearchEditorShellTests
         var target = Assert.Single((await provider.ProvideDefinitionAsync(tab.Doc, new TextPosition(line, 11), DefinitionKind.Definition, TestContext.Current.CancellationToken))!);
         Assert.EndsWith(Path.Combine("src", "a.cs"), target.TargetUri.LocalPath); // the workspace folder may be the temp dir's real path
         Assert.Equal(new TextPosition(1, 6), target.TargetSelectionRange.Start);
+
+        // Enter with the caret on the edited query line searches again in place: the module's built-in binding through the shell's key pipeline
+        tab.Doc.ApplyEdits([new TextEdit(new TextRange(TextPosition.Zero, new TextPosition(0, tab.Doc.GetLineText(0).Length)), "# Query: Beta")]);
+        Assert.True(await DevHost.WaitFor(() => tab.Controller is not null, 10_000), "the search editor's view");
+        tab.Controller!.SetSelection(TextRange.At(0, 5));
+        var keys = sp.GetRequiredService<IContextKeyService>();
+        keys.Set("editorTextFocus", true);
+        Assert.Equal(true, keys.Get("searchEditorHeaderFocus"));
+        Assert.Equal(KeyDispatch.Handled, sp.GetRequiredService<ShellController>().Keyboard.Handle(KeyStrokeParser.ParseStroke("enter")));
+        Assert.True(await DevHost.WaitFor(() => tab.Doc.GetText().Contains("src/b.cs:", StringComparison.Ordinal) && !tab.Doc.GetText().Contains("src/a.cs:", StringComparison.Ordinal), 30_000),
+            tab.Doc.GetText());
+        Assert.Equal("# Query: Beta", tab.Doc.GetLineText(0)); // Enter ran the search; it typed no line break
+        Assert.True(await DevHost.WaitFor(() => tab.Title == "Search: Beta", 5_000), tab.Title);
     }
 }

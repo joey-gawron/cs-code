@@ -178,7 +178,8 @@ src/a.cs:
   text of about 32 KB: the UI thread inserts queued chunks for at most about 4 ms per dispatcher callback (background priority) and rewrites the summary
   line (`Searching… 12 results - 3 files`, then the final count). The whole run is one undo step (`IEditorDocument.OpenUndoGroup`). Lines added to the
   header while it streams move its frame; an edit of the results stops it (the user's text wins). An empty query clears the results. With
-  `search.searchOnType` an edit of the header searches again once typing pauses for `search.searchOnTypeDebouncePeriod`.
+  `search.searchOnType` an edit of the header searches again once typing pauses for `search.searchOnTypeDebouncePeriod`. With Vim emulation on, Enter
+  is Vim's in every mode (docs/VIM.md), so there Search Again is the palette, Ctrl/⌘+Shift+R in the VS Code keymap, or search as you type.
 * **Navigation.** The language features of `search-result` (`SearchResultFeatures`, registered in `ILanguageFeatureRegistry`): a definition provider
   (F12, Ctrl/⌘+click) on a match or context line opens the file at that line and the column under the pointer (in an elided line the skipped characters
   count; on the line number, the line's start), on a path line the file; each path line is a document link; a double-click on a result or path line opens
