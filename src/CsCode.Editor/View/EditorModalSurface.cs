@@ -357,11 +357,12 @@ public sealed class EditorModalSurface : IDisposable
     /// <summary>Ends the snippet tab-stop session, keeping the text.</summary>
     public void EndSnippet() => _v.Feature<SnippetFeature>()?.End();
 
-    /// <summary>Closes the hover and parameter-hint popups (a peek stays: see <see cref="ClosePeek"/>).</summary>
+    /// <summary>Closes the hover and parameter-hint popups and the colour picker (undoing its edits, as Escape does); a peek stays: see <see cref="ClosePeek"/>.</summary>
     public void CloseInfoPopups()
     {
         _v.Feature<HoverFeature>()?.Hide();
         _v.Feature<SignatureFeature>()?.Close();
+        _v.Feature<ColorDecoratorFeature>()?.Session?.Revert();
     }
 
     /// <summary>

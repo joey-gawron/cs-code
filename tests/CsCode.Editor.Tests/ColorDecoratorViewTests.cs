@@ -442,6 +442,16 @@ public class ColorDecoratorViewTests
         ViewHost.Pump();
         Assert.Null(feature.Session);
         Assert.Contains("background: rgb(0, 255, 0);", doc.GetText());
+        var kept = doc.GetText();
+
+        // a modal layer's Escape (Vim's: keys in the text go to Vim first) closes it the same way
+        session = await ClickSwatchAsync(feature, view, window, index: 1);
+        session.SetColor(new HsvaColor(0, 1, 1, 1));
+        await Settle(session);
+        Assert.Contains("background: rgb(255, 0, 0);", doc.GetText());
+        view.Modal.CloseInfoPopups();
+        Assert.Null(feature.Session);
+        Assert.Equal(kept, doc.GetText());
     }
 
     [AvaloniaFact]
@@ -592,6 +602,50 @@ public class ColorDecoratorViewTests
         Assert.Null(feature.Session);
         await ClickSwatchAsync(feature, view, window);
         Assert.False(feature.Session!.IsHoverOpened);
+    }
+
+    [AvaloniaFact]
+    public async Task Resting_on_a_colour_s_text_opens_its_picker_in_place_of_the_hover_and_the_pointer_can_move_into_it()
+    {
+        var hovers = new FakeHoverProvider((_, _, _) => Task.FromResult<Hover?>(new Hover([MarkupContent.Plain("a CSS colour")])));
+        var (host, doc, view, window, feature) = await OpenAsync(provider: new FakeColors(),
+            configure: h => h.Factory.Services.Features.Register<IHoverProvider>(DocumentSelector.All, hovers));
+        using var _h = host;
+        var onText = PointOf(window, view, Sheet.IndexOf("255, 0.5", StringComparison.Ordinal)); // inside rgba(0, 0, 255, 0.5)
+        window.MouseMove(onText);
+        await ViewHost.WaitFor(() => feature.Session is not null, "the picker after the hover delay");
+        var session = feature.Session!;
+        Assert.True(session.IsHoverOpened);
+        Assert.Equal("rgba(0, 0, 255, 0.5)", doc.GetText().Substring(session.Range.Start, session.Range.End - session.Range.Start));
+        await Task.Delay(500); // the editor's hover had its delay too: it stays away while the picker is up
+        ViewHost.Pump();
+        Assert.False(view.Feature<HoverFeature>()!.IsOpen);
+
+        // the pointer goes over to the picker: it stays, and a press there keeps it for good, with the keyboard
+        window.MouseMove(Center(session.Widget, window));
+        await Task.Delay(500);
+        ViewHost.Pump();
+        Assert.Same(session, feature.Session);
+        window.MouseDown(At(session.Widget.AlphaStrip, window, 0.5, 0.001), MouseButton.Left);
+        window.MouseUp(At(session.Widget.AlphaStrip, window, 0.5, 0.001), MouseButton.Left);
+        await Settle(session);
+        Assert.False(session.IsHoverOpened);
+        Assert.True(session.Widget.IsKeyboardFocusWithin);
+        Assert.Contains("background: rgb(0, 0, 255);", doc.GetText());
+        window.MouseMove(PointOf(window, view, Sheet.IndexOf(".b", StringComparison.Ordinal)));
+        await Task.Delay(500);
+        ViewHost.Pump();
+        Assert.Same(session, feature.Session); // a used picker does not close with the pointer
+        Key(window, Avalonia.Input.Key.Escape);
+        Assert.Equal(Sheet, doc.GetText());
+
+        // typing closes a picker the hover opened
+        window.MouseMove(onText);
+        await ViewHost.WaitFor(() => feature.Session is { IsHoverOpened: true }, "the picker again");
+        Type(view, "x");
+        Key(window, Avalonia.Input.Key.Right);
+        ViewHost.Pump();
+        Assert.Null(feature.Session);
     }
 
     [AvaloniaFact]

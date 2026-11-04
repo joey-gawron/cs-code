@@ -98,6 +98,8 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
         generators.Insert(at, _generator);
         view.TextArea.AddHandler(InputElement.PointerPressedEvent, OnTextAreaPressed, RoutingStrategies.Tunnel);
         view.TextArea.AddHandler(InputElement.KeyDownEvent, OnTextAreaKeyDown, RoutingStrategies.Tunnel);
+        view.Editor.PointerMoved += OnPointerMoved;
+        view.Editor.PointerExited += OnPointerExited;
         _d.Add(view.Document.Changed.Subscribe(_ => Schedule(Debounce)));
         _d.Add(view.Services.Features.ProvidersChanged.Subscribe(t =>
         {
@@ -107,6 +109,8 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
         {
             view.TextArea.RemoveHandler(InputElement.PointerPressedEvent, OnTextAreaPressed);
             view.TextArea.RemoveHandler(InputElement.KeyDownEvent, OnTextAreaKeyDown);
+            view.Editor.PointerMoved -= OnPointerMoved;
+            view.Editor.PointerExited -= OnPointerExited;
             view.TextView.ElementGenerators.Remove(_generator);
         }));
         Schedule(TimeSpan.Zero);
@@ -203,44 +207,70 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
         _request?.Cancel();
         _request?.Dispose();
         var cts = _request = new CancellationTokenSource();
-        var version = doc.Version;
+        var snapshot = doc.Snapshot(); // the text the answers are for
+        var version = snapshot.Version;
+        var limit = _options.Limit;
         var pending = providers.Select(p => (Provider: p, Call: FeatureSupport.CallAsync(_v, c => p.ProvideDocumentColorsAsync(doc, c), cts.Token, Deadline))).ToList();
-        // Each answer is placed as it arrives, replacing that provider's colours only: a slow or hung provider neither delays the others nor
-        // makes the colours it showed before flicker away (they keep following the text until it answers or its deadline passes).
-        while (pending.Count > 0)
+        bool Stale() => _disposed || cts.IsCancellationRequested || doc.Version != version || !_options.Enabled; // a newer request is scheduled
+        try
         {
-            var done = await Task.WhenAny(pending.Select(p => p.Call)).ConfigureAwait(true);
-            var index = pending.FindIndex(p => ReferenceEquals(p.Call, done));
-            var provider = pending[index].Provider;
-            pending.RemoveAt(index);
-            if (_disposed || cts.IsCancellationRequested || doc.Version != version || !_options.Enabled) return; // older text: a newer request is scheduled
-            _sets[provider] = AnchorAll(await done.ConfigureAwait(true) ?? [], provider);
-            Merge();
+            // Each answer is placed as it arrives, replacing that provider's colours only: a slow or hung provider neither delays the others
+            // nor makes the colours it showed before flicker away (they keep following the text until it answers or its deadline passes).
+            while (pending.Count > 0)
+            {
+                var done = await Task.WhenAny(pending.Select(p => p.Call)).ConfigureAwait(true);
+                var index = pending.FindIndex(p => ReferenceEquals(p.Call, done));
+                var provider = pending[index].Provider;
+                pending.RemoveAt(index);
+                if (Stale()) return;
+                var colors = await done.ConfigureAwait(true) ?? [];
+                // ranges to offsets against the snapshot, sorted and cut to the limit, off the UI thread
+                var spans = colors.Count == 0 ? [] : await Task.Run(() => Spans(snapshot, colors, limit), cts.Token).ConfigureAwait(true);
+                if (Stale()) return;
+                var placed = new Placement[spans.Length];
+                for (var i = 0; i < spans.Length; i++)
+                {
+                    if (i > 0 && i % AnchorSlice == 0)
+                    {
+                        await Task.Yield(); // a big answer is anchored a slice per dispatcher turn; the text must not move meanwhile
+                        if (Stale()) return;
+                    }
+                    var (start, end, color) = spans[i];
+                    placed[i] = new Placement(Anchor(start, AnchorMovementType.AfterInsertion), Anchor(end, AnchorMovementType.BeforeInsertion), color, provider);
+                }
+                _sets[provider] = placed;
+                Merge();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // superseded by a newer request
         }
     }
 
-    /// <summary>Anchors one provider's answer (UI thread): its first colours in document order, at most the limit.</summary>
-    private Placement[] AnchorAll(IReadOnlyList<ColorInformation> colors, IDocumentColorProvider provider)
+    /// <summary>Colours anchored per dispatcher turn: a thousand anchors take well under the UI thread's 4 ms budget.</summary>
+    private const int AnchorSlice = 1000;
+
+    /// <summary>One provider's colours as offsets in <paramref name="snapshot"/>: valid, non-empty, one per start, in order, at most <paramref name="limit"/>.</summary>
+    private static (int Start, int End, ColorInformation Color)[] Spans(Documents.DocumentSnapshot snapshot, IReadOnlyList<ColorInformation> colors, int limit)
     {
-        var doc = _v.Document;
-        var length = doc.Buffer.TextLength;
         var spans = new List<(int Start, int End, ColorInformation Color)>(colors.Count);
         foreach (var c in colors)
         {
-            if (doc.Validate(c.Range.Start) != c.Range.Start || doc.Validate(c.Range.End) != c.Range.End) continue; // not in this text
-            var s = doc.OffsetAt(c.Range.Start);
-            var e = doc.OffsetAt(c.Range.End);
-            if (e > s && e <= length) spans.Add((s, e, c));
+            if (snapshot.Validate(c.Range.Start) != c.Range.Start || snapshot.Validate(c.Range.End) != c.Range.End) continue; // not in this text
+            var s = snapshot.OffsetAt(c.Range.Start);
+            var e = snapshot.OffsetAt(c.Range.End);
+            if (e > s) spans.Add((s, e, c));
         }
         spans.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : a.End.CompareTo(b.End));
-        var placed = new List<Placement>(Math.Min(spans.Count, _options.Limit));
-        foreach (var (s, e, color) in spans)
+        var result = new List<(int Start, int End, ColorInformation Color)>(Math.Min(spans.Count, limit));
+        foreach (var span in spans)
         {
-            if (placed.Count > 0 && placed[^1].Start.Offset == s) continue; // one swatch per place
-            placed.Add(new Placement(Anchor(s, AnchorMovementType.AfterInsertion), Anchor(e, AnchorMovementType.BeforeInsertion), color, provider));
-            if (placed.Count >= _options.Limit) break;
+            if (result.Count > 0 && result[^1].Start == span.Start) continue; // one swatch per place
+            result.Add(span);
+            if (result.Count >= limit) break;
         }
-        return [.. placed];
+        return [.. result];
     }
 
     /// <summary>
@@ -249,24 +279,26 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
     /// </summary>
     private void Merge()
     {
-        var all = _sets.Values.SelectMany(x => x).Where(p => p.IsLive)
-            .OrderBy(p => p.Start.Offset).ThenBy(p => ReferenceEquals(p.Provider, _default) ? 1 : 0).ToList();
+        // offsets read once (an anchor's offset is a walk up its tree); one provider's set is in order already
+        var live = _sets.Values.SelectMany(x => x).Where(p => p.IsLive)
+            .Select(p => (Placement: p, Start: p.Start.Offset, End: p.End.Offset, Default: ReferenceEquals(p.Provider, _default)));
+        var all = _sets.Count == 1 ? live.ToList() : [.. live.OrderBy(x => x.Start).ThenBy(x => x.Default ? 1 : 0)];
         // the other providers' ranges by start, with the furthest end reached so far: [s, e) overlaps one of them iff a range starting
         // before e reaches past s
         var starts = new List<int>();
         var reach = new List<int>();
-        foreach (var p in all)
+        foreach (var x in all)
         {
-            if (ReferenceEquals(p.Provider, _default)) continue;
-            starts.Add(p.Start.Offset);
-            reach.Add(Math.Max(reach.Count > 0 ? reach[^1] : int.MinValue, p.End.Offset));
+            if (x.Default) continue;
+            starts.Add(x.Start);
+            reach.Add(Math.Max(reach.Count > 0 ? reach[^1] : int.MinValue, x.End));
         }
         var merged = new List<Placement>(Math.Min(all.Count, _options.Limit));
-        foreach (var p in all)
+        var lastStart = -1;
+        foreach (var (p, s, e, isDefault) in all)
         {
-            var (s, e) = (p.Start.Offset, p.End.Offset);
-            if (merged.Count > 0 && merged[^1].Start.Offset == s) continue; // one swatch per place
-            if (ReferenceEquals(p.Provider, _default) && starts.Count > 0)
+            if (s == lastStart) continue; // one swatch per place
+            if (isDefault && starts.Count > 0)
             {
                 var before = starts.BinarySearch(e);
                 before = before < 0 ? ~before : before; // ranges starting at or after e cannot overlap
@@ -274,6 +306,7 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
                 if (before > 0 && reach[before - 1] > s) continue;
             }
             merged.Add(p);
+            lastStart = s;
             if (merged.Count >= _options.Limit) break;
         }
         _placed = [.. merged];
@@ -365,6 +398,7 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
         _sessionPlacement = placement;
         var session = _session = new ColorPickerSession(this, _v, provider, color, start, end, hover);
         if (!hover) session.Focus();
+        else _v.Feature<HoverFeature>()?.Hide(); // the picker is the hover over a colour
     }
 
     /// <summary>The session applied a colour: the swatch shows it at once (the providers' next answer replaces it anyway).</summary>
@@ -417,7 +451,8 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
         Open(placement, hover: false);
     }
 
-    private void OnSwatchEntered(Placement placement)
+    /// <summary>The pointer came to rest on a colour (its swatch or its text).</summary>
+    private void OnColorEntered(Placement placement)
     {
         if (Session is { } open && ReferenceEquals(_sessionPlacement, placement))
         {
@@ -436,10 +471,42 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
         }, TaskScheduler.Default);
     }
 
-    private void OnSwatchExited(Placement placement)
+    private void OnColorExited(Placement placement)
     {
         _hoverOpen?.Cancel();
         if (Session is { } open && ReferenceEquals(_sessionPlacement, placement)) open.PointerLeft();
+    }
+
+    private Placement? _textHover;
+
+    /// <summary>
+    /// Resting the pointer on a colour's text opens its picker as resting on its swatch does (VS Code shows the picker in the hover of a
+    /// colour); the editor's hover stays away while it is up. Costs a position lookup per move only while there are colours.
+    /// </summary>
+    private void OnPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_placed.Length == 0 || !_options.HoverOpens)
+        {
+            OnPointerExited(sender, e);
+            return;
+        }
+        Placement? over = null;
+        if (_v.Editor.GetPositionFromPoint(e.GetPosition(_v.Editor)) is { IsAtEndOfLine: false } p && p.Line >= 1 && p.Line <= _v.Document.LineCount)
+        {
+            var offset = _v.Document.OffsetAt(new TextPosition(p.Line - 1, p.Column - 1));
+            if (At(offset) is { } at && offset < at.End.Offset) over = at;
+        }
+        if (ReferenceEquals(over, _textHover)) return;
+        if (_textHover is { } left) OnColorExited(left);
+        _textHover = over;
+        if (over is not null) OnColorEntered(over);
+    }
+
+    private void OnPointerExited(object? sender, PointerEventArgs e)
+    {
+        if (_textHover is not { } left) return;
+        _textHover = null;
+        OnColorExited(left);
     }
 
     /// <summary>Opens the picker for the swatch at <paramref name="offset"/> as a click does (tests).</summary>
@@ -496,9 +563,7 @@ internal sealed class ColorDecoratorFeature : ISettingsAware, IThemeAware, IDisp
                 var swatch = new ColorSwatch(
                     Color.FromArgb(ColorFormats.Byte(c.Alpha), ColorFormats.Byte(c.Red), ColorFormats.Byte(c.Green), ColorFormats.Byte(c.Blue)),
                     owner.SwatchBorder, owner._v.Editor.FontSize);
-                swatch.PointerPressed += (_, e) => owner.OnSwatchPressed(p, e);
-                swatch.PointerEntered += (_, _) => owner.OnSwatchEntered(p);
-                swatch.PointerExited += (_, _) => owner.OnSwatchExited(p);
+                swatch.PointerPressed += (_, e) => owner.OnSwatchPressed(p, e); // resting on it is tracked with the colour's text (OnPointerMoved)
                 return new SwatchElement(swatch, CurrentContext.VisualLine);
             }
             return null;
