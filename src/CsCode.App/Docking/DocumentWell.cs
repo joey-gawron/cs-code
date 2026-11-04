@@ -218,8 +218,14 @@ public sealed class DocumentWell : IDisposable
         if (!Tabs.Contains(tab)) return true;
         if (tab is EditorTab et)
         {
-            if (prompt && et.IsDirty && !await ConfirmCloseAsync(et)) return false;
+            // a merge editor still showing the document asks when it closes
+            if (prompt && et.IsDirty && !_attached.Values.Any(a => ReferenceEquals(a.Doc, et.Doc)) && !await ConfirmCloseAsync(et)) return false;
             et.CloseConfirmed = true;
+        }
+        else if (_attached.TryGetValue(tab, out var attached) && prompt && IsUnsavedHere(attached) && !ShownByOtherTab(tab, attached.Doc))
+        {
+            if (!await ConfirmCloseAsync(attached)) return false;
+            attached.Decided = true; // saved, or "Don't Save": the document goes with the tab
         }
         RemoveTab(tab, remember: true);
         return true;
@@ -234,7 +240,7 @@ public sealed class DocumentWell : IDisposable
 
     public async ValueTask<bool> CloseSavedAsync()
     {
-        foreach (var t in Tabs.Where(t => t is not EditorTab { IsDirty: true } && !IsPinned(t)).ToArray())
+        foreach (var t in Tabs.Where(t => t is not EditorTab { IsDirty: true } && !IsPinned(t) && !(_attached.TryGetValue(t, out var a) && IsUnsavedHere(a))).ToArray())
             if (!await CloseAsync(t, prompt: false)) return false;
         return true;
     }
@@ -552,10 +558,17 @@ public sealed class DocumentWell : IDisposable
             e.Cancel = true;
             _ = CloseAfterPromptAsync(tab);
         }
+        // the same for a view tab's unsaved document (the merge editor's result); our own closes (RemoveTab) run with _suppressActive set
+        else if (e.Dockable is ShellDocument viewTab && !_suppressActive && !e.Cancel && _attached.TryGetValue(viewTab, out var attached) && !attached.Decided
+                 && IsUnsavedHere(attached) && !ShownByOtherTab(viewTab, attached.Doc))
+        {
+            e.Cancel = true;
+            _ = CloseAfterPromptAsync(viewTab);
+        }
         else if (e.Dockable is ShellDocument closingNow && !e.Cancel) closingNow.ReleaseFocus(); // before Dock detaches the view (see RemoveTab)
     }
 
-    private async Task CloseAfterPromptAsync(EditorTab tab)
+    private async Task CloseAfterPromptAsync(ShellDocument tab)
     {
         try { await CloseAsync(tab); }
         catch (Exception) { /* prompt failures must not crash the UI; the tab simply stays open */ }
@@ -591,9 +604,11 @@ public sealed class DocumentWell : IDisposable
         var wasActive = tab.WasActiveOnClose || ReferenceEquals(_active, tab);
         _mru.Remove(tab);
         var doc = (tab as EditorTab)?.Doc;
-        tab.Dispose();
-        if (doc is not null && !EditorTabs.Any(t => ReferenceEquals(t.Doc, doc)) && !_held.ContainsKey(doc))
+        _attached.Remove(tab, out var attached);
+        tab.Dispose(); // (a merge editor closed untouched gives its document its conflict markers back here)
+        if (doc is not null && !EditorTabs.Any(t => ReferenceEquals(t.Doc, doc)) && !_attached.Values.Any(a => ReferenceEquals(a.Doc, doc)))
             _ = CloseDocumentAsync(doc);
+        if (attached is not null) ReleaseAttached(attached);
         if (tab is not EditorTab) _singletons.Where(kv => ReferenceEquals(kv.Value, tab)).Select(kv => kv.Key).ToList().ForEach(k => _singletons.Remove(k));
         if (wasActive)
         {
@@ -639,26 +654,92 @@ public sealed class DocumentWell : IDisposable
         catch (Exception) { /* editor-side cleanup failure is not actionable by the shell */ }
     }
 
-    // ---------------------------------------------------------------- documents held open without a tab (a merge editor's result)
+    // ---------------------------------------------------------------- documents that a view tab edits (a merge editor's result)
 
-    private readonly Dictionary<IEditorDocument, int> _held = new(ReferenceEqualityComparer.Instance);
+    /// <summary>A view tab's document: whether its changes count (<see cref="Unsaved"/>), and whether a close of the tab decided them (asked).</summary>
+    private sealed class Attached(IEditorDocument doc, Func<bool> unsaved)
+    {
+        public IEditorDocument Doc { get; } = doc;
+        public Func<bool> Unsaved { get; } = unsaved;
+        public bool Decided { get; set; }
+    }
+
+    private readonly Dictionary<ShellDocument, Attached> _attached = new();
 
     /// <summary>
-    /// Keeps <paramref name="doc"/> open until the result is disposed, also when no tab shows it (the merge editor edits the file's document in a
-    /// tab of its own). Releasing the last hold closes the document when no editor tab shows it. UI thread.
+    /// <paramref name="tab"/> (a view tab: the merge editor) edits <paramref name="doc"/>, a file's document no editor tab needs to show. Until the
+    /// tab closes the document stays open and counts like an editor tab's: its unsaved changes, when no editor tab shows them, are asked about
+    /// when the tab closes (and so at quit: <see cref="CloseAllAsync"/>), make <see cref="HasUnsavedChanges"/> true and are backed up by hot exit
+    /// (<see cref="UnsavedAttachedDocuments"/>). <paramref name="unsaved"/> says whether the document's dirty state is the user's (a merge editor's
+    /// own starting edit is not); default: dirty. Closing the tab without being asked (a programmatic close) keeps unsaved changes in an editor tab
+    /// of their own; otherwise the document is closed with the tab when no editor tab shows it. UI thread.
     /// </summary>
-    public IDisposable HoldDocument(IEditorDocument doc)
+    public void AttachDocument(ShellDocument tab, IEditorDocument doc, Func<bool>? unsaved = null)
     {
-        _held[doc] = _held.GetValueOrDefault(doc) + 1;
-        var released = false;
-        return Disposable.Create(() =>
+        _attached[tab] = new Attached(doc, unsaved ?? (() => doc.IsDirty));
+        _tabsChanged.Fire(null); // listeners following the tabs' documents (session autosave) pick it up
+    }
+
+    /// <summary>The documents view tabs edit (<see cref="AttachDocument"/>), with their tab, in no particular order.</summary>
+    public IReadOnlyList<(ShellDocument Tab, IEditorDocument Document)> AttachedDocuments =>
+        [.. _attached.Where(kv => !kv.Key.IsDisposed).Select(kv => (kv.Key, kv.Value.Doc))];
+
+    /// <summary>
+    /// The view tabs whose document has unsaved changes of the user's that no editor tab shows, in tab order: what a quit asks about and hot exit
+    /// backs up besides the editor tabs.
+    /// </summary>
+    public IReadOnlyList<(ShellDocument Tab, IEditorDocument Document)> UnsavedAttachedDocuments =>
+        _attached.Count == 0 ? [] : [.. Tabs.Where(t => _attached.TryGetValue(t, out var a) && IsUnsavedHere(a)).Select(t => (t, _attached[t].Doc))];
+
+    /// <summary>An editor tab, or a view tab's document (<see cref="AttachDocument"/>), has changes not saved yet: what the Save prompts of a close ask about.</summary>
+    public bool HasUnsavedChanges => EditorTabs.Any(t => t.IsDirty) || UnsavedAttachedDocuments.Count > 0;
+
+    private bool IsUnsavedHere(Attached a) => a.Doc.IsDirty && a.Unsaved() && !EditorTabs.Any(t => ReferenceEquals(t.Doc, a.Doc));
+
+    private bool ShownByOtherTab(ShellDocument tab, IEditorDocument doc) =>
+        EditorTabs.Any(t => !ReferenceEquals(t, tab) && ReferenceEquals(t.Doc, doc)) || _attached.Any(kv => !ReferenceEquals(kv.Key, tab) && ReferenceEquals(kv.Value.Doc, doc));
+
+    /// <summary>Save / Don't Save / Cancel for a view tab's document (it is a file: no Save As). True when the tab may close.</summary>
+    private async ValueTask<bool> ConfirmCloseAsync(Attached a)
+    {
+        var name = EditorTab.TitleFor(a.Doc.Uri);
+        var answer = await _dialogs.ShowAsync(
+            "Save changes",
+            $"Do you want to save the changes you made to {name}?\n\nYour changes will be lost if you don't save them.",
+            ["Save", "Don't Save", "Cancel"], defaultIndex: 0);
+        switch (answer)
         {
-            if (released) return;
-            released = true;
-            if (--_held[doc] > 0) return;
-            _held.Remove(doc);
-            if (!EditorTabs.Any(t => ReferenceEquals(t.Doc, doc))) _ = CloseDocumentAsync(doc);
-        });
+            case "Save":
+                try
+                {
+                    if (_participants is not null) await _participants.WillSaveAsync(a.Doc, DocumentSaveReason.Manual);
+                    await a.Doc.SaveAsync();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    if (_windows is not null) await _windows.ShowMessageAsync(MessageSeverity.Error, $"Could not save {name}: {ex.Message}");
+                    return false;
+                }
+            case "Don't Save":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>A view tab closed: its document goes too unless another tab shows it; unsaved changes nobody was asked about get an editor tab.</summary>
+    private void ReleaseAttached(Attached a)
+    {
+        if (EditorTabs.Any(t => ReferenceEquals(t.Doc, a.Doc)) || _attached.Values.Any(x => ReferenceEquals(x.Doc, a.Doc))) return;
+        if (a.Doc.IsDirty && !a.Decided) _ = KeepInEditorTabAsync(a.Doc);
+        else _ = CloseDocumentAsync(a.Doc);
+    }
+
+    private async Task KeepInEditorTabAsync(IEditorDocument doc)
+    {
+        try { await OpenAsync(doc.Uri, preserveFocus: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
     }
 
     // ---------------------------------------------------------------- memory policy

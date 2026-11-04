@@ -38,7 +38,7 @@ public sealed partial class SessionWindowController : IDisposable
     private readonly IConfigurationService? _config;
     private readonly IWorkspaceService? _workspace;
     private readonly DisposableStore _subs = new();
-    private readonly Dictionary<EditorTab, DisposableStore> _tabSubs = new();
+    private readonly Dictionary<ShellDocument, DisposableStore> _tabSubs = new(); // editor tabs, and view tabs with a document (a merge editor)
     private readonly HiddenSessionPolicy _policy;
     private readonly DebouncedSaver _autosave;
     private readonly ConcurrentDictionary<string, int> _backedUp = new(StringComparer.Ordinal);
@@ -669,7 +669,7 @@ public sealed partial class SessionWindowController : IDisposable
             _wasResident = terminate;
             var hotExit = _config?.Get(BackgroundSettings.HotExit, BackgroundSettings.HotExitOnExitAndWindowClose) ?? BackgroundSettings.HotExitOnExitAndWindowClose;
             var backUp = force || hotExit == BackgroundSettings.HotExitOnExitAndWindowClose || (hotExit == BackgroundSettings.HotExitOnExit && !windowClose);
-            var dirty = _shell.Well.EditorTabs.Any(t => t.IsDirty);
+            var dirty = _shell.Well.HasUnsavedChanges; // editor tabs, and a merge editor's unsaved result no editor tab shows
             if (dirty && _readOnly && terminate)
             {
                 // Nobody can be asked, and the newer CsCode's session must not be written: its unsaved changes go to a new session of this
