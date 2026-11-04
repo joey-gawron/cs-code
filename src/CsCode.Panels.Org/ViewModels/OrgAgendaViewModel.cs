@@ -95,6 +95,12 @@ public sealed class OrgItemRow(OrgAgendaItem item, bool showDate) : OrgRow
 
     public string Tooltip => string.Join(" › ", [Document.FileName, .. Heading.Ancestors(), Title]);
 
+    /// <summary>The time on the running clock when it runs on this entry (<c>0:25</c>), else null.</summary>
+    public string? ClockText { get; init; }
+
+    /// <summary>A habit's consistency graph (rows of today only), else null.</summary>
+    public IReadOnlyList<OrgHabitDay>? Habit { get; init; }
+
     public override string Key => $"i:{Document.Uri}:{Heading.Line}:{Heading.Title}:{Item.Kind}:{Item.Day.DayNumber}:{Item.Line}";
 }
 
@@ -121,6 +127,7 @@ public sealed class OrgAgendaViewModel : INotifyPropertyChanged, IDisposable
         _mode = host.Config?.Get<string>(OrgSettings.AgendaSpan) == "day" ? OrgAgendaMode.Day : OrgAgendaMode.Week;
         _start = SpanStart(_today);
         _store.Add(host.AgendaChanged.Subscribe(_ => Rebuild()));
+        _store.Add(host.ClockChanged.Subscribe(_ => Rebuild()));
         if (host.Config is not null)
             _store.Add(host.Config.Changed.Subscribe(e => { if (e.Affects("org.agenda") || e.Affects(OrgSettings.DeadlineWarningDays)) host.Ui.Post(() => { if (!_disposed) { _start = SpanStart(_start); Rebuild(); } }); }));
         Rebuild();
@@ -208,6 +215,15 @@ public sealed class OrgAgendaViewModel : INotifyPropertyChanged, IDisposable
             if (row.Heading.Deadline is { } d) parts.Add("Deadline " + OrgDateInput.Describe(d));
             if (row.Heading.Closed is { } c) parts.Add("Closed " + OrgDateInput.Describe(c));
             if (row.Heading.AllTags.Count > 0) parts.Add("Tags :" + string.Join(':', row.Heading.AllTags) + ":");
+            var now = _host.Now();
+            var clocked = OrgClock.Total(row.Document, row.Heading, now);
+            if (clocked > TimeSpan.Zero)
+            {
+                var today = OrgClock.Total(row.Document, row.Heading, now, from: now.Date, to: now.Date.AddDays(1));
+                parts.Add($"Clocked {OrgClock.Format(clocked)}" + (today > TimeSpan.Zero ? $" ({OrgClock.Format(today)} today)" : ""));
+            }
+            if (OrgHabit.Of(row.Heading, row.Document.Keywords) is { } habit)
+                parts.Add($"Habit: every {habit.MinDays} d." + (habit.MaxDays > habit.MinDays ? $", at most {habit.MaxDays} d. apart" : "") + $"; done {habit.Done.Count} times");
             return string.Join("\n", parts);
         }
     }
@@ -259,11 +275,18 @@ public sealed class OrgAgendaViewModel : INotifyPropertyChanged, IDisposable
         Rebuild();
     }
 
-    /// <summary>Called periodically: when the date has changed (past midnight), a view that showed the old today moves to the new one.</summary>
+    /// <summary>
+    /// Called every minute: when the date has changed (past midnight), a view that showed the old today moves to the new one; while a clock runs,
+    /// the rows are drawn again (its time).
+    /// </summary>
     public void CheckDate()
     {
         var today = _host.Today;
-        if (today == _today) return;
+        if (today == _today)
+        {
+            if (_host.RunningClock is not null) Rebuild();
+            return;
+        }
         var followed = _today >= _start && _today < _start.AddDays(SpanDays);
         _today = today;
         if (followed) _start = SpanStart(today);
@@ -287,7 +310,7 @@ public sealed class OrgAgendaViewModel : INotifyPropertyChanged, IDisposable
             foreach (var group in items.GroupBy(i => i.Document))
             {
                 rows.Add(new OrgHeaderRow(group.Key.Title is { Length: > 0 } t ? t : group.Key.FileName, $"{group.Count()}", false, null));
-                rows.AddRange(group.Select(i => new OrgItemRow(i, showDate: false)));
+                rows.AddRange(group.Select(i => Row(i)));
             }
             Title = total == 1 ? "To do · 1 entry" : $"To do · {total} entries";
         }
@@ -304,7 +327,7 @@ public sealed class OrgAgendaViewModel : INotifyPropertyChanged, IDisposable
                 var name = day.Date.ToString("dddd d MMMM", CultureInfo.InvariantCulture);
                 rows.Add(new OrgHeaderRow(isToday ? "Today · " + name : name, items.Count == 0 ? null : items.Count.ToString(CultureInfo.InvariantCulture), isToday, day.Date));
                 if (items.Count == 0) rows.Add(new OrgEmptyRow(day.Date, filter.Count > 0 ? "Nothing matches the filter" : "Nothing scheduled"));
-                rows.AddRange(items.Select(i => new OrgItemRow(i, showDate: false)));
+                rows.AddRange(items.Select(i => Row(i)));
             }
             Title = _mode == OrgAgendaMode.Day
                 ? _start.ToString("dddd d MMMM yyyy", CultureInfo.InvariantCulture)
@@ -327,6 +350,14 @@ public sealed class OrgAgendaViewModel : INotifyPropertyChanged, IDisposable
         OnChanged(nameof(Start));
         OnChanged(nameof(Details));
         OnChanged(nameof(DetailsPlanning));
+    }
+
+    private OrgItemRow Row(OrgAgendaItem item)
+    {
+        var clock = _host.RunningClock is { } c && c.Uri == item.Document.Uri && c.Heading.Title == item.Heading.Title && c.Heading.Level == item.Heading.Level
+            ? OrgClock.Format(_host.Now() - c.Start) : null;
+        var habit = item.Day == _today && _mode != OrgAgendaMode.Todo && OrgHabit.Of(item.Heading, item.Document.Keywords) is { } h ? h.Graph(_today) : null;
+        return new OrgItemRow(item, showDate: false) { ClockText = clock, Habit = habit };
     }
 
     private string NoFilesText()
@@ -454,7 +485,22 @@ public sealed class OrgAgendaViewModel : INotifyPropertyChanged, IDisposable
 
     public Task WriteNotesAsync(OrgItemRow row) => _host.EditNotesAsync(row.Document, row.Heading);
 
-    public Task CaptureAsync(OrgHost.CaptureKind? kind = null) => _host.CaptureAsync(SelectedDay, kind);
+    /// <summary>Capture with the template of <paramref name="key"/> (asked for when null), for the selected day.</summary>
+    public Task CaptureAsync(string? key = null) => _host.CaptureAsync(SelectedDay, key);
+
+    public IReadOnlyList<OrgCaptureTemplate> CaptureTemplates => _host.CaptureTemplatesList;
+
+    public bool IsClocked(OrgItemRow row) => row.ClockText is not null;
+
+    public Task ClockInAsync(OrgItemRow row) => _host.ClockInAsync(row.Document, row.Heading);
+
+    public Task ClockOutAsync() => _host.ClockOutAsync();
+
+    public bool ClockRuns => _host.RunningClock is not null;
+
+    public Task RefileAsync(OrgItemRow row) => _host.RefileAsync(row.Document, row.Heading);
+
+    public Task ArchiveAsync(OrgItemRow row) => _host.ArchiveAsync(row.Document, row.Heading);
 
     public Task OpenNotesFileAsync() => _host.OpenNotesAsync();
 

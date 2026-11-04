@@ -59,10 +59,10 @@ public readonly record struct OrgInterval(int Value, OrgTimeUnit Unit)
     public override string ToString() => Value.ToString(CultureInfo.InvariantCulture) + UnitLetter(Unit);
 }
 
-/// <summary>A repeater cookie: <c>+1w</c>, <c>++2d</c>, <c>.+1m</c>.</summary>
-public readonly record struct OrgRepeater(OrgRepeatKind Kind, OrgInterval Interval)
+/// <summary>A repeater cookie: <c>+1w</c>, <c>++2d</c>, <c>.+1m</c>; a habit's may give the longest gap allowed too (<c>.+2d/4d</c>).</summary>
+public readonly record struct OrgRepeater(OrgRepeatKind Kind, OrgInterval Interval, OrgInterval? Max = null)
 {
-    public override string ToString() => (Kind switch { OrgRepeatKind.CatchUp => "++", OrgRepeatKind.Restart => ".+", _ => "+" }) + Interval;
+    public override string ToString() => (Kind switch { OrgRepeatKind.CatchUp => "++", OrgRepeatKind.Restart => ".+", _ => "+" }) + Interval + (Max is { } m ? "/" + m : "");
 }
 
 /// <summary>
@@ -74,10 +74,10 @@ public sealed record OrgTimestamp(bool Active, DateOnly Date, TimeOnly? Start = 
 {
     // <2026-11-05 Thu 10:00-11:30 +1w -3d>; the day name is any run of letters (org writes the locale's), the cookies may come in either order
     private static readonly Regex One = new(
-        @"(?<open>[<\[])(?<y>\d{4})-(?<mo>\d{2})-(?<d>\d{2})(?:\s+(?<dn>[^\s\d>\]+\-.]+))?(?:\s+(?<h1>\d{1,2}):(?<m1>\d{2})(?:-(?<h2>\d{1,2}):(?<m2>\d{2}))?)?(?<cookies>(?:\s+(?:\.\+|\+\+|\+|--?)\d+[hdwmy])*)\s*(?<close>[>\]])",
+        @"(?<open>[<\[])(?<y>\d{4})-(?<mo>\d{2})-(?<d>\d{2})(?:\s+(?<dn>[^\s\d>\]+\-.]+))?(?:\s+(?<h1>\d{1,2}):(?<m1>\d{2})(?:-(?<h2>\d{1,2}):(?<m2>\d{2}))?)?(?<cookies>(?:\s+(?:\.\+|\+\+|\+|--?)\d+[hdwmy](?:/\d+[hdwmy])?)*)\s*(?<close>[>\]])",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    private static readonly Regex Cookie = new(@"(?<sign>\.\+|\+\+|\+|--|-)(?<n>\d+)(?<u>[hdwmy])", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex Cookie = new(@"(?<sign>\.\+|\+\+|\+|--|-)(?<n>\d+)(?<u>[hdwmy])(?:/(?<mn>\d+)(?<mu>[hdwmy]))?", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>Every timestamp in <paramref name="text"/> with its column and length (a range <c>&lt;a&gt;--&lt;b&gt;</c> is one).</summary>
     public static IEnumerable<(OrgTimestamp Timestamp, int Column, int Length)> FindAll(string text)
@@ -141,11 +141,13 @@ public sealed record OrgTimestamp(bool Active, DateOnly Date, TimeOnly? Start = 
         {
             if (!OrgInterval.TryParseUnit(c.Groups["u"].Value[0], out var unit)) continue;
             var interval = new OrgInterval(int.Parse(c.Groups["n"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture), unit);
+            OrgInterval? max = c.Groups["mn"].Success && OrgInterval.TryParseUnit(c.Groups["mu"].Value[0], out var maxUnit)
+                ? new OrgInterval(int.Parse(c.Groups["mn"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture), maxUnit) : null;
             switch (c.Groups["sign"].Value)
             {
-                case "+": repeater ??= new OrgRepeater(OrgRepeatKind.Cumulate, interval); break;
-                case "++": repeater ??= new OrgRepeater(OrgRepeatKind.CatchUp, interval); break;
-                case ".+": repeater ??= new OrgRepeater(OrgRepeatKind.Restart, interval); break;
+                case "+": repeater ??= new OrgRepeater(OrgRepeatKind.Cumulate, interval, max); break;
+                case "++": repeater ??= new OrgRepeater(OrgRepeatKind.CatchUp, interval, max); break;
+                case ".+": repeater ??= new OrgRepeater(OrgRepeatKind.Restart, interval, max); break;
                 default: warning ??= interval; break; // - and -- (the first deadline warning only)
             }
         }
@@ -191,6 +193,12 @@ public sealed record OrgTimestamp(bool Active, DateOnly Date, TimeOnly? Start = 
     }
 
     public static string DayName(DateOnly date) => date.DayOfWeek.ToString()[..3];
+
+    /// <summary>The moment the timestamp starts (midnight without a time).</summary>
+    public DateTime StartTime => Date.ToDateTime(Start ?? TimeOnly.MinValue);
+
+    /// <summary>An inactive timestamp of a moment, to the minute: <c>[2026-11-03 Tue 14:05]</c>.</summary>
+    public static OrgTimestamp InactiveAt(DateTime at) => new(false, DateOnly.FromDateTime(at), new TimeOnly(at.Hour, at.Minute));
 
     /// <summary>The time part as the agenda shows it: <c>10:00</c>, <c>10:00-11:30</c>, or empty.</summary>
     public string TimeText => Start is { } s

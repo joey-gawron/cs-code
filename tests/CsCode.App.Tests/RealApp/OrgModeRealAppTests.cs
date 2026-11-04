@@ -91,6 +91,75 @@ public class OrgModeRealAppTests
         Capture(host, "org-editor");
     }
 
+    private static string Logged(int offset) => "[" + DateTime.Today.AddDays(offset).ToString("yyyy-MM-dd ddd", CultureInfo.InvariantCulture) + " 08:00]";
+
+    [AvaloniaFact(Timeout = 90_000)]
+    public async Task Clock_keys_code_blocks_habits_and_a_files_own_states_in_the_real_app()
+    {
+        var text = $"""
+            #+TODO: OPEN WAIT | CLOSED
+            * OPEN Exercise
+            SCHEDULED: {Day(0)[..^1]} .+1d>
+            :PROPERTIES:
+            :STYLE: habit
+            :END:
+            :LOGBOOK:
+            - State "CLOSED"     from "OPEN"       {Logged(-1)}
+            - State "CLOSED"     from "OPEN"       {Logged(-3)}
+            :END:
+            * CLOSED Old
+            * WAIT On hold
+            #+BEGIN_SRC sh
+            echo from babel
+            #+END_SRC
+
+            """;
+        await using var host = RealAppHost.Create(h =>
+        {
+            h.Files.WriteFile("org/habits.org", text);
+            h.Home.WriteFile("config/settings.json", "{ \"workbench.startupEditor\": \"none\", \"org.babel.confirmEvaluate\": false, \"org.directory\": \""
+                + h.Files.Combine("org").Replace("\\", "\\\\", StringComparison.Ordinal) + "\" }");
+        });
+        await host.StartAsync([host.Files.Combine("org", "habits.org")]);
+        var navigation = host.Get<INavigationService>();
+        Assert.True(await RealAppHost.WaitFor(() => navigation.ActiveDocument?.LanguageId == "org"));
+        var doc = navigation.ActiveDocument!;
+        var uri = new Uri(host.Files.Combine("org", "habits.org"));
+
+        await host.RunAsync(OrgHost.ShowAgenda);
+        OrgAgendaViewModel? Agenda() => host.Window.GetVisualDescendants().OfType<OrgAgendaView>().FirstOrDefault() is { IsEffectivelyVisible: true } v ? v.DataContext as OrgAgendaViewModel : null;
+        Assert.True(await RealAppHost.WaitFor(() => Agenda()?.Rows.OfType<OrgItemRow>().Any(r => r.Title == "Exercise" && r.Habit is { Count: > 20 }) == true), "the habit has no graph");
+
+        // C-c C-x C-i on "* WAIT On hold": a three-key chord
+        await navigation.OpenAsync(uri, TextRange.At(11, 0));
+        Keys(host, Key.X, Key.I);
+        Assert.True(await RealAppHost.WaitFor(() => doc.GetText().Contains("* WAIT On hold\n:LOGBOOK:\nCLOCK: [", StringComparison.Ordinal)), "C-c C-x C-i did not clock in: " + doc.GetText());
+        Assert.True(await RealAppHost.WaitFor(() => host.Get<IStatusBarService>().Items.Any(i => i.Id == "org.clock" && i.Text.EndsWith("On hold", StringComparison.Ordinal))));
+
+        // C-c C-c in the code block runs it
+        await navigation.OpenAsync(uri, TextRange.At(16, 2));
+        Keys(host, Key.C);
+        Assert.True(await RealAppHost.WaitFor(() => doc.GetText().Contains("#+END_SRC\n\n#+RESULTS:\n: from babel\n", StringComparison.Ordinal), 20_000),
+            "C-c C-c did not run the block: " + doc.GetText());
+        await DevScene.SettleAsync(20);
+        Capture(host, "org-features");
+
+        Keys(host, Key.X, Key.O);
+        Assert.True(await RealAppHost.WaitFor(() => doc.GetText().Contains("] =>  0:0", StringComparison.Ordinal)), "C-c C-x C-o did not clock out: " + doc.GetText());
+    }
+
+    /// <summary>Org's C-c followed by Ctrl+each key (on a Mac), or Ctrl+Alt+O then Ctrl+each key (elsewhere).</summary>
+    private static void Keys(RealAppHost host, params Key[] keys)
+    {
+        if (OperatingSystem.IsMacOS()) host.Window.KeyPress(Key.C, RawInputModifiers.Control, PhysicalKey.C, null);
+        else host.Window.KeyPress(Key.O, RawInputModifiers.Control | RawInputModifiers.Alt, PhysicalKey.O, null);
+        foreach (var key in keys)
+        {
+            Dispatcher.UIThread.RunJobs();
+            host.Window.KeyPress(key, RawInputModifiers.Control, Enum.Parse<PhysicalKey>(key.ToString()), null);
+        }
+    }
+
     /// <summary>Org's C-c C-&lt;key&gt; (on a Mac) or Ctrl+Alt+O Ctrl+&lt;key&gt; (elsewhere), through the window's keyboard.</summary>
     private static void Chord(RealAppHost host, Key key)
     {

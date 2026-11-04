@@ -16,9 +16,10 @@ namespace CsCode.Panels.Org;
 /// The org module's composition point: registers the <c>org</c> language (grammar, configuration, folding, outline), the <c>org.*</c> settings and
 /// commands with their Emacs keys, keeps the context key <c>orgHeadingAtCursor</c>, owns the <see cref="OrgStore"/> of the agenda's files and the
 /// status bar item, and performs the edits the editor commands and the Org Agenda window share: on an open file in its editor (one undo step),
-/// on a file that is not open on disk. Resolved at startup through the tool window.
+/// on a file that is not open on disk. The clock, refile and archive, export, code blocks and capture templates are in
+/// <c>OrgHost.Features.cs</c>. Resolved at startup through the tool window.
 /// </summary>
-public sealed class OrgHost : IDisposable
+public sealed partial class OrgHost : IDisposable
 {
     public const string ViewId = "org.agenda";
     public const string HeadingAtCursorKey = "orgHeadingAtCursor";
@@ -71,6 +72,9 @@ public sealed class OrgHost : IDisposable
         Views = services.GetService<IViewActivator>();
         StatusBar = services.GetService<IStatusBarService>();
         Documents = services.GetService<IDocumentManager>();
+        _fs = services.GetService<IFileSystem>();
+        _output = services.GetService<IOutputService>();
+        _memory = services.GetService<Core.Diagnostics.IMemoryMonitor>();
         _keywords = OrgSettings.Keywords(Config);
         Language = new OrgLanguage(() => _keywords);
 
@@ -100,6 +104,7 @@ public sealed class OrgHost : IDisposable
             var org = DocumentSelector.ForLanguage(OrgLanguage.LanguageId);
             _store.Add(features.Register<IFoldingRangeProvider>(org, Language, "org"));
             _store.Add(features.Register<IDocumentSymbolProvider>(org, Language, "org"));
+            _store.Add(features.Register<ISemanticTokensProvider>(org, Language, "org")); // a file's own TODO states coloured
         }
         if (Navigation is not null)
         {
@@ -162,6 +167,7 @@ public sealed class OrgHost : IDisposable
     private void OnAgendaChanged(IReadOnlyList<OrgDocument> docs)
     {
         if (_disposed) return;
+        UpdateClockFromStore();
         UpdateStatusBar();
         _agendaChanged.Fire(docs);
     }
@@ -205,6 +211,8 @@ public sealed class OrgHost : IDisposable
     private static KeybindingContribution Chord(string command, string emacs, string? when = InOrg) =>
         new(command, "ctrl+alt+o " + emacs, Mac: "ctrl+c " + emacs, When: when);
 
+    private const string Anywhere = "!terminalFocus";
+
     /// <summary>The module's key bindings (org's keys; docs/ORG.md lists them).</summary>
     public static IReadOnlyList<KeybindingContribution> Keybindings { get; } =
     [
@@ -226,6 +234,19 @@ public sealed class OrgHost : IDisposable
         new(MoveSubtreeUp, "alt+up", When: OnHeading),
         new(MoveSubtreeDown, "alt+down", When: OnHeading),
         new(Cycle, "tab", When: OnHeading + " && !editorHasSelection"),
+        // the clock (C-c C-x ...: in or out from anywhere once a clock runs, as org's are global)
+        Chord(ClockIn, "ctrl+x ctrl+i"),
+        Chord(ClockOut, "ctrl+x ctrl+o", Anywhere),
+        Chord(ClockCancel, "ctrl+x ctrl+q", Anywhere),
+        Chord(ClockGoto, "ctrl+x ctrl+j", Anywhere),
+        Chord(ClockReport, "ctrl+x ctrl+r"),
+        // refile, archive, export, code blocks
+        Chord(Refile, "ctrl+w"),
+        Chord(ArchiveSubtree, "ctrl+x ctrl+s"),
+        Chord(ToggleArchiveTag, "ctrl+x a"),
+        Chord(Export, "ctrl+e"),
+        Chord(BabelExecute, "ctrl+v e"),
+        Chord(BabelExecuteBuffer, "ctrl+v b"),
     ];
 
     // ------------------------------------------------------------------------------------------------ commands
@@ -239,7 +260,8 @@ public sealed class OrgHost : IDisposable
         }
         Reg(ShowAgenda, "Agenda", async _ => { if (Views is not null) await Views.ShowViewAsync(ViewId).ConfigureAwait(false); });
         Reg(RefreshAgenda, "Refresh Agenda", async _ => { if (Store is not null) await Store.RefreshAsync().ConfigureAwait(false); });
-        Reg(Capture, "Capture...", inv => CaptureAsync(day: inv.Arg<string>(0) is { } d && DateOnly.TryParse(d, out var date) ? date : null));
+        Reg(Capture, "Capture...", inv => CaptureAsync(day: inv.Arg<string>(0) is { } d && DateOnly.TryParse(d, System.Globalization.CultureInfo.InvariantCulture, out var date) ? date : null,
+            key: inv.Arg<string>(1)));
         Reg(OpenNotes, "Open Notes File", _ => OpenNotesAsync());
         Reg(AddToAgenda, "Add File to Agenda", _ => SetInAgendaAsync(add: true));
         Reg(RemoveFromAgenda, "Remove File from Agenda", _ => SetInAgendaAsync(add: false));
@@ -265,7 +287,7 @@ public sealed class OrgHost : IDisposable
             if (await PromptTagsAsync(at.Heading.Tags).ConfigureAwait(false) is not { } tags) return;
             await OnEntryAsync((doc, h, _) => OrgEdits.SetTags(doc, h, tags)).ConfigureAwait(false);
         });
-        Reg(CtrlCCtrlC, "Toggle Checkbox / Update Statistics", _ => OnEntryAsync((doc, _, line) => OrgEdits.ToggleCheckbox(doc, line), needsHeading: false));
+        Reg(CtrlCCtrlC, "Run Code Block / Update Clock Table / Toggle Checkbox", _ => CtrlCCtrlCAsync());
         Reg(Timestamp, "Insert Timestamp...", _ => InsertTimestampAsync(active: true));
         Reg(TimestampInactive, "Insert Inactive Timestamp...", _ => InsertTimestampAsync(active: false));
         Reg(InsertHeading, "Insert Heading", _ => OnEntryAsync((doc, _, line) => OrgEdits.InsertHeading(doc, line, null), needsHeading: false));
@@ -279,6 +301,7 @@ public sealed class OrgHost : IDisposable
         Reg(MoveSubtreeDown, "Move Subtree Down", _ => OnEntryAsync((doc, h, _) => OrgEdits.MoveSubtree(doc, h, up: false, Navigation?.ActiveCaret?.Character ?? 0)
             ?? Nothing("No later heading at this level to move past")));
         Reg(Cycle, "Toggle Fold of Heading", async _ => { if (Commands is { } c && c.Has("editor.toggleFold")) await c.ExecuteAsync("editor.toggleFold").ConfigureAwait(false); });
+        RegisterFeatureCommands(Reg);
     }
 
     private OrgEditResult? Nothing(string message)
@@ -408,48 +431,19 @@ public sealed class OrgHost : IDisposable
 
     /// <summary>
     /// Applies an edit to the entry <paramref name="heading"/> of <paramref name="snapshot"/> (a document of the agenda, maybe older than the
-    /// file): in its editor when the file is open (saved afterwards when it had no unsaved changes and <c>org.agenda.saveAfterEdit</c>), else on
-    /// disk. The entry is found again in the current text (same line and title, else the nearest heading with that title). False when it is gone.
+    /// file) through <see cref="EditFileAsync"/>. The entry is found again in the current text (same line and title, else the nearest heading
+    /// with that title). False when it is gone.
     /// </summary>
     public async Task<bool> EditEntryAsync(OrgDocument snapshot, OrgHeading heading, Func<OrgDocument, OrgHeading, OrgEditResult?> edit)
     {
         if (snapshot.Uri is not { } uri) return false;
-        OrgEditResult? result = null;
         var found = true;
-        if (Documents?.Get(uri) is { } open)
+        var result = await EditFileAsync(uri, doc =>
         {
-            result = await _ui.InvokeAsync(() =>
-            {
-                var doc = OrgDocument.Parse(open.GetText(), _keywords, uri: uri);
-                if (Resolve(doc, heading) is not { } h) { found = false; return null; }
-                var r = edit(doc, h);
-                if (r is null || r.Edits.Count == 0) return r;
-                var wasDirty = open.IsDirty;
-                open.ApplyEdits(OrgText.WithEol(r.Edits, (open as IEditorDocument)?.EndOfLine ?? OrgText.DetectEol(open.GetText())));
-                if (!wasDirty && open is IEditorDocument editor && Config?.Get(OrgSettings.SaveAfterEdit, true) != false) _ = editor.SaveAsync();
-                return r;
-            }).ConfigureAwait(false);
-            Store?.ScheduleRefresh(50);
-        }
-        else if (Store is not null)
-        {
-            for (var attempt = 0; attempt < 3; attempt++)
-            {
-                var doc = await Store.ReadAsync(uri).ConfigureAwait(false);
-                if (doc is null || Resolve(doc, heading) is not { } h) { found = false; break; }
-                result = edit(doc, h);
-                if (result is null || result.Edits.Count == 0) break;
-                try
-                {
-                    if (await Store.WriteEditsAsync(uri, doc, result.Edits).ConfigureAwait(false)) break;
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    await ShowErrorAsync($"Could not write {Path.GetFileName(uri.LocalPath)}: {ex.Message}").ConfigureAwait(false);
-                    return false;
-                }
-            }
-        }
+            if (Resolve(doc, heading) is { } h) return edit(doc, h);
+            found = false;
+            return null;
+        }).ConfigureAwait(false);
         if (!found)
         {
             Status("That entry is no longer in the file; the agenda is refreshed");
@@ -458,6 +452,48 @@ public sealed class OrgHost : IDisposable
         }
         if (result?.Message is { } message) Status(message);
         return true;
+    }
+
+    /// <summary>
+    /// Applies an edit computed from a file's current text: in its editor when the file is open (one undo step; saved afterwards when it had no
+    /// unsaved changes and <c>org.agenda.saveAfterEdit</c>), else on disk (read again and recomputed when the file changed meanwhile). Returns
+    /// the edit's result (null when it had nothing to do or the file cannot be read or written).
+    /// </summary>
+    public async Task<OrgEditResult?> EditFileAsync(Uri uri, Func<OrgDocument, OrgEditResult?> edit)
+    {
+        if (Documents?.Get(uri) is { } open)
+        {
+            var r = await _ui.InvokeAsync(() =>
+            {
+                var doc = OrgDocument.Parse(open.GetText(), _keywords, uri: uri);
+                var r = edit(doc);
+                if (r is null || r.Edits.Count == 0) return r;
+                var wasDirty = open.IsDirty;
+                open.ApplyEdits(OrgText.WithEol(r.Edits, (open as IEditorDocument)?.EndOfLine ?? OrgText.DetectEol(open.GetText())));
+                if (!wasDirty && open is IEditorDocument editor && Config?.Get(OrgSettings.SaveAfterEdit, true) != false) _ = editor.SaveAsync();
+                return r;
+            }).ConfigureAwait(false);
+            Store?.ScheduleRefresh(50);
+            return r;
+        }
+        if (Store is null) return null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var doc = await Store.ReadAsync(uri).ConfigureAwait(false);
+            if (doc is null) return null;
+            var r = edit(doc);
+            if (r is null || r.Edits.Count == 0) return r;
+            try
+            {
+                if (await Store.WriteEditsAsync(uri, doc, r.Edits).ConfigureAwait(false)) return r;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await ShowErrorAsync($"Could not write {Path.GetFileName(uri.LocalPath)}: {ex.Message}").ConfigureAwait(false);
+                return null;
+            }
+        }
+        return null;
     }
 
     /// <summary>The heading of <paramref name="doc"/> that <paramref name="stale"/> (from an older parse) is: same line and title, else the nearest with its title and level.</summary>
@@ -511,110 +547,6 @@ public sealed class OrgHost : IDisposable
 
     // ------------------------------------------------------------------------------------------------ capture, notes file, agenda files
 
-    /// <summary>The kinds of entry Org: Capture makes.</summary>
-    public enum CaptureKind { Task, Note, Event }
-
-    /// <summary>
-    /// Org: Capture: asks what to capture (a task, a note, an event) and its title, appends the entry to the notes file
-    /// (<c>org.defaultNotesFile</c>, created when missing) and, for a note, opens it there ready to write. A task captured from the agenda's
-    /// day is scheduled on that day.
-    /// </summary>
-    public async Task CaptureAsync(DateOnly? day = null, CaptureKind? kind = null)
-    {
-        if (Window is null || Store is null) return;
-        if (kind is null)
-        {
-            var pick = await Window.ShowQuickPickAsync(
-            [
-                new QuickPickItem("Task", day is { } d ? "a TODO scheduled on " + d.ToString("ddd d MMM", System.Globalization.CultureInfo.InvariantCulture) : "a TODO", Tag: CaptureKind.Task),
-                new QuickPickItem("Note", "a heading to write notes under, opened in the editor", Tag: CaptureKind.Note),
-                new QuickPickItem("Event", "an appointment on a date (and time)", Tag: CaptureKind.Event),
-            ], new QuickPickOptions(Title: "Capture", Placeholder: "Capture to " + Path.GetFileName(OrgSettings.NotesFile(Config)))).ConfigureAwait(false);
-            if (pick?.Tag is not CaptureKind k) return;
-            kind = k;
-        }
-        var title = await Window.ShowInputBoxAsync(new InputBoxOptions(
-            Title: kind switch { CaptureKind.Task => "New Task", CaptureKind.Note => "New Note", _ => "New Event" },
-            Placeholder: kind switch { CaptureKind.Task => "What needs doing?", CaptureKind.Note => "Title of the note", _ => "What is happening?" },
-            Validate: s => string.IsNullOrWhiteSpace(s) ? "A title, please" : null)).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(title)) return;
-
-        OrgTimestamp? scheduled = null, when = null;
-        if (kind == CaptureKind.Task && day is { } sd) scheduled = new OrgTimestamp(true, sd);
-        if (kind == CaptureKind.Event)
-        {
-            var date = await Window.ShowInputBoxAsync(new InputBoxOptions(Title: "When?", Prompt: "Date and time: tomorrow 10:00, fri 2pm-3pm, nov 20, +1w (empty: today)",
-                Value: day?.ToString("yyyy-MM-dd ddd", System.Globalization.CultureInfo.InvariantCulture),
-                Validate: s => string.IsNullOrWhiteSpace(s) || OrgDateInput.Parse(s, Today, out _) is not null ? null : Error(s))).ConfigureAwait(false);
-            if (date is null) return;
-            when = OrgDateInput.Parse(date, Today, out _) ?? new OrgTimestamp(true, Today);
-        }
-        var created = OrgEdits.Inactive(Now());
-        var entry = kind switch
-        {
-            CaptureKind.Task => OrgEdits.Entry(1, _keywords.NotDone.FirstOrDefault() ?? "TODO", title, scheduled: scheduled, created: created),
-            CaptureKind.Note => OrgEdits.Entry(1, null, title, created: created),
-            _ => OrgEdits.Entry(1, null, title, body: when!.ToString()),
-        };
-        var file = new Uri(OrgSettings.NotesFile(Config));
-        try
-        {
-            await Store.EnsureFileAsync(file, "#+TITLE: Notes\n\n").ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            await ShowErrorAsync($"Could not create {file.LocalPath}: {ex.Message}").ConfigureAwait(false);
-            return;
-        }
-        var position = await AppendAsync(file, entry).ConfigureAwait(false);
-        if (position is null) return;
-        Status($"Captured to {Path.GetFileName(file.LocalPath)}: {title.Trim()}");
-        if (kind == CaptureKind.Note && Navigation is not null)
-        {
-            // the caret on the empty line after the note's stamp, ready to write
-            if (await Navigation.OpenAsync(file).ConfigureAwait(false) is { } editor)
-            {
-                var stamp = position.Value;
-                await _ui.InvokeAsync(() => { if (!editor.IsReadOnly) editor.ApplyEdits([TextEdit.Insert(new TextPosition(stamp.Line, stamp.Character), editor.EndOfLine)]); }).ConfigureAwait(false);
-                var at = new TextPosition(stamp.Line + 1, 0);
-                await Navigation.OpenAsync(file, new TextRange(at, at)).ConfigureAwait(false);
-            }
-        }
-        await Store.RefreshAsync().ConfigureAwait(false);
-    }
-
-    /// <summary>Appends text to a file, in its editor when it is open; returns where the entry's last line ends.</summary>
-    private async Task<TextPosition?> AppendAsync(Uri file, string entry)
-    {
-        if (Documents?.Get(file) is { } open)
-        {
-            return await _ui.InvokeAsync<TextPosition?>(() =>
-            {
-                var doc = OrgDocument.Parse(open.GetText(), _keywords, uri: file);
-                var r = OrgEdits.Append(doc, entry);
-                var wasDirty = open.IsDirty;
-                open.ApplyEdits(OrgText.WithEol(r.Edits, (open as IEditorDocument)?.EndOfLine ?? "\n"));
-                if (!wasDirty && open is IEditorDocument editor && Config?.Get(OrgSettings.SaveAfterEdit, true) != false) _ = editor.SaveAsync();
-                return r.Caret;
-            }).ConfigureAwait(false);
-        }
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            var doc = await Store!.ReadAsync(file).ConfigureAwait(false) ?? OrgDocument.Parse("", _keywords, uri: file);
-            var r = OrgEdits.Append(doc, entry);
-            try
-            {
-                if (await Store.WriteEditsAsync(file, doc, r.Edits).ConfigureAwait(false)) return r.Caret;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                await ShowErrorAsync($"Could not write {file.LocalPath}: {ex.Message}").ConfigureAwait(false);
-                return null;
-            }
-        }
-        return null;
-    }
-
     /// <summary>Opens the notes file (<c>org.defaultNotesFile</c>), creating it first when it does not exist.</summary>
     public async Task OpenNotesAsync()
     {
@@ -667,6 +599,7 @@ public sealed class OrgHost : IDisposable
         if (_disposed) return;
         _disposed = true;
         _statusItem?.Dispose();
+        DisposeClock();
         _store.Dispose();
         _agendaChanged.Clear();
     }

@@ -261,6 +261,17 @@ public sealed class HostTests
         Assert.Equal(8, symbols[0].Range.End.Line);
     }
 
+    [AvaloniaFact]
+    public void The_language_registers_its_folding_outline_and_keyword_colours()
+    {
+        using var f = new OrgFixture();
+        var doc = new InMemoryTextDocument(new Uri(f.Dir.Combine("x.org")), OrgLanguage.LanguageId, "* TODO a\n");
+        Assert.Single(f.Features.GetProviders<IFoldingRangeProvider>(doc));
+        Assert.Single(f.Features.GetProviders<IDocumentSymbolProvider>(doc));
+        Assert.Single(f.Features.GetProviders<ISemanticTokensProvider>(doc));
+        Assert.Contains(f.Contributions.Of<LanguageContribution>().Items, c => c.Value.Id == "org" && c.Value.Extensions.Contains(".org_archive"));
+    }
+
     [Fact]
     public void Keys_are_emacs_chords_on_a_mac_and_ctrl_alt_o_elsewhere()
     {
@@ -405,5 +416,104 @@ public sealed class AgendaViewTests
         Assert.True(vm.NoFiles);
         Assert.True(vm.IsEmpty);
         Assert.Contains("No org files in", vm.EmptyText, StringComparison.Ordinal);
+    }
+}
+
+public sealed class FeatureHostTests
+{
+    [AvaloniaFact]
+    public async Task Clock_in_and_out_from_the_editor_with_the_status_bar_showing_the_clock()
+    {
+        using var f = new OrgFixture();
+        var doc = f.Open("a.org", "* TODO Write\nnotes\n", new TextPosition(1, 0));
+        await f.Commands.ExecuteAsync(OrgHost.ClockIn);
+        Assert.Equal("* TODO Write\n:LOGBOOK:\nCLOCK: [2026-11-03 Tue 14:05]\n:END:\nnotes\n", doc.GetText());
+        Assert.Equal("Write", f.Host.RunningClock!.Heading.Title);
+        await HostTests.WaitUntil(() => f.StatusBar.Items.Any(i => i.Id == "org.clock"));
+        Assert.Equal("$(watch) 0:00 Write", f.StatusBar.Items.Single(i => i.Id == "org.clock").Text);
+
+        f.Host.Now = () => new DateTime(2026, 11, 3, 15, 10, 0);
+        await f.Commands.ExecuteAsync(OrgHost.ClockOut);
+        Assert.Contains("CLOCK: [2026-11-03 Tue 14:05]--[2026-11-03 Tue 15:10] =>  1:05\n", doc.GetText(), StringComparison.Ordinal);
+        Assert.Null(f.Host.RunningClock);
+        await HostTests.WaitUntil(() => f.StatusBar.Items.All(i => i.Id != "org.clock"));
+    }
+
+    [AvaloniaFact]
+    public async Task A_clock_left_running_in_an_agenda_file_is_the_running_clock()
+    {
+        using var f = new OrgFixture();
+        f.Write("work.org", "* TODO Report\n:LOGBOOK:\nCLOCK: [2026-11-03 Tue 13:00]\n:END:\n");
+        await f.Host.Store!.RefreshAsync();
+        await HostTests.WaitUntil(() => f.Host.RunningClock is not null);
+        Assert.Equal(new DateTime(2026, 11, 3, 13, 0, 0), f.Host.RunningClock!.Start);
+        await f.Host.ClockOutAsync();
+        Assert.Contains("=>  1:05", f.Read("work.org"), StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public async Task Refile_moves_an_entry_to_a_heading_of_another_file()
+    {
+        using var f = new OrgFixture();
+        f.Write("inbox.org", "* TODO Call Bob\nnotes\n* Keep\n");
+        f.Write("projects.org", "* Projects\n** Website\n");
+        var inbox = await f.LoadAsync("inbox.org");
+        f.Window.QuickPickResponses.Enqueue(4); // inbox.org, inbox.org / Keep, projects.org, projects.org / Projects, projects.org / Projects / Website
+        await f.Host.RefileAsync(inbox, inbox.Headings[0]);
+        Assert.Equal("* Projects\n** Website\n*** TODO Call Bob\nnotes\n", f.Read("projects.org"));
+        Assert.Equal("* Keep\n", f.Read("inbox.org"));
+    }
+
+    [AvaloniaFact]
+    public async Task Archive_moves_the_subtree_to_the_archive_file()
+    {
+        using var f = new OrgFixture();
+        f.Write("notes.org", "* DONE Old task\nCLOSED: [2026-11-01 Sun 10:00]\n* Keep\n");
+        var doc = await f.LoadAsync("notes.org");
+        await f.Host.ArchiveAsync(doc, doc.Headings[0]);
+        Assert.Equal("* Keep\n", f.Read("notes.org"));
+        var archive = f.Read("notes.org_archive");
+        Assert.StartsWith("#    -*- mode: org -*-\n\n\nArchived entries from file " + f.Dir.Combine("notes.org"), archive, StringComparison.Ordinal);
+        Assert.EndsWith("* DONE Old task\nCLOSED: [2026-11-01 Sun 10:00]\n:PROPERTIES:\n:ARCHIVE_TIME: 2026-11-03 Tue 14:05\n:ARCHIVE_FILE: " + f.Dir.Combine("notes.org")
+            + "\n:ARCHIVE_CATEGORY: notes\n:ARCHIVE_TODO: DONE\n:END:\n", archive, StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public async Task A_template_from_the_settings_captures_into_a_date_tree_and_opens_at_its_cursor()
+    {
+        using var f = new OrgFixture();
+        f.Config.Set(OrgSettings.CaptureTemplates, new[] { new { key = "j", description = "Journal", template = "* %<%H:%M> %^{Title}\n%?", file = "journal.org", datetree = true } });
+        f.Window.InputResponses.Enqueue("Standup");
+        await f.Host.CaptureAsync(key: "j");
+        Assert.Equal("#+TITLE: Journal\n\n* 2026\n** 2026-11 November\n*** 2026-11-03 Tuesday\n**** 14:05 Standup\n\n", f.Read("journal.org"));
+        Assert.Equal(new TextPosition(6, 0), f.Navigation.Opened[^1].Selection!.Value.Start);
+        Assert.Equal(["j"], f.Host.CaptureTemplatesList.Select(t => t.Key));
+    }
+
+    [AvaloniaFact]
+    public async Task Export_writes_the_html_and_markdown_next_to_the_file()
+    {
+        using var f = new OrgFixture();
+        f.Write("plan.org", "#+TITLE: Plan\n* TODO Ship\nText.\n");
+        f.Open("plan.org", "#+TITLE: Plan\n* TODO Ship\nText.\n", TextPosition.Zero);
+        await f.Commands.ExecuteAsync(OrgHost.ExportMarkdown);
+        Assert.Equal("# Plan\n\n## TODO Ship\n\nText.\n", f.Read("plan.md"));
+        await f.Commands.ExecuteAsync(OrgHost.ExportHtml);
+        Assert.Contains("<h2><span class=\"todo\">TODO</span> Ship</h2>", f.Read("plan.html"), StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public async Task Ctrl_c_ctrl_c_in_a_code_block_runs_it_after_asking_and_writes_its_results()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var f = new OrgFixture();
+        var doc = f.Open("code.org", "* Try\n#+BEGIN_SRC sh :var who=org\necho \"hello $who\"\n#+END_SRC\n", new TextPosition(2, 0));
+        f.Window.MessageActionResponses.Enqueue("Cancel");
+        await f.Commands.ExecuteAsync(OrgHost.CtrlCCtrlC);
+        Assert.DoesNotContain("#+RESULTS:", doc.GetText(), StringComparison.Ordinal);
+        f.Window.MessageActionResponses.Enqueue("Run");
+        await f.Commands.ExecuteAsync(OrgHost.CtrlCCtrlC);
+        Assert.EndsWith("#+END_SRC\n\n#+RESULTS:\n: hello org\n", doc.GetText(), StringComparison.Ordinal);
+        Assert.Contains(f.Window.Messages, m => m.Message.Contains("Run this sh code block of code.org", StringComparison.Ordinal));
     }
 }

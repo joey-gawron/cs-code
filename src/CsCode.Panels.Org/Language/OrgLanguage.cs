@@ -9,9 +9,11 @@ namespace CsCode.Panels.Org.Language;
 /// <summary>
 /// The <c>org</c> language: detection (<c>.org</c>), the TextMate grammar and language configuration shipped next to the module (contributed
 /// as files, as a user's own grammar would be), and the outline of a file: folding by heading (a heading folds its subtree, as org's TAB),
-/// property and other drawers, <c>#+BEGIN_…</c> blocks, and the headings as document symbols (breadcrumbs, Go to Symbol, sticky scroll).
+/// property and other drawers, <c>#+BEGIN_…</c> blocks, the headings as document symbols (breadcrumbs, Go to Symbol, sticky scroll), and
+/// semantic tokens for the TODO states of each heading as its file defines them (<c>#+TODO:</c>, else <c>org.todoKeywords</c>): to-do states as
+/// keywords (the grammar's TODO colour), done states as comments (its DONE colour), so a file's own states are coloured too.
 /// </summary>
-public sealed class OrgLanguage : IFoldingRangeProvider, IDocumentSymbolProvider
+public sealed class OrgLanguage : IFoldingRangeProvider, IDocumentSymbolProvider, ISemanticTokensProvider
 {
     public const string LanguageId = "org";
     public const string ScopeName = "source.org";
@@ -29,7 +31,30 @@ public sealed class OrgLanguage : IFoldingRangeProvider, IDocumentSymbolProvider
     public static string ResourceDirectory => Path.Combine(AppContext.BaseDirectory, "Org");
 
     public static LanguageContribution Language(string directory) =>
-        new(LanguageId, ["Org", "org-mode"], [".org"], [], [], ConfigurationPath: Path.Combine(directory, "org.language-configuration.json"));
+        new(LanguageId, ["Org", "org-mode"], [".org", ".org_archive"], [], [], ConfigurationPath: Path.Combine(directory, "org.language-configuration.json"));
+
+    public SemanticTokensLegend Legend { get; } = new(["keyword", "comment"], []);
+
+    public ValueTask<SemanticTokens?> ProvideSemanticTokensAsync(ITextDocument document, CancellationToken ct) =>
+        ValueTask.FromResult<SemanticTokens?>(KeywordTokens(OrgDocument.Parse(document.GetText(), _keywords())));
+
+    /// <summary>The TODO state of each heading as a token (LSP encoding): type 0 (keyword) for a to-do state, 1 (comment) for a done state.</summary>
+    public static SemanticTokens KeywordTokens(OrgDocument doc)
+    {
+        var data = new List<uint>();
+        var previousLine = 0;
+        foreach (var h in doc.Headings)
+        {
+            if (h.Keyword is not { } kw) continue;
+            data.Add((uint)(h.Line - previousLine));
+            data.Add((uint)h.KeywordColumn);
+            data.Add((uint)kw.Length);
+            data.Add(h.IsDone ? 1u : 0u);
+            data.Add(0);
+            previousLine = h.Line;
+        }
+        return new SemanticTokens(data);
+    }
 
     public static GrammarContribution Grammar(string directory) => new(LanguageId, ScopeName, Path.Combine(directory, "org.tmLanguage.json"));
 

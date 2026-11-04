@@ -130,11 +130,17 @@ public sealed class EditTests
     {
         var text = "* TODO Water plants\n  SCHEDULED: <2026-10-27 Tue +1w>\n  :PROPERTIES:\n  :ID: 1\n  :END:\n";
         var result = OrgEdits.SetKeyword(OrgDocument.Parse(text), OrgDocument.Parse(text).Headings[0], "DONE", Now);
-        Assert.Equal("* TODO Water plants\n  SCHEDULED: <2026-11-03 Tue +1w>\n  :PROPERTIES:\n  :ID: 1\n  :LAST_REPEAT: [2026-11-03 Tue 14:05]\n  :END:\n",
+        Assert.Equal("* TODO Water plants\n  SCHEDULED: <2026-11-03 Tue +1w>\n  :PROPERTIES:\n  :ID: 1\n  :LAST_REPEAT: [2026-11-03 Tue 14:05]\n  :END:\n"
+            + "  :LOGBOOK:\n  - State \"DONE\"       from \"TODO\"       [2026-11-03 Tue 14:05]\n  :END:\n",
             OrgText.Apply(text, result.Edits));
         Assert.Contains("Entry repeats", result.Message, StringComparison.Ordinal);
-        Assert.Equal("* TODO Gym\nSCHEDULED: <2026-11-05 Thu .+2d>\n:PROPERTIES:\n:LAST_REPEAT: [2026-11-03 Tue 14:05]\n:END:\n",
-            OnFirst("* TODO Gym\nSCHEDULED: <2026-10-01 Thu .+2d>\n", (d, h) => OrgEdits.SetKeyword(d, h, "DONE", Now)));
+        var gym = OnFirst("* TODO Gym\nSCHEDULED: <2026-10-01 Thu .+2d>\n", (d, h) => OrgEdits.SetKeyword(d, h, "DONE", Now));
+        Assert.Equal("* TODO Gym\nSCHEDULED: <2026-11-05 Thu .+2d>\n:PROPERTIES:\n:LAST_REPEAT: [2026-11-03 Tue 14:05]\n:END:\n"
+            + ":LOGBOOK:\n- State \"DONE\"       from \"TODO\"       [2026-11-03 Tue 14:05]\n:END:\n", gym);
+        // the next time goes on top of the logbook, newest first
+        var again = Run(gym, d => OrgEdits.SetKeyword(d, d.Headings[0], "DONE", Now.AddDays(2)));
+        Assert.Contains(":LOGBOOK:\n- State \"DONE\"       from \"TODO\"       [2026-11-05 Thu 14:05]\n- State \"DONE\"", again, StringComparison.Ordinal);
+        Assert.Equal(2, OrgDocument.Parse(again).Headings[0].StateChanges.Count);
     }
 
     [Fact]

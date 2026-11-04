@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
+using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Input;
@@ -23,7 +24,9 @@ namespace CsCode.Panels.Org.Views;
 /// the agenda as one virtualised list (a header per day, then its entries: a check mark, the TODO state, priority and title, and under them the
 /// time or why the entry is there, its file and tags, overdue and due entries in the error colour); below a splitter, the selected entry's notes.
 /// Keys on the list follow org's agenda (docs/ORG.md): Enter open, Space done, t cycle, s schedule, Shift+D deadline, Shift+Left/Right a day
-/// earlier/later, , + - priority, : tags, n write notes, d w a views, f b . j move, c capture, r refresh. Disposing disposes the view-model.
+/// earlier/later, , + - priority, : tags, n write notes, Shift+I / Shift+O clock in / out, Shift+W refile, $ archive, d w a views, f b . j
+/// move, c capture, r refresh. A habit's row shows its consistency graph; the entry the clock runs on, the time so far. Disposing disposes the
+/// view-model.
 /// </summary>
 public sealed class OrgAgendaView : UserControl, IDisposable, IToolWindowFocus
 {
@@ -232,7 +235,7 @@ public sealed class OrgAgendaView : UserControl, IDisposable, IToolWindowFocus
 
     private Control ItemFor(OrgItemRow row)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("24,*"), RowDefinitions = new RowDefinitions("Auto,Auto"), Margin = new Thickness(4, 2, 4, 3), Background = Brushes.Transparent };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("24,*"), RowDefinitions = new RowDefinitions("Auto,Auto,Auto"), Margin = new Thickness(4, 2, 4, 3), Background = Brushes.Transparent };
         ToolTip.SetShowDelay(grid, 700);
         ToolTip.SetTip(grid, row.Tooltip);
 
@@ -274,11 +277,62 @@ public sealed class OrgAgendaView : UserControl, IDisposable, IToolWindowFocus
         Grid.SetColumn(line, 1);
         grid.Children.Add(line);
 
-        var detail = new TextBlock { Text = row.Detail, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = ThemeBrushes.Get(row.DetailColorKey) };
-        Grid.SetColumn(detail, 1);
-        Grid.SetRow(detail, 1);
-        grid.Children.Add(detail);
+        var detail = new TextBlock { Text = row.Detail, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = ThemeBrushes.Get(row.DetailColorKey), VerticalAlignment = VerticalAlignment.Center };
+        Control second = detail;
+        if (row.ClockText is { } clocked)
+        {
+            // the running clock: its time before the rest
+            var clock = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3 };
+            clock.Children.Add(new Icon("watch", 11) { Foreground = ThemeBrushes.Get("textLink.foreground"), VerticalAlignment = VerticalAlignment.Center });
+            clock.Children.Add(new TextBlock { Text = clocked + " ·", FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = ThemeBrushes.Get("textLink.foreground"), VerticalAlignment = VerticalAlignment.Center });
+            clock.Children.Add(detail);
+            ToolTip.SetTip(clock, "The clock is running on this entry (Shift+O: clock out)");
+            second = clock;
+        }
+        Grid.SetColumn(second, 1);
+        Grid.SetRow(second, 1);
+        grid.Children.Add(second);
+        if (row.Habit is { } habit)
+        {
+            var graph = HabitGraph(habit);
+            Grid.SetColumn(graph, 1);
+            Grid.SetRow(graph, 2);
+            grid.Children.Add(graph);
+        }
         return grid;
+    }
+
+    /// <summary>
+    /// Org-habit's consistency graph: a cell per day (three weeks back, a week ahead), blue before it was due, green while it may be done,
+    /// yellow on its last day, red after; a dot on the days it was done; today outlined; days to come faded.
+    /// </summary>
+    private static Control HabitGraph(IReadOnlyList<OrgHabitDay> days)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 1, Margin = new Thickness(0, 3, 0, 1) };
+        foreach (var day in days)
+        {
+            var color = day.State switch
+            {
+                OrgHabitState.Ahead => "textLink.foreground",
+                OrgHabitState.OnTime => "gitDecoration.addedResourceForeground",
+                OrgHabitState.Due => "list.warningForeground",
+                _ => "list.errorForeground",
+            };
+            var cell = new Border
+            {
+                Width = 7,
+                Height = 11,
+                CornerRadius = new CornerRadius(1),
+                Background = ThemeBrushes.Get(color),
+                Opacity = day.IsFuture ? 0.35 : 0.85,
+                BorderThickness = new Thickness(day.IsToday ? 1 : 0),
+                BorderBrush = ThemeBrushes.Get("foreground"),
+            };
+            if (day.Done) cell.Child = new Ellipse { Width = 3, Height = 3, Fill = ThemeBrushes.Get("editor.background"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            ToolTip.SetTip(cell, day.Date.ToString("ddd d MMM", System.Globalization.CultureInfo.InvariantCulture) + (day.Done ? ": done" : "") + (day.IsToday ? " (today)" : ""));
+            panel.Children.Add(cell);
+        }
+        return panel;
     }
 
     private static OrgRow? RowAt(object? source)
@@ -314,6 +368,10 @@ public sealed class OrgAgendaView : UserControl, IDisposable, IToolWindowFocus
             (_, ":") when row is not null => () => _vm.TagsAsync(row),
             (_, "n") when row is not null => () => _vm.WriteNotesAsync(row),
             (_, "o") when row is not null => () => _vm.OpenAsync(row, preserveFocus: true),
+            (_, "I") when row is not null => () => _vm.ClockInAsync(row),
+            (_, "O") => _vm.ClockOutAsync,
+            (_, "W") when row is not null => () => _vm.RefileAsync(row),
+            (_, "$") when row is not null => () => _vm.ArchiveAsync(row),
             (_, "d") => Do(() => _vm.Mode = OrgAgendaMode.Day),
             (_, "w") => Do(() => _vm.Mode = OrgAgendaMode.Week),
             (_, "a") => Do(() => _vm.Mode = OrgAgendaMode.Todo),
@@ -385,6 +443,12 @@ public sealed class OrgAgendaView : UserControl, IDisposable, IToolWindowFocus
         entries.Add(new MenuEntry("Lower Priority", () => _vm.ShiftPriorityAsync(row, up: false)) { Gesture = "-" });
         entries.Add(new MenuEntry("Tags...", () => _vm.TagsAsync(row)) { Gesture = ":", Icon = "tag" });
         entries.Add(MenuEntry.Separator());
+        entries.Add(row.ClockText is null
+            ? new MenuEntry("Clock In", () => _vm.ClockInAsync(row)) { Gesture = "Shift+I", Icon = "watch" }
+            : new MenuEntry("Clock Out", _vm.ClockOutAsync) { Gesture = "Shift+O", Icon = "watch" });
+        entries.Add(new MenuEntry("Refile...", () => _vm.RefileAsync(row)) { Gesture = "Shift+W" });
+        entries.Add(new MenuEntry("Archive Subtree", () => _vm.ArchiveAsync(row)) { Gesture = "$", Icon = "archive" });
+        entries.Add(MenuEntry.Separator());
         entries.Add(new MenuEntry("Copy Title", () => Copy(row.Title)) { Icon = "copy" });
         return entries;
     }
@@ -393,20 +457,18 @@ public sealed class OrgAgendaView : UserControl, IDisposable, IToolWindowFocus
     {
         var day = row switch { OrgHeaderRow { Date: { } d } => d, OrgEmptyRow e => e.Date, _ => (DateOnly?)null };
         if (day is null) return [];
-        return
-        [
-            new MenuEntry("New Task on This Day...", () => _vm.CaptureAsync(OrgHost.CaptureKind.Task)) { Icon = "add" },
-            new MenuEntry("New Event on This Day...", () => _vm.CaptureAsync(OrgHost.CaptureKind.Event)),
-            MenuEntry.Separator(),
-            new MenuEntry("Show This Day", () => { _vm.GoTo(day.Value); _vm.Mode = OrgAgendaMode.Day; return Task.CompletedTask; }),
-        ];
+        var entries = _vm.CaptureTemplates.Select(t => new MenuEntry($"Capture {t.Description} on This Day...", () => _vm.CaptureAsync(t.Key))).ToList();
+        if (entries.Count > 0) entries[0] = new MenuEntry(entries[0].Header, entries[0].Run) { Icon = "add" };
+        entries.Add(MenuEntry.Separator());
+        entries.Add(new MenuEntry("Show This Day", () => { _vm.GoTo(day.Value); _vm.Mode = OrgAgendaMode.Day; return Task.CompletedTask; }));
+        return entries;
     }
 
     private IReadOnlyList<MenuEntry> MoreMenu() =>
     [
-        new MenuEntry("Capture Task...", () => _vm.CaptureAsync(OrgHost.CaptureKind.Task)) { Icon = "add" },
-        new MenuEntry("Capture Note...", () => _vm.CaptureAsync(OrgHost.CaptureKind.Note)) { Icon = "note" },
-        new MenuEntry("Capture Event...", () => _vm.CaptureAsync(OrgHost.CaptureKind.Event)),
+        .. _vm.CaptureTemplates.Select(t => new MenuEntry($"Capture {t.Description}...", () => _vm.CaptureAsync(t.Key)) { Gesture = t.Key }),
+        MenuEntry.Separator(),
+        new MenuEntry("Clock Out", _vm.ClockOutAsync) { Gesture = "Shift+O", Icon = "watch", IsEnabled = _vm.ClockRuns },
         MenuEntry.Separator(),
         new MenuEntry("Go to Date...", _vm.JumpAsync) { Gesture = "J" },
         new MenuEntry("Open Notes File", _vm.OpenNotesFileAsync),

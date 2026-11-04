@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using CsCode.Core.Text;
@@ -27,25 +28,28 @@ public static class OrgEdits
     /// <summary>
     /// Sets the heading's TODO keyword (null removes it). Becoming done adds <c>CLOSED: [now]</c> when <paramref name="logDone"/> (leaving a done
     /// state removes it) — unless the entry repeats: a scheduled or deadline timestamp with a repeater moves to its next repetition, the entry
-    /// keeps its to-do state and gets <c>:LAST_REPEAT:</c>, as org does.
+    /// keeps its to-do state and gets <c>:LAST_REPEAT:</c> and, when <paramref name="logRepeat"/>, a <c>- State "DONE" from "TODO" [now]</c>
+    /// line in its <c>:LOGBOOK:</c> (what a habit's history is made of), as org does.
     /// </summary>
-    public static OrgEditResult SetKeyword(OrgDocument doc, OrgHeading h, string? keyword, DateTime now, bool logDone = true)
+    public static OrgEditResult SetKeyword(OrgDocument doc, OrgHeading h, string? keyword, DateTime now, bool logDone = true, bool logRepeat = true)
     {
         var keywords = doc.Keywords;
         var toDone = keywords.IsDone(keyword);
         var planning = h.Planning.ToList();
         var props = new List<KeyValuePair<string, string>>();
+        List<string>? log = null;
         string? message = null;
 
         if (toDone && !h.IsDone && planning.Exists(p => p.Kind != OrgPlanningKind.Closed && p.Timestamp.Repeater is not null))
         {
             var today = DateOnly.FromDateTime(now);
-            keyword = keywords.IsTodo(h.Keyword) ? h.Keyword : keywords.NotDone.FirstOrDefault();
             for (var i = 0; i < planning.Count; i++)
                 if (planning[i].Kind != OrgPlanningKind.Closed && planning[i].Timestamp.Repeater is not null)
                     planning[i] = (planning[i].Kind, planning[i].Timestamp.Repeat(today));
             planning.RemoveAll(p => p.Kind == OrgPlanningKind.Closed);
             props.Add(new("LAST_REPEAT", Inactive(now).ToString()));
+            if (logRepeat) log = [StateLine(keyword is null ? "" : keyword, h.Keyword, now)];
+            keyword = keywords.IsTodo(h.Keyword) ? h.Keyword : keywords.NotDone.FirstOrDefault();
             var next = planning.FirstOrDefault(p => p.Kind != OrgPlanningKind.Closed && p.Timestamp.Repeater is not null);
             message = $"Entry repeats: {Name(next.Kind)} {next.Timestamp}";
         }
@@ -54,8 +58,40 @@ public static class OrgEdits
 
         var edits = new List<TextEdit>();
         if (keyword != h.Keyword) edits.Add(KeywordEdit(doc, h, keyword));
-        if (MetaEdit(doc, h, planning, props) is { } meta) edits.Add(meta);
+        if (MetaEdit(doc, h, planning, props, log) is { } meta) edits.Add(meta);
+        if (log is not null && LogbookEdit(doc, h, log) is { } logbook) edits.Add(logbook);
         return new OrgEditResult(edits, Message: message);
+    }
+
+    /// <summary>Org's state log line: <c>- State "DONE"       from "TODO"       [2026-11-03 Tue 14:05]</c>.</summary>
+    internal static string StateLine(string to, string? from, DateTime now) =>
+        string.Format(CultureInfo.InvariantCulture, "- State {0,-12} from {1,-12} {2}", "\"" + to + "\"", "\"" + from + "\"", Inactive(now));
+
+    /// <summary>Sets properties of the heading (in its drawer, created when it has none); other lines of the drawer stay as they are.</summary>
+    public static OrgEditResult SetProperties(OrgDocument doc, OrgHeading h, IEnumerable<KeyValuePair<string, string>> properties)
+    {
+        var edit = MetaEdit(doc, h, h.Planning.ToList(), properties.ToList());
+        return new OrgEditResult(edit is null ? [] : [edit]);
+    }
+
+    /// <summary>
+    /// The edit that puts <paramref name="lines"/> at the top of the entry's existing <c>:LOGBOOK:</c> (newest first, as org writes it); null
+    /// when the entry has none (<see cref="MetaEdit"/> creates the drawer then).
+    /// </summary>
+    internal static TextEdit? LogbookEdit(OrgDocument doc, OrgHeading h, IReadOnlyList<string> lines)
+    {
+        if (h.LogbookLine is not { } at) return null;
+        var indent = LeadingBlanks(doc.Lines[at]);
+        return ReplaceLines(doc, at + 1, at + 1, [.. lines.Select(l => indent + l)]);
+    }
+
+    /// <summary>
+    /// Adds lines to the entry's logbook: at the top of its <c>:LOGBOOK:</c>, or in a new drawer right after its planning line and properties.
+    /// </summary>
+    public static OrgEditResult AddToLogbook(OrgDocument doc, OrgHeading h, IReadOnlyList<string> lines)
+    {
+        var edit = LogbookEdit(doc, h, lines) ?? MetaEdit(doc, h, h.Planning.ToList(), [], [.. lines]);
+        return new OrgEditResult(edit is null ? [] : [edit]);
     }
 
     /// <summary>The next (or previous) TODO state of the heading in its file's keyword sequence.</summary>
@@ -126,7 +162,8 @@ public static class OrgEdits
     /// Rewrites the lines between the heading and its content (the planning line and the property drawer) with <paramref name="planning"/> and
     /// the properties set in <paramref name="setProperties"/>; every other line of the drawer stays as it is. Null when nothing changes.
     /// </summary>
-    private static TextEdit? MetaEdit(OrgDocument doc, OrgHeading h, List<(OrgPlanningKind Kind, OrgTimestamp Timestamp)> planning, List<KeyValuePair<string, string>> setProperties)
+    private static TextEdit? MetaEdit(OrgDocument doc, OrgHeading h, List<(OrgPlanningKind Kind, OrgTimestamp Timestamp)> planning, List<KeyValuePair<string, string>> setProperties,
+        List<string>? newLogbook = null)
     {
         var indent = MetaIndent(doc, h);
         var lines = new List<string>();
@@ -153,6 +190,14 @@ public static class OrgEdits
             lines.Add(indent + ":END:");
         }
 
+        // an entry without a logbook gets one right after its properties (where org's log goes)
+        if (newLogbook is { Count: > 0 } && h.LogbookLine is null)
+        {
+            lines.Add(indent + ":LOGBOOK:");
+            lines.AddRange(newLogbook.Select(l => indent + l));
+            lines.Add(indent + ":END:");
+        }
+
         var start = h.Line + 1;
         var old = new List<string>();
         for (var i = start; i < h.ContentStart; i++) old.Add(doc.Lines[i]);
@@ -172,7 +217,7 @@ public static class OrgEdits
 
     // the planning line's own indentation; else the drawer's; else that of the entry's first line of text when it is indented (a file written
     // with org-adapt-indentation); else none (org's default since 9.5)
-    private static string MetaIndent(OrgDocument doc, OrgHeading h)
+    internal static string MetaIndent(OrgDocument doc, OrgHeading h)
     {
         if (h.PlanningLine is { } pl) return LeadingBlanks(doc.Lines[pl]);
         if (h.PropertiesLine is { } pr) return LeadingBlanks(doc.Lines[pr]);
@@ -181,7 +226,7 @@ public static class OrgEdits
         return "";
     }
 
-    private static string LeadingBlanks(string line)
+    internal static string LeadingBlanks(string line)
     {
         var n = 0;
         while (n < line.Length && line[n] is ' ' or '\t') n++;

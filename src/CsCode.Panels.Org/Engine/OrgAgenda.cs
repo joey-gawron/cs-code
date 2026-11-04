@@ -49,7 +49,8 @@ public sealed record OrgAgendaDay(DateOnly Date, IReadOnlyList<OrgAgendaItem> It
 
 /// <param name="DeadlineWarningDays">How many days before a deadline it shows on today (org's <c>org-deadline-warning-days</c>); a deadline's own <c>-3d</c> wins.</param>
 /// <param name="ShowDone">Whether entries already done are listed on their day (org lists them).</param>
-public sealed record OrgAgendaOptions(int DeadlineWarningDays = 14, bool ShowDone = true);
+/// <param name="HabitsOnlyToday">Whether habits (<c>:STYLE: habit</c>) are listed on today only, not on their repetitions after it (org's default).</param>
+public sealed record OrgAgendaOptions(int DeadlineWarningDays = 14, bool ShowDone = true, bool HabitsOnlyToday = true);
 
 /// <summary>
 /// Builds org's agenda views from parsed documents: <see cref="Build"/> (the day or week agenda: scheduled entries, deadlines with their
@@ -69,13 +70,17 @@ public static class OrgAgenda
             foreach (var h in doc.Headings)
             {
                 if (h.IsDone && !options.ShowDone) continue;
+                if (IsArchived(h)) continue; // org-agenda-skip-archived-trees
+                var habit = options.HabitsOnlyToday && OrgHabit.IsHabit(h);
                 var line = h.PlanningLine ?? h.Line;
                 if (h.Scheduled is { Active: true } scheduled)
                 {
                     foreach (var d in scheduled.OccurrencesIn(from, to))
                     {
-                        // on its day, and on each repetition from today on (as org: a past day keeps it, today adds Sched. Nx)
+                        // on its day, and on each repetition from today on (as org: a past day keeps it, today adds Sched. Nx); a habit on today only
                         if (d < today && d != scheduled.Date) continue;
+                        if (habit && d > today) continue;
+                        if (d == today && todayShown && !h.IsDone && scheduled.Date < today) continue; // a repetition on today of an overdue entry: Sched. Nx below
                         byDay[d].Add(new OrgAgendaItem(OrgAgendaKind.Scheduled, d, doc, h, scheduled, 0, line));
                     }
                     if (todayShown && !h.IsDone && scheduled.Date < today)
@@ -86,6 +91,7 @@ public static class OrgAgenda
                     foreach (var d in deadline.OccurrencesIn(from, to))
                     {
                         if (d < today && d != deadline.Date) continue;
+                        if (d == today && todayShown && !h.IsDone && deadline.Date < today) continue; // shown as overdue below
                         byDay[d].Add(new OrgAgendaItem(OrgAgendaKind.Deadline, d, doc, h, deadline, 0, line));
                     }
                     if (todayShown && !h.IsDone)
@@ -123,6 +129,9 @@ public static class OrgAgenda
             .Select(x => x.item)];
     }
 
+    /// <summary>In an archived tree: tagged <c>:ARCHIVE:</c> (itself or an ancestor).</summary>
+    public static bool IsArchived(OrgHeading h) => h.AllTags.Contains("ARCHIVE");
+
     internal static int PriorityRank(char? priority) => priority switch
     {
         null => 'B' - 'A',
@@ -136,7 +145,7 @@ public static class OrgAgenda
         var items = new List<OrgAgendaItem>();
         foreach (var doc in documents)
             foreach (var h in doc.Headings)
-                if (h.IsTodo && (keyword is null || h.Keyword == keyword))
+                if (h.IsTodo && !IsArchived(h) && (keyword is null || h.Keyword == keyword))
                     items.Add(new OrgAgendaItem(OrgAgendaKind.Todo, today, doc, h, h.Deadline ?? h.Scheduled, 0, h.Line));
         return items;
     }

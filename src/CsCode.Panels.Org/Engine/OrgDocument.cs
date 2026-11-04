@@ -84,6 +84,16 @@ public enum OrgPlanningKind { Scheduled, Deadline, Closed }
 /// <summary>An active timestamp in a heading's title or body (an appointment), with the line it is on.</summary>
 public sealed record OrgBodyTimestamp(OrgTimestamp Timestamp, int Line, int Column);
 
+/// <summary>A <c>CLOCK:</c> line: <c>CLOCK: [start]--[end] =&gt;  1:05</c>, or a running clock without an end.</summary>
+public sealed record OrgClockLine(int Line, DateTime Start, DateTime? End)
+{
+    public bool IsRunning => End is null;
+    public TimeSpan Duration(DateTime now) => (End ?? now) - Start;
+}
+
+/// <summary>A logged change of TODO state: <c>- State "DONE"       from "TODO"       [2026-11-03 Tue 14:05]</c>.</summary>
+public sealed record OrgStateChange(int Line, string To, string? From, DateTime At);
+
 /// <summary>
 /// One heading (entry) of an org file, with its line ranges: the heading line, the planning line right below it, the property drawer, the
 /// entry's own content (up to the next heading of any level) and its subtree (up to the next heading of its level or above).
@@ -133,6 +143,14 @@ public sealed class OrgHeading
 
     public IReadOnlyList<OrgBodyTimestamp> Timestamps { get; internal set; } = [];
 
+    /// <summary>The entry's <c>:LOGBOOK:</c> line and its <c>:END:</c> line, or null.</summary>
+    public int? LogbookLine { get; internal set; }
+    public int? LogbookEndLine { get; internal set; }
+    /// <summary>The entry's own <c>CLOCK:</c> lines (in its logbook or its text; not its children's).</summary>
+    public IReadOnlyList<OrgClockLine> Clocks { get; internal set; } = [];
+    /// <summary>The entry's logged state changes (<c>- State "DONE" from "TODO" [...]</c>), as written.</summary>
+    public IReadOnlyList<OrgStateChange> StateChanges { get; internal set; } = [];
+
     /// <summary>The <c>CATEGORY</c> property of this heading or the nearest ancestor that has one, else the file's category.</summary>
     public string Category { get; internal set; } = "";
     /// <summary>The heading's own tags, then its ancestors' and the file's (<c>#+FILETAGS</c>), without repeats.</summary>
@@ -181,6 +199,8 @@ public sealed class OrgDocument
     private static readonly Regex KeywordRe = new(@"^[ \t]*#\+(\w+):[ \t]*(.*?)[ \t]*$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex BlockStartRe = new(@"^[ \t]*#\+begin_(\w+)", RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex BlockEndRe = new(@"^[ \t]*#\+end_(\w+)", RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex ClockRe = new(@"^[ \t]*CLOCK:[ \t]*(\[[^\]]+\])(?:--(\[[^\]]+\])(?:[ \t]*=>[ \t]*-?\d+:\d\d)?)?[ \t]*$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex StateRe = new(@"^[ \t]*-[ \t]+State[ \t]+""([^""]*)""[ \t]+from[ \t]+(?:""([^""]*)"")?[ \t]*(\[[^\]]+\])", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private OrgDocument(string fileName, IReadOnlyList<string> lines, OrgTodoKeywords keywords)
     {
@@ -436,14 +456,17 @@ public sealed class OrgDocument
         return items;
     }
 
-    // active timestamps in the title and the entry's own text: not in drawers (clock lines, logbook) or blocks (#+BEGIN_SRC ... #+END_SRC)
+    // active timestamps in the title and the entry's own text (not in drawers: clock lines, logbook; not in #+BEGIN_SRC ... #+END_SRC blocks),
+    // and the logbook: its drawer, CLOCK lines and logged state changes
     private void ParseBody(OrgHeading h)
     {
         List<OrgBodyTimestamp>? found = null;
+        List<OrgClockLine>? clocks = null;
+        List<OrgStateChange>? states = null;
         foreach (var (ts, column, _) in OrgTimestamp.FindAll(Lines[h.Line]))
             if (ts.Active) (found ??= []).Add(new OrgBodyTimestamp(ts, h.Line, column));
         string? block = null;
-        var inDrawer = false;
+        string? drawer = null;
         for (var i = h.ContentStart; i < h.End; i++)
         {
             var line = Lines[i];
@@ -452,18 +475,40 @@ public sealed class OrgDocument
                 if (BlockEndRe.Match(line) is { Success: true } e && e.Groups[1].Value.Equals(block, StringComparison.OrdinalIgnoreCase)) block = null;
                 continue;
             }
-            if (inDrawer)
+            if (drawer is not null && DrawerEndRe.IsMatch(line))
             {
-                if (DrawerEndRe.IsMatch(line)) inDrawer = false;
+                if (drawer == "LOGBOOK" && h.LogbookEndLine is null) h.LogbookEndLine = i;
+                drawer = null;
                 continue;
             }
+            if (line.Contains("CLOCK:", StringComparison.Ordinal) && ClockRe.Match(line) is { Success: true } c
+                && OrgTimestamp.Parse(c.Groups[1].Value) is { } start)
+            {
+                var end = c.Groups[2].Success ? OrgTimestamp.Parse(c.Groups[2].Value) : null;
+                (clocks ??= []).Add(new OrgClockLine(i, start.StartTime, end?.StartTime));
+                continue;
+            }
+            if (line.Contains("State", StringComparison.Ordinal) && StateRe.Match(line) is { Success: true } st && OrgTimestamp.Parse(st.Groups[3].Value) is { } at)
+            {
+                (states ??= []).Add(new OrgStateChange(i, st.Groups[1].Value, st.Groups[2].Success && st.Groups[2].Length > 0 ? st.Groups[2].Value : null, at.StartTime));
+                continue;
+            }
+            if (drawer is not null) continue;
             if (BlockStartRe.Match(line) is { Success: true } b) { block = b.Groups[1].Value; continue; }
-            if (DrawerStartRe.IsMatch(line) && !DrawerEndRe.IsMatch(line)) { inDrawer = true; continue; }
+            if (DrawerStartRe.Match(line) is { Success: true } d && !DrawerEndRe.IsMatch(line))
+            {
+                drawer = d.Groups[1].Value.ToUpperInvariant();
+                if (drawer == "LOGBOOK" && h.LogbookLine is null) h.LogbookLine = i;
+                continue;
+            }
             if (line.IndexOf('<') < 0) continue;
             foreach (var (ts, column, _) in OrgTimestamp.FindAll(line))
                 if (ts.Active) (found ??= []).Add(new OrgBodyTimestamp(ts, i, column));
         }
+        if (h.LogbookEndLine is null) h.LogbookLine = null; // an unclosed drawer is no drawer
         h.Timestamps = found ?? (IReadOnlyList<OrgBodyTimestamp>)[];
+        h.Clocks = clocks ?? (IReadOnlyList<OrgClockLine>)[];
+        h.StateChanges = states ?? (IReadOnlyList<OrgStateChange>)[];
     }
 
     /// <summary>The entry whose text contains <paramref name="line"/> (the last heading at or above it), or null before the first heading.</summary>
@@ -481,18 +526,38 @@ public sealed class OrgDocument
         return found;
     }
 
-    /// <summary>The entry's own text (no heading, planning or property drawer), with the indentation its lines share removed.</summary>
+    /// <summary>The entry's own text (no heading, planning line or drawers), with the indentation its lines share removed.</summary>
     public string BodyText(OrgHeading h, int maxLines = 400)
     {
-        var start = h.ContentStart;
-        var end = Math.Min(h.End, start + maxLines);
-        while (end > start && string.IsNullOrWhiteSpace(Lines[end - 1])) end--;
-        while (start < end && string.IsNullOrWhiteSpace(Lines[start])) start++;
+        var kept = new List<string>();
+        string? drawer = null;
+        for (var i = h.ContentStart; i < h.End && kept.Count < maxLines; i++)
+        {
+            var line = Lines[i];
+            if (drawer is not null) { if (DrawerEndRe.IsMatch(line)) drawer = null; continue; }
+            if (DrawerStartRe.Match(line) is { Success: true } d && !DrawerEndRe.IsMatch(line) && HasDrawerEnd(i + 1, h.End)) { drawer = d.Groups[1].Value; continue; }
+            kept.Add(line);
+        }
+        return Dedent(kept, truncated: kept.Count >= maxLines);
+    }
+
+    private bool HasDrawerEnd(int from, int end)
+    {
+        for (var i = from; i < end; i++) if (DrawerEndRe.IsMatch(Lines[i])) return true;
+        return false;
+    }
+
+    private static string Dedent(List<string> lines, bool truncated)
+    {
+        var start = 0;
+        var end = lines.Count;
+        while (end > start && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
+        while (start < end && string.IsNullOrWhiteSpace(lines[start])) start++;
         if (start >= end) return "";
         var indent = int.MaxValue;
         for (var i = start; i < end; i++)
         {
-            var l = Lines[i];
+            var l = lines[i];
             if (string.IsNullOrWhiteSpace(l)) continue;
             var n = 0;
             while (n < l.Length && (l[n] == ' ' || l[n] == '\t')) n++;
@@ -501,11 +566,11 @@ public sealed class OrgDocument
         var sb = new System.Text.StringBuilder();
         for (var i = start; i < end; i++)
         {
-            var l = Lines[i];
+            var l = lines[i];
             sb.Append(l.Length >= indent ? l[indent..] : l.TrimStart());
             if (i + 1 < end) sb.Append('\n');
         }
-        if (end < h.End && end - start >= maxLines) sb.Append("\n…");
+        if (truncated) sb.Append("\n…");
         return sb.ToString();
     }
 }
