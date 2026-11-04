@@ -348,7 +348,27 @@ public sealed class GitHost : IDisposable
             var answer = await Windows.ShowMessageAsync(MessageSeverity.Warning, what, [new MessageAction(action), new MessageAction("Cancel", IsCloseAffordance: true)]).ConfigureAwait(false);
             if (answer != action) return;
         }
+        await KeepInLocalHistoryAsync(repo, entries).ConfigureAwait(false);
         await Guard(() => repo.DiscardAsync(entries)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Local history keeps each file as it is before a discard overwrites or deletes it (an "Undo Discard" entry: restoring it undoes the discard;
+    /// docs/LOCAL-HISTORY.md). Bounded: a slow history never holds the discard for more than a few seconds.
+    /// </summary>
+    private async Task KeepInLocalHistoryAsync(GitRepository repo, IReadOnlyList<GitStatusEntry> entries)
+    {
+        if (_sp.GetService<Core.History.ILocalHistoryService>() is not { IsEnabled: true } history) return;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            await Task.WhenAll(entries.Where(e => !e.IsIgnored).Select(e => history.AddEntryAsync(repo.ToUri(e.Path), Core.History.LocalHistorySources.UndoDiscard, cts.Token).AsTask()))
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+        {
+            Output().AppendLine($"[{DateTime.Now:HH:mm:ss}] Local history did not keep every discarded file: {ex.Message}");
+        }
     }
 
     /// <summary>
