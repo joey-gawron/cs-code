@@ -409,6 +409,14 @@ its edit is applied before the move, so references and imports follow the file; 
 reveal active file, `files.exclude`, watcher batches applied by diffing only the affected loaded directories, type-ahead, filter box (loaded nodes), context menu incl. contributed items, empty state, multi-root.
 **Error List** (counts and chips, search, group by file, sort, double-click navigates, aggregation and sorting on a worker at <= 10 Hz, 50k rows apply as one property change).
 **Output** (channel dropdown, clear, shows the most recent 5,000 lines of a channel; the ring keeps 2 MB). **Find Results** (target of `cscode.references.show`; preview lines read lazily).
+**Bookmark Window** (`ToolWindows/Bookmarks`, Visual Studio's; View > Bookmark Window, `bookmarks.showWindow`, Ctrl+K Ctrl+W in the Visual Studio
+keymap from an editor, as every Ctrl+K chord of that keymap; bottom well, hidden by default): every bookmark of the workspace grouped by file in navigation order, each row a check box (enabled), its
+name (the label, else "Line N"), its line and the line's text (an open document's follows typing; a closed file is read when its rows are shown, 16
+files cached). Toolbar: Previous, Next, Enable or Disable All, Rename, Delete, Clear All, and the count. Double-click or Enter goes to it, F2
+renames it (an input box; empty removes the label), Space enables or disables it, Delete deletes it (on a file's row: the file's bookmarks),
+Ctrl+C copies `path(line): text`; the right-click menu has all of these. A file that is gone loses its bookmarks when the window goes to one.
+The bookmarks and their commands are the editor's (`IBookmarkService`, docs/EDITOR.md §7g; Edit > Bookmarks runs them); the window's model
+rebuilds its rows once per UI turn when they change and is disposed with its view when the window is hidden.
 
 **Status bar items owned by the shell:** Ln/Col, indent, encoding, EOL, language mode (picker), diagnostics counts (computed off-thread), memory (with UI stall counters in its tooltip), debug state, language-server status, notification bell.
 Other modules (Vim mode, remote indicator) register their own through `IStatusBarService`; text may use `$(icon-name)`. The Vim adapter's items:
@@ -641,5 +649,8 @@ cannot switch the repair off yet.
   thread, so parsing the 21 embedded themes and completing the current one never runs on the UI thread before the first frame; the other themes are
   completed on a pool thread right after). The Settings page gets `IColorThemeService` through `SearchServices.Themes` (optional; without it the
   Appearance section is hidden).
+* **Bookmarks**: `AddBookmarkFileTracking()` (after `AddCsCodeRemote`) makes the editor's bookmark service an `IFileOperationParticipant`, so an
+  Explorer rename, move or delete takes the bookmarks along; `AppShutdown` disposes `IBookmarkService` with the step-2 participants, so a change
+  made within its 400 ms debounce is in the last state flush; `BookmarksToolWindow` is registered in `AddCsCodeShell`.
 * The brief's `IExtensionService.ActivateByEventAsync("onStartupFinished")` is **not** used: the extension system was removed (commit "Drop the extension system").
 * The removed system's remnants elsewhere (extension command ids, `ExtensionsDir`, the `ExtensionId` members, Core wording, the README tagline) were deleted at integration.
