@@ -134,11 +134,30 @@ public sealed class EditorModalSurface : IDisposable
     /// <summary>Moves the caret (no selection) and scrolls it into view when it left the viewport.</summary>
     public void SetCaret(TextPosition position)
     {
+        PlaceCaret(position);
+        _v.TextArea.Caret.BringCaretToView();
+    }
+
+    /// <summary>Moves the caret (no selection) without scrolling: a layer running a command at the other carets in turn (multi-cursor).</summary>
+    public void PlaceCaret(TextPosition position)
+    {
         var area = _v.TextArea;
         var offset = _v.Document.OffsetAt(position);
         if (!area.Selection.IsEmpty) area.ClearSelection();
         if (_v.Editor.CaretOffset != offset) _v.Editor.CaretOffset = offset;
-        area.Caret.BringCaretToView();
+    }
+
+    /// <summary>
+    /// Line edits at several carets as ONE batch and undo step (Vim's <c>dd</c> at every caret): <paramref name="edits"/> in positions of the
+    /// current text, the carets after them in positions of the new text, <paramref name="primary"/> indexing <paramref name="caretsAfter"/>.
+    /// </summary>
+    public void EditLinesAtCarets(IReadOnlyList<TextEdit> edits, IReadOnlyList<EditorCaretState> caretsAfter, int primary)
+    {
+        if (_disposed || _v.Document.IsReadOnly || caretsAfter.Count == 0) return;
+        var doc = _v.Document;
+        var set = _v.MultiCursor.Current;
+        var offsets = edits.Select(e => new Editing.OffsetEdit(doc.OffsetAt(e.Range.Start), doc.OffsetAt(e.Range.End), e.NewText)).ToArray();
+        _v.MultiCursor.ApplyLineEdits(set, offsets, caretsAfter.Select(c => (c.Anchor, c.Active)).ToArray(), primary);
     }
 
     /// <summary>A stream selection [<paramref name="start"/>, <paramref name="end"/>) with the caret at <paramref name="caret"/>.</summary>

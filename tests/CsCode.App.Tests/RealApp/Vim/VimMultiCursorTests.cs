@@ -128,12 +128,61 @@ public class VimMultiCursorTests
     }
 
     [AvaloniaFact(Timeout = 120_000)]
+    public async Task Motions_with_counts_move_every_caret_by_vims_own_rules()
+    {
+        await using var app = await VimApp.StartAsync("foo.bar baz\nab cd, ef\n", settings: Quiet);
+        app.View.Modal.Controller.SetSelections([TextRange.At(0, 0), TextRange.At(1, 0)]);
+        await app.KeysAsync("w");
+        Assert.Equal([new TextPosition(0, 3), new TextPosition(1, 3)], CaretPositions(app)); // "." is a word of its own; "cd"
+        await app.KeysAsync("2w");
+        Assert.Equal([new TextPosition(0, 8), new TextPosition(1, 7)], CaretPositions(app));
+        await app.KeysAsync("$");
+        Assert.Equal([new TextPosition(0, 10), new TextPosition(1, 8)], CaretPositions(app)); // on each last character
+        await app.KeysAsync("0l");
+        Assert.Equal([new TextPosition(0, 1), new TextPosition(1, 1)], CaretPositions(app));
+        Assert.Equal(2, Carets(app));
+        Assert.Equal("foo.bar baz\nab cd, ef\n", app.Text);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task X_and_dd_delete_at_every_caret_in_one_change()
+    {
+        await using var app = await VimApp.StartAsync("abc\nabc\nabc\nkeep\n", settings: Quiet);
+        app.View.Modal.Controller.SetSelections([TextRange.At(0, 1), TextRange.At(1, 1), TextRange.At(2, 2)]);
+        await app.KeysAsync("x");
+        Assert.Equal("ac\nac\nab\nkeep\n", app.Text);
+        Assert.Equal([new TextPosition(0, 1), new TextPosition(1, 1), new TextPosition(2, 1)], CaretPositions(app)); // the last was at the line's end
+        await app.KeysAsync("2x");
+        Assert.Equal("a\na\na\nkeep\n", app.Text);
+        await app.KeysAsync("u");
+        Assert.Equal("ac\nac\nab\nkeep\n", app.Text); // one u for every caret's x
+        app.View.Modal.Controller.SetSelections([TextRange.At(0, 0), TextRange.At(2, 0)]);
+        await app.KeysAsync("dd");
+        Assert.Equal("ac\nkeep\n", app.Text);
+        Assert.Equal(2, Carets(app));
+        await app.KeysAsync("u");
+        Assert.Equal("ac\nac\nab\nkeep\n", app.Text);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Dd_deletes_a_line_shared_by_two_carets_once_and_the_last_line_without_leaving_an_empty_one()
+    {
+        await using var app = await VimApp.StartAsync("one\ntwo\nthree\nfour", settings: Quiet);
+        app.View.Modal.Controller.SetSelections([TextRange.At(0, 0), TextRange.At(0, 2), TextRange.At(3, 1)]);
+        await app.KeysAsync("dd");
+        Assert.Equal("two\nthree", app.Text);
+        Assert.Equal([new TextPosition(0, 0), new TextPosition(1, 0)], CaretPositions(app));
+        await app.KeysAsync("u");
+        Assert.Equal("one\ntwo\nthree\nfour", app.Text);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
     public async Task Any_other_normal_mode_key_collapses_to_the_primary_and_runs_there()
     {
         await using var app = await VimApp.StartAsync("abc\nabc\nabc\n", settings: Quiet);
         app.View.Modal.Controller.SetSelections([TextRange.At(0, 1), TextRange.At(1, 1), TextRange.At(2, 1)]);
-        await app.KeysAsync("x");
+        await app.KeysAsync("~");
         Assert.Equal(1, Carets(app));
-        Assert.Equal("ac\nabc\nabc\n", app.Text);
+        Assert.Equal("aBc\nabc\nabc\n", app.Text);
     }
 }
