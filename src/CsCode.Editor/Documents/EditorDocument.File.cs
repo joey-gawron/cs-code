@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace CsCode.Editor.Documents;
 
 // File half of EditorDocument: load, atomic save, reload, external-change handling, encoding/EOL state.
-public sealed partial class EditorDocument
+public sealed partial class EditorDocument : IRelocatableDocument
 {
     private const int MaxSaveParticipantRetries = 3;
 
@@ -41,7 +41,7 @@ public sealed partial class EditorDocument
     /// <summary>User-facing reason for large-file mode (for the status bar / info banner), null otherwise.</summary>
     public string? LargeFileReason { get; private set; }
 
-    /// <summary>Fires after Save As changed <see cref="Uri"/> (the factory re-keys its table).</summary>
+    /// <summary>Fires after Save As or a move (<see cref="RelocateAsync"/>) changed <see cref="Uri"/> (the factory re-keys its table).</summary>
     internal IEventSource<(Uri Old, Uri New)> UriChanged => _uriChanged;
 
     // ---- construction from disk / as untitled ----
@@ -203,6 +203,43 @@ public sealed partial class EditorDocument
             _uriChanged.Fire((old, target));
             return 0;
         }).ConfigureAwait(false);
+        StartWatching();
+    }
+
+    /// <summary>
+    /// The file was moved to <paramref name="target"/> (the Explorer's rename or move): it becomes the document's identity as after Save As, but
+    /// nothing is written, so unsaved changes stay unsaved and the undo history stays. What the file is known to hold on disk is kept (a move does
+    /// not change it), so the watch on the new path sees no external change.
+    /// </summary>
+    public async Task RelocateAsync(Uri target, CancellationToken ct = default)
+    {
+        if (_svc is null || IsUntitled) throw new InvalidOperationException("Only a document backed by a file can follow it to a new path.");
+        if (target == Uri) return;
+        await _ioGate.WaitAsync(ct).ConfigureAwait(false); // not in the middle of a save or reload of the old path
+        try
+        {
+            var stat = await _svc.FileSystem.StatAsync(target, ct).ConfigureAwait(false);
+            await OnUi(() =>
+            {
+                var old = Uri;
+                _registration?.Dispose(); // Closed for the old identity (LSP didClose)
+                Uri = target;
+                if (stat is not null)
+                    lock (_stateGate)
+                    {
+                        _lastKnownStat = stat;
+                        _isReadOnly = stat.IsReadOnly;
+                    }
+                if (!_languageExplicit && _detectLanguage is { } detect && !IsLargeFile) ApplyLanguageId(detect(target, GetLineText(0)));
+                _registration = _svc.Documents.Register(this); // Opened for the new one
+                _uriChanged.Fire((old, target));
+                return 0;
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            _ioGate.Release();
+        }
         StartWatching();
     }
 

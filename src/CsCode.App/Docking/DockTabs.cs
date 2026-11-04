@@ -195,7 +195,15 @@ public sealed class EditorTab : ShellDocument
     /// <summary>The document behind this tab. Released on dispose: Dock.Avalonia 12.1 keeps closed dockables reachable after their content was
     /// presented (verified in isolation with a bare DockControl), so a closed tab must not pin its editor document or view.</summary>
     public IEditorDocument Doc => _doc ?? throw new ObjectDisposedException(nameof(EditorTab));
-    public Uri Uri { get; }
+    public Uri Uri { get; private set; }
+
+    /// <summary>The tab's file moved (its document already follows it: <see cref="DocumentWell.RelocateAsync"/>): the tab shows the new path.</summary>
+    internal void Relocate(Uri uri)
+    {
+        Uri = uri;
+        Id = "doc:" + uri;
+        Title = TitleFor(uri);
+    }
     public bool IsDirty => _doc?.IsDirty ?? false;
 
     /// <summary>A preview tab (italic) is replaced by the next preview open; editing or double-click promotes it.</summary>
