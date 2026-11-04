@@ -118,10 +118,18 @@ Visual Studio's Git Changes / VS Code's Source Control view in one:
   the file, a file deleted on disk index ↔ empty; a conflicted file opens as a file. Revisions are read with `git cat-file --filters`, i.e. as
   checkout would write them (core.autocrlf, `.gitattributes` eol), so they compare line by line with the file.
 * **Discard** asks first; for untracked files it says they will be DELETED (`git clean -f`), tracked files are restored from the index (`git checkout`).
+  When local history is composed (`ILocalHistoryService`, docs/LOCAL-HISTORY.md), each file is first kept as an "Undo Discard" entry (at most
+  5 s), so the Timeline can restore what was discarded, untracked files included.
 * Pull, push (a branch without upstream is published to `origin`, else the first remote, with `-u`), fetch (`--prune`) and sync (pull then push,
   confirmed unless `git.confirmSync` is off) run under a cancellable progress notification; the window shows them as busy. Any git failure shows
   *"Git: <git's own message>"* with a Show Output action and is logged in the **Git** output channel. Refusals printed on stdout ("nothing to
   commit") are used when stderr is empty.
+
+## Timeline (Git History)
+
+`GitTimelineProvider` (`Engine/GitTimeline.cs`, registered by `AddCsCodeGit` as a Core `ITimelineProvider`) lists the commits that changed a
+file in the Timeline window, merged by time with its local history: `git log --follow`, paged without git's `--skip` (wrong with `--follow` past
+a rename), each version read under the path it had in that commit. Details: docs/LOCAL-HISTORY.md, "Git History".
 
 ## Status bar
 
