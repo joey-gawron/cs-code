@@ -31,7 +31,7 @@ namespace CsCode.App.Vim;
 /// dispatcher callbacks of at most <see cref="SliceBudget"/>. Nothing here waits: shell actions and app commands are started and left running.</item>
 /// </list>
 /// </summary>
-public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
+public sealed partial class VimIntegration : IShellKeyInterceptor, IDisposable
 {
     public const string ModeItemId = "vim.mode";
     public const string CommandLineItemId = "vim.cmdline";
@@ -167,6 +167,11 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         _subscriptions.Add(_vim.EnabledChanged.Subscribe(on => _ui.Post(() => SetEnabled(on))));
         _subscriptions.Add(_editors.ViewOpened.Subscribe(view => { if (_enabled) Attach(view); }));
         _subscriptions.Add(_editors.ViewClosing.Subscribe(Detach));
+        // Add Next Occurrence and friends from a key binding (⌘D, Shift+Alt+.) leave selections at the carets: Visual mode at the primary
+        _subscriptions.Add(_commands.Executed.Subscribe(e =>
+        {
+            if (SelectsAtCarets(e.Id)) _ui.Post(SelectionsToVisual);
+        }));
         if (_documents is not null)
             _subscriptions.Add(_documents.Closed.Subscribe(e => _ui.Post(() => ReleaseBuffer(e.Document))));
         InstallIntegrationBindings();
@@ -247,6 +252,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         var vimView = created = new VimView(view, surface, buffer, host);
         host.View = vimView;
         surface.Attach(redo => UndoRedo(vimView, redo));
+        surface.AllowMultipleCarets = true; // multi-cursor under Vim: what the keys do at several carets is decided here (MultiCaretKey)
         buffer.SetActiveEngine(null);
         var engine = _vim.CreateEngine(host);
         engine.SliceBudget = SliceBudget; // also the first slice, which runs inside the key
@@ -394,6 +400,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
         if (v.Surface.IsCompletionOpen) p |= EditorPopups.Completion;
         if (v.Surface.IsSignatureHelpOpen) p |= EditorPopups.SignatureHelp;
         if (v.Surface.IsSnippetActive) p |= EditorPopups.Snippet;
+        if (v.Surface.CaretCount > 1) p |= EditorPopups.MultipleCarets;
         return p;
     }
 
@@ -423,6 +430,7 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             return true;
         }
         ClearMessage(v);
+        if (v.Surface.CaretCount > 1 && MultiCaretKey(v, key, text)) return true;
         var result = Run(v, () => key is { } k ? v.Engine.HandleKey(k) : v.Engine.HandleText(text!));
         if (result == VimKeyResult.Handled) HoldForClipboard(v);
         return result == VimKeyResult.Handled;
@@ -719,7 +727,8 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
             try
             {
                 await _commands.ExecuteAsync(id, arguments).ConfigureAwait(true);
-                CollapseNavigationSelection();
+                if (SelectsAtCarets(id)) SelectionsToVisual(); // gb: the selections are kept, in Visual mode
+                else CollapseNavigationSelection();
             }
             catch (CommandNotFoundException) { ShowError(view, $"E492: Not an editor command: {id}"); }
             catch (OperationCanceledException) { }
@@ -815,17 +824,20 @@ public sealed class VimIntegration : IShellKeyInterceptor, IDisposable
     private void InstallIntegrationBindings()
     {
         var map = _vim.Session.Mappings;
-        void Add(string lhs, string command)
+        void Add(string lhs, string command, MapModes modes = MapModes.Normal)
         {
             var keys = lhs.Select(c => (int)c).ToArray();
-            if (map.Lookup(MapModes.Normal, keys).Exact is not null) return;
-            map.Add(new Mapping { Lhs = keys, Modes = MapModes.Normal, NoRemap = true, LhsText = lhs, Commands = [new VimBindingCommand(command, null)], Origin = IntegrationOrigin });
+            if (map.Lookup(modes, keys).Exact is not null) return;
+            map.Add(new Mapping { Lhs = keys, Modes = modes, NoRemap = true, LhsText = lhs, Commands = [new VimBindingCommand(command, null)], Origin = IntegrationOrigin });
         }
         Add("gD", "editor.action.goToDeclaration");
         Add("gi", "editor.action.goToImplementation");
         Add("]d", "editor.action.marker.next");
         Add("[d", "editor.action.marker.prev");
         Add("g.", KnownCommands.QuickFix);
+        // VSCodeVim's gb: Add Next Occurrence (the word at the cursor selected, then each next one added as a caret, in Visual mode)
+        Add("gb", "editor.action.addSelectionToNextFindMatch");
+        Add("gb", "editor.action.addSelectionToNextFindMatch", MapModes.Visual);
         // Enter in Insert mode goes through the editor (language-aware indentation); o and O should keep the indentation too.
         _vim.Session.Options.AutoIndent = true;
         if (_vim.VimrcLoaded.IsCompleted) _ = _vim.ReloadVimrcAsync(); // the vimrc's own settings win over these defaults

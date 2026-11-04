@@ -249,6 +249,9 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     /// <summary>True while a modal layer is attached (typing bursts then never continue an undo group: the layer groups its changes).</summary>
     internal bool ModalAttached => _modal?.IsAttached == true;
 
+    /// <summary>The attached layer handles several carets itself (<see cref="EditorModalSurface.AllowMultipleCarets"/>): multi-cursor stays on.</summary>
+    internal bool ModalAllowsMultipleCarets => _modal is { IsAttached: true, AllowMultipleCarets: true };
+
     /// <summary>The attached layer's undo/redo, offered the editor's Undo/Redo first (true = handled).</summary>
     internal Func<bool, bool>? ModalUndoRedo => _modal?.UndoRedoHandler;
 

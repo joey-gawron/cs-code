@@ -73,6 +73,19 @@ public class VimKeyPolicyTests
     }
 
     [Fact]
+    public void With_several_carets_insert_modes_editing_and_caret_keys_are_the_editors_which_acts_at_every_caret()
+    {
+        foreach (var key in new[] { "backspace", "delete", "tab", "shift+tab", "left", "right", "up", "down", "home", "end" })
+            Assert.Equal(VimKeyOwner.App, Owner(key, VimMode.Insert, EditorPopups.MultipleCarets));
+        // Esc and Enter stay Vim's (the integration leaves Insert mode at every caret; Enter is typed through the editor at each), and so do
+        // its Insert-mode Ctrl keys; Normal mode is unaffected
+        foreach (var key in new[] { "escape", "enter", "ctrl+w" })
+            Assert.Equal(VimKeyOwner.Vim, Owner(key, VimMode.Insert, EditorPopups.MultipleCarets));
+        foreach (var key in new[] { "backspace", "left", "down" })
+            Assert.Equal(VimKeyOwner.Vim, Owner(key, VimMode.Normal, EditorPopups.MultipleCarets));
+    }
+
+    [Fact]
     public void The_command_line_takes_ctrl_keys_but_not_save()
     {
         foreach (var key in new[] { "ctrl+r", "ctrl+u", "ctrl+w", "ctrl+h", "ctrl+v", "ctrl+n", "ctrl+p", "ctrl+b", "ctrl+e" })

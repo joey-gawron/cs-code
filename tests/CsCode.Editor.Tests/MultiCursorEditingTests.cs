@@ -343,6 +343,79 @@ public class MultiCursorEditingTests
         ViewHost.Pump();
     }
 
+    // ------------------------------------------------------------------ a modal layer that handles several carets (the Vim adapter)
+
+    [AvaloniaFact]
+    public async Task A_modal_layer_that_allows_several_carets_gets_them_from_the_commands_and_alt_click_and_can_hold_set_and_edit_them()
+    {
+        var (host, doc, view, window) = await Open("foo foo foo\nbar\nbaz", file: "test.txt");
+        using var _ = host;
+        var surface = view.Modal;
+        surface.Attach(null);
+        surface.AllowMultipleCarets = true;
+        view.Controller.SetSelection(TextRange.FromLines(0, 0, 0, 3));
+        await host.Commands.ExecuteAsync(MultiCursorCommands.SelectHighlights);
+        ViewHost.Pump();
+        Assert.Equal(3, surface.CaretCount);
+        Assert.DoesNotContain(host.Window.StatusMessages, m => m.Contains("Vim", StringComparison.Ordinal));
+
+        // held: the layer moving the primary (its cursor) keeps the others
+        surface.SetCarets([new EditorCaretState(new TextPosition(1, 0), new TextPosition(1, 0)), new EditorCaretState(new TextPosition(2, 0), new TextPosition(2, 0))], primary: 0);
+        using (surface.HoldCarets()) surface.SetCaret(new TextPosition(1, 2));
+        Assert.Equal(2, surface.CaretCount);
+        Assert.Equal(new TextPosition(1, 2), surface.Carets[surface.PrimaryCaretIndex].Active);
+        // not held: a move of the primary collapses, as a click does
+        surface.SetCaret(new TextPosition(1, 1));
+        Assert.Equal(1, surface.CaretCount);
+
+        // one edit per caret as one undo step, the carets where the edits say
+        surface.SetCarets([new EditorCaretState(new TextPosition(1, 3), new TextPosition(1, 3)), new EditorCaretState(new TextPosition(2, 3), new TextPosition(2, 3))], primary: 1);
+        surface.EditAtCarets((i, c) => (new TextRange(c.Active, c.Active), i == 0 ? "!" : "?", 1));
+        Assert.Equal("foo foo foo\nbar!\nbaz?", doc.GetText());
+        Assert.Equal([new TextPosition(1, 4), new TextPosition(2, 4)], surface.Carets.Select(c => c.Active));
+        Assert.Equal(1, surface.PrimaryCaretIndex);
+        view.Controller.Undo();
+        ViewHost.Pump();
+        Assert.Equal("foo foo foo\nbar\nbaz", doc.GetText());
+
+        // Alt+Click adds a caret under the layer too; detaching turns multi-cursor off again
+        surface.SetCarets([new EditorCaretState(new TextPosition(0, 0), new TextPosition(0, 0))], primary: 0);
+        var at = doc.OffsetAt(new TextPosition(2, 1));
+        var p = PointOf(window, view, at);
+        p = new Point(p.X - 2 - view.TextView.WideSpaceWidth / 2 + 1, p.Y);
+        window.MouseDown(p, MouseButton.Left, RawInputModifiers.Alt);
+        window.MouseUp(p, MouseButton.Left, RawInputModifiers.Alt);
+        ViewHost.Pump();
+        Assert.Equal(2, surface.CaretCount);
+        surface.Detach();
+        Assert.False(surface.AllowMultipleCarets);
+        surface.Attach(null);
+        Assert.Equal(1, surface.CaretCount);
+    }
+
+    [AvaloniaFact]
+    public async Task Under_a_block_caret_the_other_carets_are_drawn_as_blocks_too()
+    {
+        var (host, _, view, window) = await Open("one\ntwo\nthree", file: "test.txt");
+        using var _h = host;
+        view.Modal.Attach(null);
+        view.Modal.AllowMultipleCarets = true;
+        view.Modal.CaretShape = EditorCaretShape.Block;
+        view.Controller.SetSelections([TextRange.At(0, 0), TextRange.At(2, 1)]);
+        view.Controller.Focus();
+        ViewHost.Pump();
+        var at = PointOf(window, view, view.Document.OffsetAt(new TextPosition(2, 1))); // 2 px into the 'h'
+        var color = ((Avalonia.Media.ISolidColorBrush)view.Palette.Caret).Color;
+        // a block covers the character's cell: caret-coloured pixels right of where a 2 px line caret would end, compared with the same
+        // cell without the caret (the glyph's own pixels)
+        var inside = new PixelRect((int)at.X + 1, (int)at.Y - 4, 3, 8);
+        var with = CountPixels(window.CaptureRenderedFrame()!, color, 90, inside);
+        view.MultiCursor.Collapse();
+        ViewHost.Pump();
+        var without = CountPixels(window.CaptureRenderedFrame()!, color, 90, inside);
+        Assert.True(with >= without + 8, $"a block caret over the 'h' of line 3: {with} caret-coloured pixels with it, {without} without");
+    }
+
     // ------------------------------------------------------------------ view state
 
     [AvaloniaFact]

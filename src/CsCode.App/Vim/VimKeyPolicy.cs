@@ -9,7 +9,12 @@ public enum VimKeyOwner { Vim, App }
 
 /// <summary>What the editor has open at the caret; in Insert mode it decides who gets Tab, Enter, the arrows and Esc.</summary>
 [Flags]
-public enum EditorPopups { None = 0, Completion = 1, SignatureHelp = 2, Snippet = 4 }
+public enum EditorPopups
+{
+    None = 0, Completion = 1, SignatureHelp = 2, Snippet = 4,
+    /// <summary>The editor has several carets (multi-cursor): in Insert mode its editing and caret keys act at every caret.</summary>
+    MultipleCarets = 8,
+}
 
 /// <summary>
 /// Ownership of the keys that arrive as key presses (characters arrive as text input and always go to Vim), resolved the way VSCodeVim resolves
@@ -63,6 +68,9 @@ public static class VimKeyPolicy
                 case "up" or "down" or "pageup" or "pagedown" when completion: return VimKeyOwner.App;
                 case "up" or "down" when (popups & EditorPopups.SignatureHelp) != 0 && !key.Shift: return VimKeyOwner.App; // overloads
                 case "escape" when completion || (popups & EditorPopups.SignatureHelp) != 0: return VimKeyOwner.App; // closes the popup first
+                // several carets: Backspace, Delete, Tab and the caret keys are the editor's, which acts at every caret (Vim's act at its one cursor)
+                case "backspace" or "delete" or "tab" or "left" or "right" or "up" or "down" or "home" or "end" when (popups & EditorPopups.MultipleCarets) != 0:
+                    return VimKeyOwner.App;
             }
         }
         return VimKeyOwner.Vim; // Esc, Enter, Tab, Backspace, Delete, arrows, Home/End, PageUp/PageDown: Vim keys in every mode

@@ -97,6 +97,7 @@ public sealed class EditorModalSurface : IDisposable
     {
         if (!IsAttached) return;
         IsAttached = false;
+        _allowMultipleCarets = false;
         UndoRedoHandler = null;
         CaretShape = EditorCaretShape.Line;
         SetPatternHighlight(null);
@@ -237,6 +238,89 @@ public sealed class EditorModalSurface : IDisposable
     {
         if (IsAttached && _shape != EditorCaretShape.Line) _v.TextView.InvalidateLayer(KnownLayer.Caret);
     }
+
+    // ---------------------------------------------------------------- several carets (the editor's multi-cursor under the layer)
+
+    private bool _allowMultipleCarets;
+
+    /// <summary>
+    /// Whether the editor's multi-cursor stays on while the layer is attached: Add Next Occurrence, Insert Cursor Above/Below and Alt+Click add
+    /// carets, and the editing keys the layer passes through act at every caret. The layer decides what its own keys do with several carets
+    /// (<see cref="HoldCarets"/>, <see cref="SetCarets"/>, <see cref="EditAtCarets"/>). Off by default (attaching collapses the carets and the
+    /// commands add none); turning it off collapses them; <see cref="Detach"/> turns it off.
+    /// </summary>
+    public bool AllowMultipleCarets
+    {
+        get => _allowMultipleCarets;
+        set
+        {
+            _allowMultipleCarets = value;
+            if (!value) _v.MultiCursor.Collapse();
+        }
+    }
+
+    /// <summary>The number of carets (1 with a single caret).</summary>
+    public int CaretCount => _v.MultiCursor.IsActive ? _v.MultiCursor.Current.Count : 1;
+
+    /// <summary>Every caret in document order: its selection's anchor and its active end (equal for a plain caret). See <see cref="PrimaryCaretIndex"/>.</summary>
+    public IReadOnlyList<EditorCaretState> Carets
+    {
+        get
+        {
+            var set = _v.MultiCursor.Current;
+            var list = new EditorCaretState[set.Count];
+            for (var i = 0; i < list.Length; i++) list[i] = new EditorCaretState(_v.PositionOf(set[i].Anchor), _v.PositionOf(set[i].Active));
+            return list;
+        }
+    }
+
+    /// <summary>Which of <see cref="Carets"/> is the primary: the editor's own caret, the one the layer's cursor is.</summary>
+    public int PrimaryCaretIndex => _v.MultiCursor.Current.PrimaryIndex;
+
+    /// <summary>Places the carets (positions validated against the text; overlapping ones merge); <paramref name="primary"/> becomes the editor's caret.</summary>
+    public void SetCarets(IReadOnlyList<EditorCaretState> carets, int primary)
+    {
+        if (_disposed || carets.Count == 0) return;
+        var doc = _v.Document;
+        var ranges = new Editing.CaretRange[carets.Count];
+        for (var i = 0; i < ranges.Length; i++) ranges[i] = new Editing.CaretRange(doc.OffsetAt(doc.Validate(carets[i].Anchor)), doc.OffsetAt(doc.Validate(carets[i].Active)));
+        _v.MultiCursor.Move(Editing.CaretSet.Create(ranges, primary, _v.Settings.MultiCursorLimit));
+    }
+
+    /// <summary>Back to the primary caret alone.</summary>
+    public void CollapseCarets() => _v.MultiCursor.Collapse();
+
+    /// <summary>
+    /// While the result is not disposed, the layer moving the primary caret (its cursor, its selection) does not collapse the other carets, as
+    /// any other move of the primary does: the layer runs a command at every caret and places the others itself.
+    /// </summary>
+    public IDisposable HoldCarets() => _disposed ? Disposable.Empty : _v.MultiCursor.HoldCarets();
+
+    /// <summary>
+    /// One edit per caret as ONE batch, change event and undo step: <paramref name="perCaret"/>(index, caret) gives the range to replace
+    /// (positions of the current text), its new text and where in that text the caret goes; null leaves that caret's text alone (the caret
+    /// keeps its place, moved by the edits before it). Every caret ends up where its edit says.
+    /// </summary>
+    public void EditAtCarets(Func<int, EditorCaretState, (TextRange Range, string Text, int CaretInText)?> perCaret)
+    {
+        if (_disposed || _v.Document.IsReadOnly) return;
+        var doc = _v.Document;
+        var set = _v.MultiCursor.Current;
+        var index = 0;
+        var batch = Editing.MultiCaretOperations.PerCaret(set, c =>
+        {
+            var i = index++;
+            if (perCaret(i, new EditorCaretState(doc.PositionAt(c.Anchor), doc.PositionAt(c.Active))) is not { } edit) return (c.Active, c.Active, "", 0);
+            return (doc.OffsetAt(edit.Range.Start), doc.OffsetAt(edit.Range.End), edit.Text, edit.CaretInText);
+        });
+        _v.MultiCursor.ApplyBatch(set, batch);
+    }
+
+    /// <summary>The layer's caret shape is drawn (not the editor's line caret): other carets are drawn in that shape too.</summary>
+    internal bool DrawsShapedCaret => HidesNativeCaret;
+
+    /// <summary>Draws the layer's caret shape at <paramref name="pos"/> (multi-cursor's other carets, on the caret layer).</summary>
+    internal void DrawCaretShape(TextView textView, DrawingContext context, TextViewPosition pos) => _caretRenderer.DrawAt(textView, context, pos);
 
     // ---------------------------------------------------------------- viewport
 
@@ -479,6 +563,13 @@ public sealed class EditorModalSurface : IDisposable
             if (shape == EditorCaretShape.Line || !owner.IsAttached || !textView.VisualLinesValid || !owner._v.TextArea.IsKeyboardFocusWithin) return;
             var pos = owner._v.TextArea.Caret.Position;
             if (textView.GetVisualLine(pos.Line) is null) return;
+            DrawAt(textView, context, pos);
+        }
+
+        /// <summary>The layer's caret shape at <paramref name="pos"/> (also the other carets of multi-cursor).</summary>
+        public void DrawAt(TextView textView, DrawingContext context, TextViewPosition pos)
+        {
+            var shape = owner._shape;
             var top = textView.GetVisualPosition(pos, VisualYPosition.LineTop) - textView.ScrollOffset;
             var bottom = textView.GetVisualPosition(pos, VisualYPosition.LineBottom) - textView.ScrollOffset;
             var width = textView.WideSpaceWidth;

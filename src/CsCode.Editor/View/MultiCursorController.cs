@@ -148,19 +148,44 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     /// <summary>How many times the carets were moved along changes made elsewhere (at the end of a document update, or earlier when something reads them).</summary>
     internal int FollowCount { get; private set; }
 
-    private bool Enabled => !_disposed && !_v.IsDisposed && !_v.ModalAttached;
+    /// <summary>Off while a modal layer is attached, unless the layer handles several carets itself (<see cref="EditorModalSurface.AllowMultipleCarets"/>).</summary>
+    private bool Enabled => !_disposed && !_v.IsDisposed && (!_v.ModalAttached || _v.ModalAllowsMultipleCarets);
+
+    private int _hold;
+
+    /// <summary>
+    /// While the result is not disposed, moves of the primary caret by someone else do not collapse the other carets: a modal layer (Vim) moving
+    /// its cursor as part of a command it runs at every caret, which places the other carets itself.
+    /// </summary>
+    internal IDisposable HoldCarets()
+    {
+        _hold++;
+        var released = false;
+        return Disposable.Create(() =>
+        {
+            if (released) return;
+            released = true;
+            _hold--;
+        });
+    }
 
     private int Limit => _v.Settings.MultiCursorLimit;
 
-    /// <summary>AvaloniaEdit's caret and selection as a caret range (a box selection counts as its caret).</summary>
+    /// <summary>
+    /// AvaloniaEdit's caret and selection as a caret range (a box selection counts as its caret). A selection's ends are its own: a modal layer
+    /// may put the caret inside it (Vim's Visual mode keeps the caret ON the last selected character).
+    /// </summary>
     private CaretRange PrimaryFromEditor()
     {
         var area = _v.TextArea;
         var caret = area.Caret.Offset;
         if (area.Selection is SimpleSelection { IsEmpty: false } s)
         {
-            var anchor = _v.Document.Buffer.GetOffset(s.StartPosition.Location);
-            return new CaretRange(anchor, caret);
+            var buffer = _v.Document.Buffer;
+            var anchor = buffer.GetOffset(s.StartPosition.Location);
+            var end = buffer.GetOffset(s.EndPosition.Location);
+            // the caret at the selection's start: it runs backwards from its end (Vim draws a backward Visual selection this way)
+            return caret == anchor && caret != end ? new CaretRange(end, anchor) : new CaretRange(anchor, end);
         }
         return CaretRange.At(caret);
     }
@@ -236,7 +261,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     private void OnPrimaryMoved(object? sender, EventArgs e)
     {
         // A move of the primary that is not ours and not the buffer's own (its edits move the caret along): a click, Page Down, a command...
-        if (_internal || _inUpdate || _applying || _set is null || _altClick is not null) return;
+        if (_internal || _inUpdate || _applying || _set is null || _altClick is not null || _hold > 0) return;
         Collapse();
     }
 
@@ -669,7 +694,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     private bool CheckEnabled()
     {
         if (Enabled) return true;
-        if (_v.ModalAttached) FeatureSupport.Status(_v, "Multiple cursors are not available while Vim mode is on");
+        if (_v.ModalAttached && !_v.ModalAllowsMultipleCarets) FeatureSupport.Status(_v, "Multiple cursors are not available while Vim mode is on");
         return false;
     }
 
@@ -948,12 +973,18 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
             if (to <= from) return;
             var brush = owner._v.Palette.Caret;
             var doc = textView.Document;
+            var modal = owner._v.ModalAttached ? owner._v.Modal : null; // a modal layer's caret shape (Vim's block in Normal mode) at every caret
             for (var i = from; i < to; i++)
             {
                 if (i == set.PrimaryIndex) continue;
                 var location = doc.GetLocation(set[i].Active);
                 if (textView.GetVisualLine(location.Line) is null) continue; // folded away
                 var pos = new AvaloniaEdit.TextViewPosition(location);
+                if (modal is not null && modal.DrawsShapedCaret)
+                {
+                    modal.DrawCaretShape(textView, context, pos);
+                    continue;
+                }
                 var top = textView.GetVisualPosition(pos, VisualYPosition.LineTop) - textView.ScrollOffset;
                 var bottom = textView.GetVisualPosition(pos, VisualYPosition.LineBottom) - textView.ScrollOffset;
                 context.FillRectangle(brush, new Rect(top.X, top.Y, 2, Math.Max(1, bottom.Y - top.Y)));
