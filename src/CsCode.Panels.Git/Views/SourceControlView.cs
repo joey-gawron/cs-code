@@ -271,6 +271,11 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
                     ? new MenuEntry("_Unstage Changes", () => _vm.UnstageAsync(files)) { Icon = IconKey.Remove }
                     : new MenuEntry("_Stage Changes", () => _vm.StageAsync(files)) { Icon = IconKey.Add },
                 row.Group == ScmGroup.Changes ? new MenuEntry("_Discard Changes", () => _vm.DiscardAsync(files)) { Icon = IconKey.Undo } : null,
+            ],
+            // a conflicted file: resolve every block to one side (the editor's merge-conflict commands, VS Code's scm/resourceState/context items)
+            [
+                row.Group == ScmGroup.Merge && _vm.HasCommand(GitHost.AcceptAllCurrent) ? new MenuEntry("Accept All C_urrent", () => _vm.RunFileCommandAsync(GitHost.AcceptAllCurrent, row)) : null,
+                row.Group == ScmGroup.Merge && _vm.HasCommand(GitHost.AcceptAllIncoming) ? new MenuEntry("Accept All _Incoming", () => _vm.RunFileCommandAsync(GitHost.AcceptAllIncoming, row)) : null,
             ]);
     }
 
