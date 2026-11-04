@@ -288,6 +288,19 @@ public class ColorDecoratorViewTests
     }
 
     [AvaloniaFact]
+    public async Task The_settings_are_registered_with_vs_code_s_defaults_for_the_settings_panel()
+    {
+        using var host = ViewHost.Create();
+        var registered = host.Config.Properties.GroupBy(p => p.Key).ToDictionary(g => g.Key, g => g.Last());
+        Assert.True(registered[ColorDecoratorFeature.EnabledKey].Default!.Value.GetBoolean());
+        Assert.Equal(500, registered[ColorDecoratorFeature.LimitKey].Default!.Value.GetInt32());
+        Assert.Equal("clickAndHover", registered[ColorDecoratorFeature.ActivatedOnKey].Default!.Value.GetString());
+        Assert.Equal("auto", registered[ColorDecoratorFeature.DefaultDecoratorsKey].Default!.Value.GetString());
+        Assert.Equal(["auto", "always", "never"], registered[ColorDecoratorFeature.DefaultDecoratorsKey].Schema!.Value.GetProperty("enum").EnumerateArray().Select(e => e.GetString()));
+        await Task.CompletedTask;
+    }
+
+    [AvaloniaFact]
     public async Task Large_file_mode_has_no_colour_decorators()
     {
         using var host = ViewHost.Create();
