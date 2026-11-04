@@ -41,6 +41,8 @@ internal static class EditorFeatures
             list.Add(new Features.QuickDiffFeature(view, quickDiff));
         if (view.Document.Uri.IsFile && view.Services.Provider?.GetService(typeof(Core.Scm.ILineBlameProvider)) is Core.Scm.ILineBlameProvider blame)
             list.Add(new Features.InlineBlameFeature(view, blame));
+        // merge conflict blocks: tint, labels, ruler marks, context keys (any document with markers, git or not)
+        if (Features.MergeConflictFeature.AppliesTo(view.Document)) list.Add(new Features.MergeConflictFeature(view, view.Factory.MergeConflicts));
         return list;
     }
 }

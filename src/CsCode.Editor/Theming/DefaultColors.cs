@@ -191,6 +191,18 @@ public static class DefaultColors
         Def("diffEditor.removedTextBackground", "#FF000033", "#FF000033");
         Def("diffEditor.insertedLineBackground", "#9BB95533", "#9BB95533");
         Def("diffEditor.removedLineBackground", "#FF000033", "#FF000033");
+        // merge conflicts (VS Code's editorColors: headers #40C8AE / #40A6FF at 50 %, #606060 at 40 %; contents at 40 % of their header;
+        // high contrast: no tint, merge.border outlines the marker lines and colours the ruler)
+        Def("merge.currentHeaderBackground", "#40C8AE80", "#40C8AE80", "", "");
+        Alpha("merge.currentContentBackground", "merge.currentHeaderBackground", 0.4);
+        Def("merge.incomingHeaderBackground", "#40A6FF80", "#40A6FF80", "", "");
+        Alpha("merge.incomingContentBackground", "merge.incomingHeaderBackground", 0.4);
+        Def("merge.commonHeaderBackground", "#60606066", "#60606066", "", "");
+        Alpha("merge.commonContentBackground", "merge.commonHeaderBackground", 0.4);
+        Def("merge.border", "", "", "#C3DF6F", "#007ACC");
+        Chain("editorOverviewRuler.currentContentForeground", new Themed("merge.currentHeaderBackground"), L("#40C8AE80", "#40C8AE80", "#C3DF6F", "#007ACC"));
+        Chain("editorOverviewRuler.incomingContentForeground", new Themed("merge.incomingHeaderBackground"), L("#40A6FF80", "#40A6FF80", "#C3DF6F", "#007ACC"));
+        Chain("editorOverviewRuler.commonContentForeground", new Themed("merge.commonHeaderBackground"), L("#60606066", "#60606066", "#C3DF6F", "#007ACC"));
         Alias("minimap.background", "editor.background");
         Def("minimap.selectionHighlight", "#264F78", "#ADD6FF");
         Def("minimap.findMatchHighlight", "#D18616", "#D18616");

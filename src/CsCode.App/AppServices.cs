@@ -136,6 +136,9 @@ public static class AppServices
         // Diff editor tabs (Source Control, Compare with Saved / Clipboard / Selected); the well is resolved on first use.
         services.AddSingleton(sp => new DiffEditorService(sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<IEditorViewFactory>(), () => sp.GetRequiredService<DocumentWell>()));
         services.AddSingleton<Core.Scm.IDiffEditorService>(sp => sp.GetRequiredService<DiffEditorService>());
+        // 3-way merge editor tabs (Source Control's Resolve in Merge Editor, docs/SOURCE-CONTROL.md)
+        services.AddSingleton(sp => new MergeEditorService(sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<IEditorViewFactory>(), () => sp.GetRequiredService<DocumentWell>()));
+        services.AddSingleton<Core.Scm.IMergeEditorService>(sp => sp.GetRequiredService<MergeEditorService>());
 
         services.AddSingleton<IToolWindow, ExplorerToolWindow>();
         services.AddSingleton<IToolWindow, OutputToolWindow>();

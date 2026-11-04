@@ -63,7 +63,8 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     {
         None = 0,
         Diagnostics = 1, Highlights = 2, Find = 4, Scm = 8, Breakpoints = 16, Cursors = 32,
-        All = Diagnostics | Highlights | Find | Scm | Breakpoints | Cursors,
+        Merge = 64, // merge conflict blocks (MergeConflictFeature)
+        All = Diagnostics | Highlights | Find | Scm | Breakpoints | Cursors | Merge,
     }
 
     public ScrollDecorations(CodeEditorControl view, Grid host)
@@ -113,6 +114,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     internal List<LineMarker> Scm { get; } = [];
     internal List<LineMarker> Breakpoints { get; } = [];
     internal List<LineMarker> Cursors { get; } = [];
+    internal List<LineMarker> Merge { get; } = [];
     internal int MarksVersion { get; private set; }
 
     /// <summary>The sources the last collection read again (tests).</summary>
@@ -121,6 +123,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     /// <summary>Every list of marks, lowest priority first (the order they are drawn in).</summary>
     internal IEnumerable<List<LineMarker>> AllMarks()
     {
+        yield return Merge;
         yield return Scm;
         yield return Breakpoints;
         yield return Highlights;
@@ -216,7 +219,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
     private void OnDocumentChanged()
     {
         // offsets of the anchored marks (diagnostics, find matches) move with the text; recollect once typing pauses, not per keystroke
-        _dirty |= Sources.Diagnostics | Sources.Highlights | Sources.Find | Sources.Cursors;
+        _dirty |= Sources.Diagnostics | Sources.Highlights | Sources.Find | Sources.Cursors | Sources.Merge;
         if (!_editTimer.IsEnabled)
         {
             _editTimer.Interval = EditDelay;
@@ -259,6 +262,7 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
         if (dirty.HasFlag(Sources.Scm)) CollectScm(doc.LineCount);
         if (dirty.HasFlag(Sources.Breakpoints)) CollectBreakpoints(doc.LineCount);
         if (dirty.HasFlag(Sources.Cursors)) CollectCursors(doc);
+        if (dirty.HasFlag(Sources.Merge)) CollectMerge(doc.LineCount);
         MarksVersion++;
         Ruler.Refresh();
         Minimap.OnMarksChanged();
@@ -326,6 +330,14 @@ internal sealed class ScrollDecorations : IThemeAware, ISettingsAware, IDisposab
         if (!Options.ShowBreakpoints || _v.Feature<DebugFeature>() is not { } f) return;
         foreach (var bp in f.Breakpoints.OrderBy(b => b.Line))
             if (bp.Line >= 0 && bp.Line < lineCount) Breakpoints.Add(new LineMarker(bp.Line, bp.Line, MarkerKind.Breakpoint));
+    }
+
+    private void CollectMerge(int lineCount)
+    {
+        Merge.Clear();
+        if (_v.Feature<MergeConflictFeature>() is not { } f) return;
+        var last = Math.Max(0, lineCount - 1);
+        foreach (var m in f.Marks()) Merge.Add(new LineMarker(Math.Clamp(m.Line, 0, last), Math.Clamp(m.EndLine, 0, last), m.Kind));
     }
 
     private void CollectCursors(AvaloniaEdit.Document.TextDocument doc)
@@ -405,6 +417,9 @@ internal sealed class DecorationBrushes
         markers[(int)MarkerKind.Info] = B("editorOverviewRuler.infoForeground");
         markers[(int)MarkerKind.Warning] = B("editorOverviewRuler.warningForeground");
         markers[(int)MarkerKind.Error] = B("editorOverviewRuler.errorForeground");
+        markers[(int)MarkerKind.MergeCommon] = B("editorOverviewRuler.commonContentForeground");
+        markers[(int)MarkerKind.MergeCurrent] = B("editorOverviewRuler.currentContentForeground");
+        markers[(int)MarkerKind.MergeIncoming] = B("editorOverviewRuler.incomingContentForeground");
         markers[(int)MarkerKind.Cursor] = B("editorCursor.foreground");
         var mini = new IBrush[(int)MarkerKind.Cursor + 1];
         Array.Fill(mini, Avalonia.Media.Brushes.Transparent);

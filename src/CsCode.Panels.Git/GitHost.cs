@@ -16,7 +16,7 @@ namespace CsCode.Panels.Git;
 /// the Explorer's Select for Compare / Compare with Selected items and a window-focus refresh, and performs the operations the Source Control
 /// window and the commands share, surfacing git's errors as messages (and in the "Git" output channel). Resolved at startup through the tool window.
 /// </summary>
-public sealed class GitHost : IDisposable
+public sealed partial class GitHost : IDisposable
 {
     public const string ViewId = "scm";
     public const string ShowScm = "workbench.view.scm";
@@ -65,7 +65,7 @@ public sealed class GitHost : IDisposable
         Config = services.GetService<IConfigurationService>();
         Commands = services.GetService<ICommandService>();
         Bindings = services.GetService<IKeybindingService>();
-        if (Commands is { } commands) RegisterCommands(commands);
+        if (Commands is { } commands) { RegisterCommands(commands); RegisterMergeCommands(commands); }
         if (services.GetService<IContributionRegistry>() is { } contributions) _store.Add(contributions.Contribute(ContributionSources.Builtin, AppContext.BaseDirectory, Menus));
         _store.Add(git.RepositoriesChanged.Subscribe(_ => OnRepositoriesChanged()));
         if (Navigation is not null) _store.Add(Navigation.ActiveDocumentChanged.Subscribe(_ => UpdateStatusBar()));
@@ -184,10 +184,10 @@ public sealed class GitHost : IDisposable
         Reg(Refresh, "Refresh", _ => Git.RefreshAllAsync());
         Reg(Commit, "Commit", _ => CommitFromBoxAsync(amend: false));
         Reg(CommitAmend, "Commit (Amend)", _ => CommitFromBoxAsync(amend: true));
-        Reg(StageAll, "Stage All Changes", inv => WithRepo(inv, r => r.StageAllAsync()));
+        Reg(StageAll, "Stage All Changes", inv => WithRepo(inv, StageAllAsync));
         Reg(UnstageAll, "Unstage All Changes", inv => WithRepo(inv, r => r.UnstageAllAsync()));
         Reg(CleanAll, "Discard All Changes", inv => WithRepo(inv, r => DiscardAsync(r, [.. r.Status.Unstaged])));
-        Reg(Stage, "Stage Changes", inv => OnFiles(inv, (r, paths) => r.StageAsync(paths)));
+        Reg(Stage, "Stage Changes", inv => OnFiles(inv, StageAsync));
         Reg(Unstage, "Unstage Changes", inv => OnFiles(inv, (r, paths) => r.UnstageAsync(paths)));
         Reg(Clean, "Discard Changes", inv => OnFiles(inv, (r, paths) => DiscardAsync(r, [.. r.Status.Entries.Where(e => paths.Contains(e.Path) && e.IsUnstaged)])));
         Reg(OpenChange, "Open Changes", inv => OnFiles(inv, async (r, paths) =>

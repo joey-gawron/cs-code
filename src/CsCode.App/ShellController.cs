@@ -142,6 +142,7 @@ public sealed class ShellController : IDisposable
 
         if (_sp.GetService<ActiveSelectionProvider>() is { } selection) _disposables.Add(selection.Track(well));
         if (_sp.GetService<DiffEditorService>() is { } diffs) _disposables.Add(diffs.Start(well, commands, keys));
+        if (_sp.GetService<MergeEditorService>() is { } merges) _disposables.Add(merges.Start(well, commands, keys));
 
         Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, Tools.Tools.Select(t => t.Spec.Id).Except(DefaultLayoutTools));
 
