@@ -46,8 +46,8 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
     /// <summary>Diagnostic owner and source: cspell's name, so messages read as they do in VS Code.</summary>
     public const string Owner = "cSpell";
 
-    /// <summary>The longest one slice of a check runs on the lane.</summary>
-    public static TimeSpan SliceBudget { get; set; } = TimeSpan.FromMilliseconds(4);
+    /// <summary>The longest one slice of a check runs on the lane (tests make it zero: one line per slice).</summary>
+    public TimeSpan SliceBudget { get; set; } = TimeSpan.FromMilliseconds(4);
 
     private readonly IDocumentManager _documents;
     private readonly IDiagnosticService _diagnostics;
@@ -301,12 +301,18 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
         if (!settings.Enabled) return SpellDocumentState.Disabled;
         if (!settings.IsLanguageEnabled(doc.LanguageId)) return SpellDocumentState.LanguageNotEnabled;
         if (IsIgnoredPath(doc.Uri, settings)) return SpellDocumentState.IgnoredPath;
-        if (doc.Length > _config.Get(SettingKeys.EditorLargeFileOptimizationsLimit, 5L * 1024 * 1024)) return SpellDocumentState.LargeFile;
+        if (doc.Length > LargeFileLimit()) return SpellDocumentState.LargeFile;
         classification = _classifier?.Capture(doc.Uri) ?? classification;
         if (classification.State == SyntaxClassificationState.LargeFile) return SpellDocumentState.LargeFile;
         if (classification.State != SyntaxClassificationState.Tokenized && !settings.ProseLanguages.Contains(doc.LanguageId)) return SpellDocumentState.NoTokens;
         return SpellDocumentState.Checked;
     }
+
+    /// <summary>The editor's large-file threshold (<c>cscode.editor.largeFileThresholdBytes</c>, 5 MB): such documents get no language feature.</summary>
+    private long LargeFileLimit() =>
+        _config.GetRaw(SettingKeys.EditorLargeFileOptimizationsLimit) is { ValueKind: System.Text.Json.JsonValueKind.Number } n && n.TryGetInt64(out var limit) && limit > 0
+            ? limit
+            : 5L * 1024 * 1024;
 
     private void Publish(DocState state, int generation, SpellCheckResult result, SpellSettings settings)
     {
@@ -345,6 +351,12 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
     internal int TrackedCount
     {
         get { lock (_gate) return _docs.Count; }
+    }
+
+    /// <summary>The per-document state object (leak tests).</summary>
+    internal object? StateFor(Uri uri)
+    {
+        lock (_gate) return _docs.GetValueOrDefault(uri);
     }
 
     private bool IsIgnoredPath(Uri uri, SpellSettings settings)
