@@ -9,6 +9,7 @@ TextMate grammars and snippets dropped into the user data folder.
 * Architecture and module boundaries: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 * Running and debugging (F5, Start Without Debugging, launch.json, the debug windows, and how to run, debug and test CsCode itself):
   [docs/RUN-AND-DEBUG.md](docs/RUN-AND-DEBUG.md)
+* Org mode (agenda side panel, scheduling, deadlines, capture, notes in `.org` files): [docs/ORG.md](docs/ORG.md)
 * Build: `dotnet build CsCode.slnx` · Test: `dotnet test CsCode.slnx`
 * Linux only: on a Nix-provided `dotnet` (non-NixOS host), `source tools/nix-dev-env.sh` first.
 * macOS: see [macOS](#macos) below.

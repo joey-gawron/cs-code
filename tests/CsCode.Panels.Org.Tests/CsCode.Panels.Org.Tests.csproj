@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit1051: our APIs take an optional CancellationToken everywhere; passing TestContext's to every arrange step adds noise only. -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Avalonia.Headless.XUnit" />
+    <PackageReference Include="Avalonia.Skia" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <!-- the grammar's tests tokenise with the engine the editor uses (and its built-in grammars, for code blocks) -->
+    <PackageReference Include="TextMateSharp" />
+    <PackageReference Include="TextMateSharp.Grammars" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/CsCode.Core/CsCode.Core.csproj" />
+    <ProjectReference Include="../CsCode.TestDoubles/CsCode.TestDoubles.csproj" />
+    <ProjectReference Include="../../src/CsCode.Ui/CsCode.Ui.csproj" />
+    <ProjectReference Include="../../src/CsCode.Panels.Org/CsCode.Panels.Org.csproj" />
+    <!-- Real Platform pieces (LocalFileSystem) for the store's tests; referenced from the TEST project only. -->
+    <ProjectReference Include="../../src/CsCode.Platform/CsCode.Platform.csproj" />
+  </ItemGroup>
+
+</Project>

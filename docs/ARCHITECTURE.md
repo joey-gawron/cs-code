@@ -31,6 +31,7 @@ and a GUI/editing path that is isolated from language-server load.
    ├── CsCode.Vim (engine over IVimHost; no UI)            ├── CsCode.Remote / CsCode.Server  [wave 2]
    ├── CsCode.Testing (Test Explorer engine: .NET/cargo/Jest-Vitest providers, run controller; no UI) ── CsCode.Panels.Testing (tool window; docs/TESTING.md)
    ├── CsCode.Panels.Navigation (the Hierarchy window: call and type hierarchy over ILanguageFeatureRegistry; docs/NAVIGATION.md)
+   ├── CsCode.Panels.Org (org mode: the org language, org.* commands, the Org Agenda window over a UI-free org engine; docs/ORG.md)
    ├── CsCode.Profiling (memory monitor, soak/leak/responsiveness harness)
    └── all depend only on ↓
                           CsCode.Core
@@ -61,6 +62,7 @@ Dependency rules (enforced by project references, checked in review):
 | `IRemoteConnectionManager`, `ssh:` file system provider, remote bridges, `IAskpassService` (ssh and git prompts in the GUI) | **Remote** + **Server** (wave 2) |
 | `LineDiff` (Core), `IFileDecorationProvider`, `IQuickDiffProvider`, `ILineBlameProvider` | **Panels.Git** (git CLI engine + Source Control window, `docs/SOURCE-CONTROL.md`) |
 | `IDiffEditorService` (diff tabs) | **Shell**, over the editor's `DiffEditorControl` (`IEditorViewFactory.CreateDiffView`) |
+| `org` language (grammar and configuration as contributions, `IFoldingRangeProvider`, `IDocumentSymbolProvider`) | **Panels.Org** (`docs/ORG.md`) |
 
 ## 3. Language features: one registry, bridged when remote
 
