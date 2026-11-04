@@ -201,16 +201,25 @@ public sealed class SearchEditorService : IDisposable
 
     // ----------------------------------------------------------------------------------------- context keys
 
+    private static readonly object BoxedTrue = true, BoxedFalse = false;
+    private bool? _keyInEditor, _keyOnHeader;
+
+    /// <summary>
+    /// Runs on every caret move of the active editor (typing included): outside a search editor it is two comparisons, and a key is written only
+    /// when its value changes.
+    /// </summary>
     private void UpdateContextKeys()
     {
         if (_w.ContextKeys is not { } keys) return;
         var doc = _w.Navigation?.ActiveDocument;
         var inEditor = doc is not null && doc.LanguageId == LanguageId;
-        keys.Set(InSearchEditorKey, inEditor);
         var onHeader = false;
         if (inEditor && doc is not null && _w.Navigation?.ActiveCaret is { } caret)
             onHeader = caret.Line < SearchEditorFormat.CountHeaderLines(doc.GetLineText, doc.LineCount, max: caret.Line + 1);
-        keys.Set(HeaderFocusKey, onHeader);
+        if (_keyInEditor != inEditor) keys.Set(InSearchEditorKey, inEditor ? BoxedTrue : BoxedFalse);
+        if (_keyOnHeader != onHeader) keys.Set(HeaderFocusKey, onHeader ? BoxedTrue : BoxedFalse);
+        _keyInEditor = inEditor;
+        _keyOnHeader = onHeader;
     }
 
     // ----------------------------------------------------------------------------------------- opening

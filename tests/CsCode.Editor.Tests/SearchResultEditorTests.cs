@@ -169,6 +169,26 @@ public sealed class SearchResultEditorTests
         Assert.Equal("Alpha", doc.GetText(view.Controller.Selections[0]));
     }
 
+    [AvaloniaFact]
+    public async Task Screenshot_of_a_search_editor_with_its_matches_highlighted()
+    {
+        using var host = ViewHost.Create();
+        await host.Factory.Themes.SetCurrentAsync("vscode.dark-plus", TestContext.Current.CancellationToken);
+        host.Factory.Services.Features.Register<IMatchHighlightProvider>(DocumentSelector.ForLanguage("search-result"), new Highlights { Ranges = Alphas });
+        var text = "# Query: alpha\n# Flags: WordMatch\n# Including: src\n# ContextLines: 1\n\n3 results - 2 files\n\ndocs/readme.md:\n  1: alpha and beta\n\n" +
+                   "src/a.cs:\n  1  using System;\n  2: class Alpha\n  3  {\n  4:     int alpha = 1;\n  5  }\n\n";
+        var (doc, view, window) = await host.OpenAsync(text, "results.code-search", 700, 360);
+        var feature = view.Feature<MatchHighlightFeature>()!;
+        await ViewHost.WaitFor(() => feature.Ranges.Count == 3 && view.Tokens?.Store.ValidLines >= doc.LineCount - 1, "highlights and tokens");
+        ViewHost.Pump();
+        var frame = window.CaptureRenderedFrame();
+        Assert.NotNull(frame);
+        var dir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../.scratch/screenshots"));
+        Directory.CreateDirectory(dir);
+        using var fs = File.Create(Path.Combine(dir, "search-editor.png"));
+        frame!.Save(fs, new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+    }
+
     private static void DoubleClick(Avalonia.Controls.Window window, Avalonia.Point point)
     {
         window.MouseDown(point, MouseButton.Left);

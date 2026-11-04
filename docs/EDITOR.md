@@ -23,7 +23,7 @@ dedicated I/O thread, `FswFileWatcher`, `InMemoryConfiguration`, `EditorConfigRe
 `DiagnosticService`), so the module runs and is testable on its own. Nothing ever references another module's concrete types.
 
 Contract additions (additive only — no existing member was renamed or removed): `IEditorViewFactory.DisposeView`; `IEditorViewController.GetViewState`,
-`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
+`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; `IEditorViewFactory.CreateUntitled(languageId, initialText)` (§7g); the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
 `ReplayText`, `ReplayKey`, `OpenUndoGroup`, `StartNewUndoStep` (below); `SetSelections` (multi-cursor, §7b; `Selections` lists the primary
 first, then the other carets in document order). The later additions are default interface members, so other implementations keep
 compiling. **No change was made to CsCode.Core.**
@@ -661,6 +661,20 @@ rasteriser's colours, tab stops, `maxColumn`, character shapes, a full window's 
 minimap, click / drag / wheel, the slider's visibility, folding, each source of marks on the ruler, word wrap, a press on the scrollbar's track,
 theme changes, disposal, sticky scroll's insets, a 1M-line file, typing that renders nothing on the keystroke, and screenshots in the dark and
 light themes written to `.scratch/screenshots/minimap-*.png`).
+
+### 7g. What the search editor uses
+
+The search editor (CsCode.Panels.Search, docs/PANELS-SEARCH.md "Search editor") is an ordinary editor tab over a `search-result` document; the editor
+gives it four things. **The `search-result` language** (`.code-search`), built in with a TextMate grammar of CsCode's own
+(`Languages/Grammars/search-result.tmLanguage.json`, embedded like the own language configurations; TextMateSharp.Grammars has no search-result
+grammar) using VS Code's scope names. **Match highlights** (`MatchHighlightFeature`): the ranges `IMatchHighlightProvider`s report, asked off the UI
+thread once the text has been still for 80 ms (merged, sorted and capped at 50,000 there, an answer for older text dropped), moved with the edits until
+the next answer (a range an edit touches goes), painted on the visible lines only with `searchEditor.findMatchBackground` (VS Code's default: the
+find-match highlight at 66 %); a document no provider serves costs a flag test per edit. **Double-clicks** (`DoubleClickFeature`): a plain left
+double-click is offered to the document's `IDoubleClickHandler`s before AvaloniaEdit selects the word; one that takes it gets the caret at the click and
+no selection. **Untitled buffers with text**: `IEditorViewFactory.CreateUntitled(languageId, initialText)` (the text is not an undo step; the document
+starts unmodified). Tests: `SearchResultEditorTests` (the grammar's scopes, highlights following edits and asked again, no requests for other
+documents, the shifting rules, a double-click taken and one left to the word selection).
 
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
 
