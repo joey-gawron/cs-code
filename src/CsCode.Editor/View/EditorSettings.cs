@@ -75,7 +75,16 @@ public sealed record EditorSettings
     /// <see cref="Read"/> takes them. The status bar shows this, so it never says "Spaces: 4" while the editor indents with tabs or by 2.
     /// </summary>
     public static (int TabSize, bool InsertSpaces) IndentationFor(IConfigurationService cfg, IEditorDocument document) =>
-        Indentation(cfg, document.LanguageId, (document as EditorDocument)?.EditorConfigProperties);
+        (document as EditorDocument)?.IndentationOverride is { } chosen
+            ? (chosen.TabSize, chosen.InsertSpaces) // chosen for this document (the status bar's indentation commands)
+            : Indentation(cfg, document.LanguageId, (document as EditorDocument)?.EditorConfigProperties);
+
+    /// <summary>The settings for a view of <paramref name="document"/>: <see cref="Read"/>, then the indentation chosen for the document.</summary>
+    public static EditorSettings For(IConfigurationService cfg, EditorDocument document)
+    {
+        var settings = Read(cfg, document.LanguageId, document.EditorConfigProperties);
+        return document.IndentationOverride is { } chosen ? settings with { TabSize = chosen.TabSize, InsertSpaces = chosen.InsertSpaces } : settings;
+    }
 
     private static (int TabSize, bool InsertSpaces) Indentation(IConfigurationService cfg, string? languageId, EditorConfigProperties? editorConfig)
     {

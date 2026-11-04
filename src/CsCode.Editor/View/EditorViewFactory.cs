@@ -63,8 +63,9 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         if (services.Commands is { } commands)
         {
             _disposables.Add(EditorCommands.Register(this, commands));
-            // Toggle Word Wrap, font zoom, the case transforms and Duplicate Selection
+            // Toggle Word Wrap, font zoom, the case transforms and Duplicate Selection; the status bar's encoding / EOL / indentation commands
             _disposables.Add(EditorTextCommands.Register(this, commands));
+            _disposables.Add(DocumentOptionCommands.Register(this, commands));
             _disposables.Add(commands.Register("editor.action.toggleMinimap", async _ =>
             {
                 await services.Config.UpdateAsync(SettingKeys.EditorMinimapEnabled, !services.Config.GetOr(SettingKeys.EditorMinimapEnabled, true)).ConfigureAwait(false);

@@ -99,6 +99,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
             if (e.Affects("editor") || e.Affects("files") || e.Affects("cscode.editor") || e.Affects("[" + Document.LanguageId + "]")) Post(OnSettingsChanged);
         }));
         _disposables.Add(document.LanguageIdChanged.Subscribe(_ => Post(OnLanguageChanged)));
+        _disposables.Add(document.OptionsChanged.Subscribe(_ => Post(OnSettingsChanged))); // the indentation chosen for the document
         // a language without a grammar may get one (editor.syntaxEngine changed, a user grammar arrived): a plain view starts colouring
         _disposables.Add(factory.Tokens.GrammarAvailabilityChanged.Subscribe(_ =>
         {
@@ -298,8 +299,8 @@ public sealed class CodeEditorControl : UserControl, IDisposable
 
     private EditorSettings ReadSettings()
     {
-        // .editorconfig facts were resolved when the document opened and are kept on it
-        return EditorSettings.Read(Services.Config, Document.LanguageId, Document.EditorConfigProperties);
+        // .editorconfig facts were resolved when the document opened and are kept on it; the indentation chosen for the document comes last
+        return EditorSettings.For(Services.Config, Document);
     }
 
     private void OnSettingsChanged()

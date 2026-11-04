@@ -250,11 +250,13 @@ public sealed partial class EditorDocument
             await OnUi(() =>
             {
                 lock (_stateGate) _lastKnownStat = stat;
+                var changed = !ReferenceEquals(_encoding, encoding) || _eol != eol;
                 _encoding = encoding;
                 _eol = eol;
                 _editorConfig = ec;
                 // Edits typed while the write was in flight stay dirty: only mark the file original if nothing changed since the snapshot.
                 if (Version == snap.Version) MarkSaved();
+                if (changed) FireOptionsChanged();
                 return 0;
             }).ConfigureAwait(false);
             _saved.Fire(this);
@@ -315,8 +317,9 @@ public sealed partial class EditorDocument
             return;
         }
         if (providers.Count == 0) return;
-        var tabSize = ec.EffectiveIndentSize ?? svc.Config.GetOr("editor.tabSize", LanguageId, 4);
-        var insertSpaces = ec.IndentStyle is { } style ? style == "space" : svc.Config.GetOr("editor.insertSpaces", LanguageId, true);
+        // the indentation chosen for this document (status bar) first, as the views indent
+        var tabSize = _indentation?.TabSize ?? ec.EffectiveIndentSize ?? svc.Config.GetOr("editor.tabSize", LanguageId, 4);
+        var insertSpaces = _indentation?.InsertSpaces ?? (ec.IndentStyle is { } style ? style == "space" : svc.Config.GetOr("editor.insertSpaces", LanguageId, true));
         var options = new FormattingOptions(tabSize, insertSpaces);
         var versionBefore = Version;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -432,10 +435,12 @@ public sealed partial class EditorDocument
                     _diskHash = plan.Hash;
                     _lastKnownStat = stat;
                 }
+                var changed = !ReferenceEquals(_encoding, plan.Encoding) || _eol != plan.Eol;
                 _encoding = plan.Encoding;
                 _eol = plan.Eol;
                 _editorConfig = ec;
                 _isReadOnly = stat.IsReadOnly;
+                if (changed) FireOptionsChanged(); // Reopen with Encoding, or the file changed its line endings outside
                 return true;
             }).ConfigureAwait(false);
             if (done) return;
@@ -610,22 +615,6 @@ public sealed partial class EditorDocument
             }
     }
 
-    /// <summary>Changes the file's line-ending style: rewrites the buffer's terminators as ONE undoable edit (the file becomes dirty).</summary>
-    public void SetEndOfLine(string eol)
-    {
-        if (eol is not ("\n" or "\r\n" or "\r")) throw new ArgumentException("eol must be \\n, \\r\\n or \\r", nameof(eol));
-        _ui.Invoke(() =>
-        {
-            _eol = eol;
-            var text = _text.Text;
-            var normalized = TextFileCodec.NormalizeEol(text, eol);
-            if (!ReferenceEquals(normalized, text)) RunAtomic(() => _text.Replace(0, text.Length, normalized));
-        });
-    }
-
-    /// <summary>Encoding used for the next save ("Save with Encoding"). Does not touch the buffer.</summary>
-    internal void SetEncoding(FileEncoding encoding) => _encoding = encoding;
-
     private void DisposeFileState()
     {
         _watch?.Dispose();
@@ -633,6 +622,7 @@ public sealed partial class EditorDocument
         _registration?.Dispose();
         _registration = null;
         _uriChanged.Clear();
+        _optionsChanged.Clear();
     }
 }
 
