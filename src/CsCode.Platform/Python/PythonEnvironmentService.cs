@@ -9,8 +9,9 @@ namespace CsCode.Platform.Python;
 
 /// <summary>
 /// <see cref="IPythonEnvironmentService"/> (docs/PYTHON.md §1). Discovery looks, in this order, at the folder's <c>.venv</c> / <c>venv</c> /
-/// <c>env</c> (a <c>pyvenv.cfg</c> marks one), <c>VIRTUAL_ENV</c>, <c>CONDA_PREFIX</c>, Poetry's environment (<c>poetry env info -p</c>, only when
-/// <c>poetry</c> exists and the folder's pyproject.toml uses it), conda's environments (<c>~/.conda/environments.txt</c>, the base of
+/// <c>env</c> (a <c>pyvenv.cfg</c> marks one), the <c>python3</c> of its Nix flake's development shell (<c>nix print-dev-env</c>, only when
+/// <c>nix</c> exists and a flake.nix is in the folder or above it in its repository), <c>VIRTUAL_ENV</c>, <c>CONDA_PREFIX</c>, Poetry's environment
+/// (<c>poetry env info -p</c>, only when <c>poetry</c> exists and the folder's pyproject.toml uses it), conda's environments (<c>~/.conda/environments.txt</c>, the base of
 /// <c>CONDA_EXE</c>), pyenv's versions, Homebrew's <c>python3*</c>, python.org's framework builds, <c>python3</c> / <c>python</c> on PATH, and
 /// <c>py -0p</c> on Windows. The file system part runs on the IO lane; every interpreter is then asked for its version and prefix
 /// (<see cref="PythonProcess.ProbeArguments"/>), at most four at a time, each killed after <see cref="ProbeTimeout"/>. Interpreters that do not answer
@@ -24,6 +25,8 @@ namespace CsCode.Platform.Python;
 public sealed class PythonEnvironmentService : IPythonEnvironmentService, IDisposable
 {
     public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
+    /// <summary>The bound on <c>nix print-dev-env</c>: about 2 s once Nix has cached the flake's evaluation, longer while it first builds the shell.</summary>
+    public static readonly TimeSpan NixTimeout = TimeSpan.FromSeconds(30);
     private const string StateKeyPrefix = "python.interpreter:";
     private const int MaxParallelProbes = 4;
     private const int MaxModuleCacheEntries = 256;
@@ -203,18 +206,20 @@ public sealed class PythonEnvironmentService : IPythonEnvironmentService, IDispo
 
     /// <summary>
     /// A candidate interpreter before it was asked: where it came from decides its kind, its name and its <see cref="Rank"/> for the default choice
-    /// (0 the folder's own virtual environment, 1 <c>VIRTUAL_ENV</c>, 2 <c>CONDA_PREFIX</c>, 3 Poetry's, 4 the first <c>python3</c> on PATH, 5 the rest).
+    /// (0 the folder's own virtual environment, 1 its Nix development shell's, 2 <c>VIRTUAL_ENV</c>, 3 <c>CONDA_PREFIX</c>, 4 Poetry's, 5 the first
+    /// <c>python3</c> on PATH, 6 the rest).
     /// </summary>
     internal sealed record Candidate(string Executable, PythonEnvironmentKind Kind, string? Name, int Rank = Candidate.Other)
     {
-        public const int Other = 5;
+        public const int Other = 6;
     }
 
     private async Task<IReadOnlyList<PythonEnvironment>> DiscoverCoreAsync(Uri? folder, CancellationToken ct)
     {
         if (_waitForLoginShell) await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
+        var byProcess = Task.Run(() => FindByProcessAsync(folder, ct), ct); // nix takes seconds: it runs while the file system is searched
         var candidates = await _io.RunAsync(token => FindCandidates(folder, token), ct).ConfigureAwait(false);
-        candidates.AddRange(await FindByProcessAsync(folder, ct).ConfigureAwait(false));
+        candidates.AddRange(await byProcess.ConfigureAwait(false));
         using var gate = new SemaphoreSlim(MaxParallelProbes);
         var probes = candidates.Select(async c =>
         {
@@ -263,9 +268,9 @@ public sealed class PythonEnvironmentService : IPythonEnvironmentService, IDispo
                 var dir = Path.Combine(folder.LocalPath, name);
                 if (File.Exists(Path.Combine(dir, "pyvenv.cfg"))) AddEnvironment(dir, PythonEnvironmentKind.Venv, name, rank: 0);
             }
-        AddEnvironment(_env("VIRTUAL_ENV"), PythonEnvironmentKind.Venv, rank: 1);
+        AddEnvironment(_env("VIRTUAL_ENV"), PythonEnvironmentKind.Venv, rank: 2);
         if (_env("CONDA_PREFIX") is { Length: > 0 } condaPrefix)
-            AddEnvironment(condaPrefix, PythonEnvironmentKind.Conda, _env("CONDA_DEFAULT_ENV") is { Length: > 0 } condaName ? condaName : null, rank: 2);
+            AddEnvironment(condaPrefix, PythonEnvironmentKind.Conda, _env("CONDA_DEFAULT_ENV") is { Length: > 0 } condaName ? condaName : null, rank: 3);
         ct.ThrowIfCancellationRequested();
 
         var home = _env("HOME") is { Length: > 0 } h ? h : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -309,8 +314,8 @@ public sealed class PythonEnvironmentService : IPythonEnvironmentService, IDispo
                 {
                     firstOnPath = false;
                     var known = list.FindIndex(c => SamePath(c.Executable, exe));
-                    if (known >= 0) list[known] = list[known] with { Rank = Math.Min(list[known].Rank, 4) };
-                    else Add(exe, IsHomebrew(exe) ? PythonEnvironmentKind.Homebrew : PythonEnvironmentKind.Global, null, rank: 4);
+                    if (known >= 0) list[known] = list[known] with { Rank = Math.Min(list[known].Rank, 5) };
+                    else Add(exe, IsHomebrew(exe) ? PythonEnvironmentKind.Homebrew : PythonEnvironmentKind.Global, null, rank: 5);
                     continue;
                 }
                 Add(exe, IsHomebrew(exe) ? PythonEnvironmentKind.Homebrew : PythonEnvironmentKind.Global, null);
@@ -319,7 +324,7 @@ public sealed class PythonEnvironmentService : IPythonEnvironmentService, IDispo
         return list;
     }
 
-    /// <summary>The parts of discovery that need a program to answer: Poetry's environment and the Windows launcher's list.</summary>
+    /// <summary>The parts of discovery that need a program to answer: Poetry's environment, the Nix development shell's and the Windows launcher's list.</summary>
     private async Task<List<Candidate>> FindByProcessAsync(Uri? folder, CancellationToken ct)
     {
         var list = new List<Candidate>();
@@ -327,7 +332,17 @@ public sealed class PythonEnvironmentService : IPythonEnvironmentService, IDispo
         {
             var r = await _run(poetry, ["env", "info", "-p"], folder.LocalPath, ProbeTimeout, ct).ConfigureAwait(false);
             if (r.ExitCode == 0 && r.Output.Trim() is { Length: > 0 } dir && Directory.Exists(dir))
-                list.Add(new Candidate(PythonProcess.EnvironmentExecutable(dir), PythonEnvironmentKind.Poetry, Path.GetFileName(dir), Rank: 3));
+                list.Add(new Candidate(PythonProcess.EnvironmentExecutable(dir), PythonEnvironmentKind.Poetry, Path.GetFileName(dir), Rank: 4));
+        }
+        if (folder is { IsFile: true } && !OperatingSystem.IsWindows() && FlakeDirectory(folder.LocalPath) is { } flake && FindOnPath("nix") is { } nix)
+        {
+            var r = await _run(nix, PythonProcess.DevShellArguments(flake), flake, NixTimeout, ct).ConfigureAwait(false);
+            // the first python3 on the shell's PATH: what `python3` runs inside `nix develop`
+            if (r.ExitCode == 0 && PythonProcess.ParseDevShellPath(r.Output).Select(d => Path.Combine(d, "python3")).FirstOrDefault(File.Exists) is { } python)
+                list.Add(new Candidate(python, PythonEnvironmentKind.Nix, Path.GetFileName(flake), Rank: 1));
+            else
+                _log?.LogInformation("No Python from the Nix development shell of {Flake} (nix print-dev-env: {Exit})", flake,
+                    r.ExitCode is { } exit ? "exit " + exit : "timed out");
         }
         if (OperatingSystem.IsWindows() && FindOnPath("py.exe") is { } py)
         {
@@ -340,6 +355,22 @@ public sealed class PythonEnvironmentService : IPythonEnvironmentService, IDispo
             }
         }
         return list;
+    }
+
+    /// <summary>
+    /// The flake whose development shell is the folder's: its own flake.nix, else the nearest one above it up to its git repository's root (where
+    /// <c>nix develop</c> stops looking). Outside a repository only the folder's own counts, never one in a parent directory.
+    /// </summary>
+    internal static string? FlakeDirectory(string folder)
+    {
+        folder = Path.TrimEndingDirectorySeparator(folder);
+        string? nearest = null;
+        for (var dir = folder; dir is not null; dir = Path.GetDirectoryName(dir))
+        {
+            nearest ??= File.Exists(Path.Combine(dir, "flake.nix")) ? dir : null;
+            if (Path.Exists(Path.Combine(dir, ".git"))) return nearest;
+        }
+        return File.Exists(Path.Combine(folder, "flake.nix")) ? folder : null;
     }
 
     private static bool UsesPoetry(string folder)
