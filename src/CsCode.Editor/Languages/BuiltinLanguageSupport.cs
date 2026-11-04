@@ -30,6 +30,8 @@ public sealed record BuiltinLanguageSupportInfo(
     public bool HasOwnSnippets { get; init; }
     /// <summary>Whether a VS Code extension's snippet file covers the language. Additive.</summary>
     public bool HasVsCodeSnippets { get; init; }
+    /// <summary>Whether the grammar is CsCode's own (<c>Languages/Grammars</c>) rather than a VS Code extension's; <see cref="GrammarSource"/> is then "CsCode". Additive.</summary>
+    public bool HasOwnGrammar { get; init; }
 }
 
 /// <summary>Read-only view of the built-in language catalog for documentation and diagnostics. User contributions are not included.</summary>
@@ -64,6 +66,7 @@ public static class BuiltinLanguageSupport
                 {
                     HasOwnSnippets = snippets.Any(s => s.ResourceName.StartsWith(BuiltinLanguages.OwnSnippetPrefix, StringComparison.Ordinal)),
                     HasVsCodeSnippets = snippets.Any(s => !s.ResourceName.StartsWith(BuiltinLanguages.OwnSnippetPrefix, StringComparison.Ordinal)),
+                    HasOwnGrammar = grammar?.ResourceName.StartsWith(BuiltinLanguages.OwnGrammarPrefix, StringComparison.Ordinal) == true,
                 };
             })
             .ToArray();
@@ -72,6 +75,7 @@ public static class BuiltinLanguageSupport
     // "TextMateSharp.Grammars.Resources.Grammars.csharp.syntaxes.csharp.tmLanguage.json" -> "csharp"
     private static string PackageOf(string resourceName)
     {
+        if (!resourceName.StartsWith(BuiltinLanguages.ResourcePrefix, StringComparison.Ordinal)) return "CsCode";
         var rest = resourceName[BuiltinLanguages.ResourcePrefix.Length..];
         var dot = rest.IndexOf('.', StringComparison.Ordinal);
         return dot < 0 ? rest : rest[..dot];

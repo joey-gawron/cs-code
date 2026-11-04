@@ -1,0 +1,109 @@
+{
+	"information_for_contributors": [
+		"CsCode's grammar for the search editor (language search-result, .code-search files). Written for CsCode: TextMateSharp.Grammars does not embed VS Code's search-result extension.",
+		"It uses the scope names of VS Code's search-result grammar so that themes which style the search editor (meta.resultLinePrefix.*, meta.path.search, ...) colour it the same way; result text is not coloured as its own language."
+	],
+	"name": "Search Result",
+	"scopeName": "text.searchResult",
+	"patterns": [
+		{ "include": "#header" },
+		{ "include": "#result-block" }
+	],
+	"repository": {
+		"header": {
+			"patterns": [
+				{
+					"begin": "^(# Query)(:) ",
+					"end": "$",
+					"name": "meta.header.search keyword.operator.word.search",
+					"beginCaptures": {
+						"1": { "name": "entity.other.attribute-name" },
+						"2": { "name": "punctuation.separator" }
+					},
+					"patterns": [
+						{ "match": "\\\\n|\\\\\\\\", "name": "entity.other.attribute-value string.unquoted constant.character.escape" },
+						{ "match": "[^\\\\]+|\\\\", "name": "entity.other.attribute-value string.unquoted" }
+					]
+				},
+				{
+					"begin": "^(# Flags)(:) ",
+					"end": "$",
+					"name": "meta.header.search keyword.operator.word.search",
+					"beginCaptures": {
+						"1": { "name": "entity.other.attribute-name" },
+						"2": { "name": "punctuation.separator" }
+					},
+					"patterns": [
+						{ "match": "\\b(RegExp|CaseSensitive|IgnoreExcludeSettings|WordMatch|OpenEditors)\\b", "name": "entity.other.attribute-value string.unquoted keyword.other" }
+					]
+				},
+				{
+					"begin": "^(# ContextLines)(:) ",
+					"end": "$",
+					"name": "meta.header.search keyword.operator.word.search",
+					"beginCaptures": {
+						"1": { "name": "entity.other.attribute-name" },
+						"2": { "name": "punctuation.separator" }
+					},
+					"patterns": [
+						{ "match": "\\d+", "name": "entity.other.attribute-value string.unquoted constant.numeric.integer" },
+						{ "match": "\\S", "name": "invalid.illegal" }
+					]
+				},
+				{
+					"match": "^(# (?:Including|Excluding))(:) (.*)$",
+					"name": "meta.header.search keyword.operator.word.search",
+					"captures": {
+						"1": { "name": "entity.other.attribute-name" },
+						"2": { "name": "punctuation.separator" },
+						"3": { "name": "entity.other.attribute-value string.unquoted" }
+					}
+				}
+			]
+		},
+		"result-block": {
+			"begin": "^(?!\\s)(.*?)([^\\\\/\\n]*)(:)$",
+			"end": "^(?!\\s)",
+			"name": "meta.resultBlock.search",
+			"beginCaptures": {
+				"0": { "name": "string meta.path.search" },
+				"1": { "name": "meta.path.dirname.search" },
+				"2": { "name": "meta.path.basename.search" },
+				"3": { "name": "punctuation.separator" }
+			},
+			"patterns": [
+				{ "include": "#match-line" },
+				{ "include": "#context-line" }
+			]
+		},
+		"match-line": {
+			"begin": "^(\\s+)(\\d+)(:)( )",
+			"end": "$",
+			"name": "meta.resultLine.search meta.resultLine.singleLine.search",
+			"beginCaptures": {
+				"1": { "name": "constant.numeric.integer meta.resultLinePrefix.search meta.resultLinePrefix.matchLinePrefix.search" },
+				"2": { "name": "constant.numeric.integer meta.resultLinePrefix.search meta.resultLinePrefix.matchLinePrefix.search meta.resultLinePrefix.lineNumber.search" },
+				"3": { "name": "constant.numeric.integer meta.resultLinePrefix.search meta.resultLinePrefix.matchLinePrefix.search punctuation.separator" }
+			},
+			"patterns": [
+				{ "include": "#elision" }
+			]
+		},
+		"context-line": {
+			"begin": "^(\\s+)(\\d+)(  )",
+			"end": "$",
+			"name": "meta.resultLine.search meta.resultLine.singleLine.search",
+			"beginCaptures": {
+				"1": { "name": "constant.numeric.integer meta.resultLinePrefix.search meta.resultLinePrefix.contextLinePrefix.search" },
+				"2": { "name": "constant.numeric.integer meta.resultLinePrefix.search meta.resultLinePrefix.contextLinePrefix.search meta.resultLinePrefix.lineNumber.search" }
+			},
+			"patterns": [
+				{ "include": "#elision" }
+			]
+		},
+		"elision": {
+			"match": "⟪ [0-9]+ characters skipped ⟫",
+			"name": "comment meta.resultLine.elision"
+		}
+	}
+}

@@ -44,6 +44,8 @@ public sealed class EditorPalette
     public required IPen IndentGuide { get; init; }
     public required IPen IndentGuideActive { get; init; }
     public required IBrush FindMatch { get; init; }
+    /// <summary>The search editor's matches (<see cref="Features.MatchHighlightFeature"/>).</summary>
+    public required IBrush SearchEditorFindMatch { get; init; }
     public required IBrush BracketMatchBackground { get; init; }
     public required IPen BracketMatchBorder { get; init; }
     public required IBrush[] BracketColors { get; init; }
@@ -101,6 +103,7 @@ public sealed class EditorPalette
             IndentGuide = P("editorIndentGuide.background1"),
             IndentGuideActive = P("editorIndentGuide.activeBackground1"),
             FindMatch = B("editor.findMatchHighlightBackground"),
+            SearchEditorFindMatch = B("searchEditor.findMatchBackground"),
             BracketMatchBackground = B("editorBracketMatch.background"),
             BracketMatchBorder = P("editorBracketMatch.border"),
             BracketColors = brackets,
