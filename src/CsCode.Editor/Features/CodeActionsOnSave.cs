@@ -11,8 +11,8 @@ namespace CsCode.Editor.Features;
 /// <c>editor.codeActionsOnSave</c>: source actions run right before a document is saved, ahead of format on save (VS Code's order). The setting
 /// comes in VS Code's three shapes, globally or per language: the object form <c>{"source.organizeImports": "explicit", "source.fixAll": "always"}</c>,
 /// its legacy booleans (<c>true</c> = explicit, <c>false</c> = never) and the array form <c>["source.fixAll", "source.organizeImports"]</c> (each entry
-/// explicit, run in the listed order). <c>explicit</c> runs on a save the user asked for, <c>always</c> also on auto-save (after a delay, on focus
-/// change), as in VS Code. In the object form the <c>source.fixAll</c> kinds run first, then the rest in the order written (VS Code sorts the same way).
+/// explicit, run in the listed order). <c>explicit</c> runs on a save the user asked for, <c>always</c> also on the auto saves of a focus or window
+/// change (not on one after a delay), as in VS Code. In the object form the <c>source.fixAll</c> kinds run first, then the rest in the order written (VS Code sorts the same way).
 /// <para>
 /// Kinds match hierarchically: <c>source.fixAll</c> runs <c>source.fixAll.ruff</c>. A kind listed together with a more specific one leaves that
 /// one's actions to it (<c>source.fixAll</c> next to <c>source.fixAll.eslint</c> does not run ESLint's twice).
@@ -50,7 +50,7 @@ public sealed class CodeActionsOnSaveParticipant : IWillSaveParticipant
     [
         new(SettingKey, JsonDocument.Parse("{}").RootElement.Clone(),
             "Code action kinds run before saving, e.g. { \"source.fixAll\": \"explicit\", \"source.organizeImports\": \"explicit\" }: \"explicit\" on a save you ask for, " +
-            "\"always\" also on auto-save, \"never\" not at all (true and false mean explicit and never). An array of kinds runs each one explicitly, in order.",
+            "\"always\" also on the auto saves of a focus or window change, \"never\" not at all (true and false mean explicit and never). An array of kinds runs each one explicitly, in order.",
             JsonDocument.Parse("""{"type":["object","array"],"additionalProperties":{"enum":["explicit","always","never",true,false]},"items":{"type":"string"}}""").RootElement.Clone()),
         new(TimeoutKey, JsonSerializer.SerializeToElement(DefaultTimeoutMs),
             "Milliseconds the code actions run on save may take; the save goes ahead without the rest after that.",
@@ -61,7 +61,10 @@ public sealed class CodeActionsOnSaveParticipant : IWillSaveParticipant
     public static IReadOnlyList<string> KindsToRun(JsonElement? setting, DocumentSaveReason reason)
     {
         var entries = Parse(setting);
-        return entries.Where(e => e.Mode == RunMode.Always || (e.Mode == RunMode.Explicit && reason == DocumentSaveReason.Manual)).Select(e => e.Kind).ToList();
+        // VS Code: "always" also runs on the auto saves of a focus or window change, never on one after a delay (it would rewrite the code while
+        // the user types: an import just added and not used yet would go)
+        return entries.Where(e => (e.Mode == RunMode.Always && reason != DocumentSaveReason.AfterDelay) || (e.Mode == RunMode.Explicit && reason == DocumentSaveReason.Manual))
+            .Select(e => e.Kind).ToList();
     }
 
     internal static IReadOnlyList<(string Kind, RunMode Mode)> Parse(JsonElement? setting)

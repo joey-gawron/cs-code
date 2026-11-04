@@ -218,7 +218,7 @@ public sealed class DocumentWell : IDisposable
         if (!Tabs.Contains(tab)) return true;
         if (tab is EditorTab et)
         {
-            if (prompt && et.IsDirty && !await ConfirmCloseAsync(et)) return false;
+            if (prompt && et.IsDirty && !(SaveOnClose?.Invoke(et) is { } reason ? await SaveOnCloseAsync(et, reason) : await ConfirmCloseAsync(et))) return false;
             et.CloseConfirmed = true;
         }
         RemoveTab(tab, remember: true);
@@ -277,6 +277,39 @@ public sealed class DocumentWell : IDisposable
         if (target is not null) await doc.SaveAsAsync(target);
         else await doc.SaveAsync();
         return true;
+    }
+
+    /// <summary>
+    /// A save the shell makes by itself (auto save, <see cref="Services.AutoSave"/>): the will-save participants with <paramref name="reason"/>, then
+    /// the editor's save for that reason (no format on save after a delay). Never for an untitled or read-only document (false). UI thread.
+    /// </summary>
+    public async ValueTask<bool> SaveAsync(EditorTab tab, DocumentSaveReason reason)
+    {
+        if (reason == DocumentSaveReason.Manual) return await SaveAsync(tab);
+        var doc = tab.Doc;
+        if (doc.IsUntitled || doc.IsReadOnly) return false;
+        if (_participants is not null) await _participants.WillSaveAsync(doc, reason);
+        await doc.SaveAsync(reason, CancellationToken.None);
+        return true;
+    }
+
+    /// <summary>
+    /// Set by auto save: for a dirty tab about to close, the reason to save it with instead of asking (VS Code saves an editor whose auto save
+    /// runs on focus change, since the question itself would take the focus), or null to ask Save / Don't Save / Cancel.
+    /// </summary>
+    public Func<EditorTab, DocumentSaveReason?>? SaveOnClose { get; set; }
+
+    private async ValueTask<bool> SaveOnCloseAsync(EditorTab tab, DocumentSaveReason reason)
+    {
+        try
+        {
+            if (await SaveAsync(tab, reason) && !tab.IsDirty) return true;
+        }
+        catch (Exception)
+        {
+            // the save failed: ask, as without auto save (the question offers Save again, and Don't Save)
+        }
+        return await ConfirmCloseAsync(tab);
     }
 
     /// <summary>Save / Don't Save / Cancel. Returns true if the tab may be closed.</summary>

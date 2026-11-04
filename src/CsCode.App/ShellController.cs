@@ -70,6 +70,8 @@ public sealed class ShellController : IDisposable
     public MenuModel Menus { get; private set; } = null!;
     public LayoutPersistence Layout { get; private set; } = null!;
     public ShellStatusItems StatusItems { get; private set; } = null!;
+    /// <summary><c>files.autoSave</c> (null in a composition without settings).</summary>
+    public AutoSave? AutoSave { get; private set; }
     /// <summary>The Vim adapter (null when the composition has no Vim module or no real editor): sees keys before the key bindings.</summary>
     public Vim.VimIntegration? Vim { get; private set; }
     public IShellKeyInterceptor? KeyInterceptor => Vim;
@@ -216,6 +218,16 @@ public sealed class ShellController : IDisposable
         StatusItems = new ShellStatusItems(_sp.GetRequiredService<IStatusBarService>(), _ui, nav, _sp.GetRequiredService<NotificationCenter>(), config,
             _sp.GetService<ILanguageService>(), _sp.GetService<IDiagnosticService>(), debug, _sp.GetService<IMemoryMonitor>(), _sp.GetService<ILanguageServerManager>());
         _disposables.Add(StatusItems);
+
+        // files.autoSave (docs/SHELL.md, "Auto save"): saves through the well; follows the keyboard focus and the activation of every shell window.
+        if (config is not null)
+        {
+            AutoSave = new AutoSave(well, config, _ui, _time, window,
+                _sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() is { } logs ? Microsoft.Extensions.Logging.LoggerFactoryExtensions.CreateLogger<AutoSave>(logs) : null,
+                () => IsClosing);
+            _disposables.Add(AutoSave);
+            _windowHooks.Add(AutoSave.AttachWindow);
+        }
 
         // Tool windows that declare AutoShowWhen (debug panes) follow their context key.
         _disposables.Add(keys.Changed.Subscribe(_ => _ui.PostCoalesced("tools.autoshow", EvaluateAutoShow)));

@@ -139,6 +139,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         {
             var doc = await EditorDocument.OpenAsync(Services, uri, (u, first) => Languages.DetectLanguageId(u, first), ct).ConfigureAwait(false);
             lock (_gate) _documents[doc.Uri] = doc;
+            doc.CaretOffsets = () => CaretOffsetsOf(doc); // an auto save after a delay leaves the carets' lines alone
             doc.UriChanged.Subscribe(change =>
             {
                 lock (_gate)
@@ -304,6 +305,20 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorHasDocumentSelectionFormattingProvider", formatting);
         keys.Set("editorHasCallHierarchyProvider", Has<ICallHierarchyProvider>()); // the Hierarchy window's items (docs/NAVIGATION.md)
         keys.Set("editorHasTypeHierarchyProvider", Has<ITypeHierarchyProvider>());
+    }
+
+    /// <summary>Every caret of every view of <paramref name="doc"/>, as offsets (UI thread).</summary>
+    internal IReadOnlyList<int> CaretOffsetsOf(EditorDocument doc)
+    {
+        var offsets = new List<int>();
+        foreach (var view in Views)
+        {
+            if (view.IsDisposed || !ReferenceEquals(view.Document, doc)) continue;
+            offsets.Add(view.Editor.CaretOffset);
+            if (view.MultiCursor.IsActive)
+                foreach (var s in view.Controller.Selections) offsets.Add(doc.OffsetAt(s.End));
+        }
+        return offsets;
     }
 
     /// <summary>The per-view feature components (completion, hover, diagnostics, folding…), created by the control after its core is up.</summary>
