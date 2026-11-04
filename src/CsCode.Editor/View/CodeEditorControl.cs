@@ -304,8 +304,50 @@ public sealed class CodeEditorControl : UserControl, IDisposable
 
     private void OnSettingsChanged()
     {
+        var wrapBefore = Settings.WordWrap;
         Settings = ReadSettings();
+        if (Settings.WordWrap != wrapBefore) _wordWrapOverride = null; // a change of editor.wordWrap ends Toggle Word Wrap's choice
         ApplySettings(initial: false);
+        _factory.UpdateWordWrapKey(this);
+    }
+
+    // ---- Toggle Word Wrap and font zoom: this view's own, never written to the settings (VS Code) ----
+
+    private bool? _wordWrapOverride;
+    private double _fontZoom; // pixels the Ctrl+wheel zoom and the zoom keys added to editor.fontSize: this view's, not persisted
+
+    /// <summary>Whether lines wrap in this view: Toggle Word Wrap's choice, else <c>editor.wordWrap</c>.</summary>
+    internal bool WordWrapEnabled => _wordWrapOverride ?? Settings.WordWrap;
+
+    /// <summary>
+    /// Toggle Word Wrap's choice for this view (null: <c>editor.wordWrap</c> decides). Kept in the view state, so a recreated view keeps it; a
+    /// change of the setting drops it. UI thread.
+    /// </summary>
+    internal bool? WordWrapOverride
+    {
+        get => _wordWrapOverride;
+        set
+        {
+            _wordWrapOverride = value == Settings.WordWrap ? null : value;
+            Editor.WordWrap = WordWrapEnabled;
+            _factory.UpdateWordWrapKey(this);
+        }
+    }
+
+    /// <summary>VS Code's Toggle Word Wrap: flips wrapping for this view only.</summary>
+    internal void ToggleWordWrap() => WordWrapOverride = !WordWrapEnabled;
+
+    /// <summary>
+    /// Font zoom (Ctrl+wheel, Editor Font Zoom In / Out / Reset): <paramref name="steps"/> pixels larger or smaller, 0 back to <c>editor.fontSize</c>.
+    /// Per view and not persisted; kept across settings changes as an offset from the setting. UI thread.
+    /// </summary>
+    internal void ZoomFont(int steps)
+    {
+        var size = steps == 0 ? Settings.FontSize : Math.Clamp(Editor.FontSize + steps, 6, 72);
+        _fontZoom = size - Settings.FontSize;
+        if (Editor.FontSize.Equals(size)) return;
+        Editor.FontSize = size;
+        RebuildStyleTable();
     }
 
     private void OnThemeChanged()
@@ -345,8 +387,8 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     {
         var s = Settings;
         Editor.FontFamily = new FontFamily(FontFamilies.Normalize(s.FontFamily)); // 'Quoted' names and generic ones as settings write them
-        Editor.FontSize = s.FontSize;
-        Editor.WordWrap = s.WordWrap;
+        Editor.FontSize = Math.Clamp(s.FontSize + _fontZoom, 6, 72);
+        Editor.WordWrap = WordWrapEnabled;
         Editor.ShowLineNumbers = s.ShowLineNumbers;
         CachedLineNumberMargin.ReplaceStock(Editor); // the stock margin shapes every visible number again on each keystroke
         Editor.IsReadOnly = Document.IsReadOnly;
@@ -421,8 +463,7 @@ public sealed class CodeEditorControl : UserControl, IDisposable
     private void OnPointerWheel(object? sender, PointerWheelEventArgs e)
     {
         if (!Settings.MouseWheelZoom || !EditorKeys.HasCommand(e.KeyModifiers)) return; // Ctrl+wheel, ⌘+wheel on macOS
-        Editor.FontSize = Math.Clamp(Editor.FontSize + (e.Delta.Y > 0 ? 1 : -1), 6, 72); // zoom is per view and not persisted
-        RebuildStyleTable();
+        ZoomFont(e.Delta.Y > 0 ? 1 : -1); // zoom is per view and not persisted; the zoom keys share it
         e.Handled = true;
     }
 

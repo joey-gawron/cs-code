@@ -63,6 +63,8 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         if (services.Commands is { } commands)
         {
             _disposables.Add(EditorCommands.Register(this, commands));
+            // Toggle Word Wrap, font zoom, the case transforms and Duplicate Selection
+            _disposables.Add(EditorTextCommands.Register(this, commands));
             _disposables.Add(commands.Register("editor.action.toggleMinimap", async _ =>
             {
                 await services.Config.UpdateAsync(SettingKeys.EditorMinimapEnabled, !services.Config.GetOr(SettingKeys.EditorMinimapEnabled, true)).ConfigureAwait(false);
@@ -277,6 +279,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorReadonly", view.Document.IsReadOnly);
         keys.Set("resourceExtname", Path.GetExtension(view.Document.Uri.IsFile ? view.Document.Uri.LocalPath : view.Document.Uri.AbsolutePath));
         keys.Set("resourceScheme", view.Document.Uri.Scheme);
+        keys.Set(WordWrapKey, view.WordWrapEnabled);
         UpdateCapabilityKeys(view);
         EditorMenus.PrepareContextKeys(view);
     }
@@ -305,6 +308,15 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorHasDocumentSelectionFormattingProvider", formatting);
         keys.Set("editorHasCallHierarchyProvider", Has<ICallHierarchyProvider>()); // the Hierarchy window's items (docs/NAVIGATION.md)
         keys.Set("editorHasTypeHierarchyProvider", Has<ITypeHierarchyProvider>());
+    }
+
+    /// <summary>VS Code's context key: whether the focused editor wraps its lines (View &gt; Word Wrap's check mark).</summary>
+    public const string WordWrapKey = "editorWordWrap";
+
+    /// <summary>Brings <see cref="WordWrapKey"/> up to date when <paramref name="view"/> is the one commands act on (UI thread).</summary>
+    internal void UpdateWordWrapKey(CodeEditorControl view)
+    {
+        if (Services.ContextKeys is { } keys && ReferenceEquals(ActiveView, view)) keys.Set(WordWrapKey, view.WordWrapEnabled);
     }
 
     /// <summary>Every caret of every view of <paramref name="doc"/>, as offsets (UI thread).</summary>

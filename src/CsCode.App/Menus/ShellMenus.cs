@@ -121,6 +121,9 @@ public static class ShellMenus
             Sub("Tool_bars", Views.ToolbarView.Groups.Select(g =>
                 new MenuNode("_" + g.Title, ToggleToolbar, CheckWhen: "config." + g.SettingKey, Argument: g.Id)).ToArray()),
             S,
+            // VS Code's View > Word Wrap: the active editor's own (the setting is left alone), checked while it wraps
+            new MenuNode("_Word Wrap", "editor.action.toggleWordWrap", "hasOpenEditors", CheckWhen: "editorWordWrap"),
+            S,
             Sub("_Appearance",
                 M("_Color Theme...", KnownCommands.SelectTheme),
                 M("_Full Screen", "workbench.action.toggleFullScreen"),

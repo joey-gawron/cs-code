@@ -174,4 +174,10 @@ public sealed record EditorViewState(
     int DocumentVersion)
 {
     public static readonly EditorViewState Initial = new(TextPosition.Zero, TextPosition.Zero, TextPosition.Zero, 0, 0, [], 0);
+
+    /// <summary>
+    /// Toggle Word Wrap's choice for the view (additive): true / false wraps or not whatever <c>editor.wordWrap</c> says; null follows the setting.
+    /// A restored choice that the setting now agrees with is dropped (the setting changed meanwhile).
+    /// </summary>
+    public bool? WordWrap { get; init; }
 }
