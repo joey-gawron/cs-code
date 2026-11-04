@@ -105,9 +105,10 @@ public class SaveAndFileOperationTests
     }
 
     // files-1: a move that fails (a case-only folder rename on macOS did; here a file of the same name is in the way) left the tabs it had closed
-    // closed, and the will-rename edit in place: imports and references pointed at a path that was never created. Both are put back.
+    // closed, and the will-rename edit in place: imports and references pointed at a path that was never created. Both are put back. (A move no
+    // longer closes tabs: they follow the files once the move succeeded, DocumentWell.RelocateAsync; a failed one leaves them where they were.)
     [AvaloniaFact(Timeout = 120_000)]
-    public async Task A_failed_explorer_move_reopens_the_tabs_it_closed_and_undoes_the_will_rename_edit()
+    public async Task A_failed_explorer_move_keeps_the_tabs_and_undoes_the_will_rename_edit()
     {
         using var env = new RealAppHome();
         env.WriteUserSettings("{ \"cscode.shell.confirmMultiFileEdits\": false }");

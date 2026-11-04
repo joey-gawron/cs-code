@@ -230,6 +230,9 @@ public sealed class ShellController : IDisposable
                 new ConfigurationProperty(Startup.AppSession.KeepRunningSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "macOS, without background mode: closing the window leaves CsCode running in the Dock, as Mac apps do (a click on the Dock icon, New Window or opening a file brings a new window; ⌘Q quits). false: closing the window quits."),
                 .. ToolbarView.Groups.Select(g => new ConfigurationProperty(g.SettingKey, System.Text.Json.JsonSerializer.SerializeToElement(true),
                     $"Show the {g.Title} toolbar (View > Toolbars).")),
+                // Explorer drag and drop (VS Code's keys)
+                new ConfigurationProperty(ToolWindows.Explorer.ExplorerViewModel.ConfirmDragAndDropSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "Controls whether the Explorer should ask for confirmation to move files and folders via drag and drop."),
+                new ConfigurationProperty(ToolWindows.Explorer.ExplorerViewModel.EnableUndoSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "Controls whether the Explorer supports undoing its last drag and drop (⌘Z, Ctrl+Z elsewhere, while it has the keyboard)."),
             ]));
 
         // UI stall watchdog: Debug builds, or whenever the setting is > 0.

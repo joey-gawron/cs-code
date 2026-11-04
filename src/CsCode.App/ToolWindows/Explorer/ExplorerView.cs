@@ -59,7 +59,8 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
         var filter = new FilterBox { Watermark = "Filter", Margin = new Thickness(6, 2, 6, 4) };
         filter.Bind(FilterBox.TextProperty, new Avalonia.Data.Binding(nameof(ExplorerViewModel.Filter)) { Mode = Avalonia.Data.BindingMode.TwoWay });
 
-        _list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<ExplorerNode>((n, _) => n is null ? new Panel() : RowFor(n), supportsRecycling: false), SelectionMode = SelectionMode.Single };
+        // Multiple: Ctrl+click (⌘-click) and Shift+click select several rows, which drag together. Commands of the menu act on the clicked row.
+        _list = new ListBox { ItemsSource = vm.Rows, ItemTemplate = new FuncDataTemplate<ExplorerNode>((n, _) => n is null ? new Panel() : RowFor(n), supportsRecycling: false), SelectionMode = SelectionMode.Multiple };
         _list.Bind(Avalonia.Controls.Primitives.SelectingItemsControl.SelectedItemProperty, new Avalonia.Data.Binding(nameof(ExplorerViewModel.Selected)) { Mode = Avalonia.Data.BindingMode.TwoWay });
         _list.KeyDown += OnKeyDown;
         _list.TextInput += OnTextInput;
@@ -67,6 +68,7 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
         _list.Tapped += OnTapped;
         _list.ContextRequested += OnContextRequested;
         ToolWindowFocus.KeepOnRows(_list); // every expand and collapse replaces the rows (one Reset), the focused one too
+        AttachDragAndDrop();
 
         var empty = EmptyState();
         empty.Bind(IsVisibleProperty, new Avalonia.Data.Binding(nameof(ExplorerViewModel.HasFolder)) { Converter = Avalonia.Data.Converters.BoolConverters.Not });
@@ -115,6 +117,8 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
     private Control RowFor(ExplorerNode node)
     {
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,16,18,*,Auto"), Height = 22, Background = Brushes.Transparent };
+        // the folder a drag would drop into (VS Code's list.dropBackground)
+        grid.Bind(Panel.BackgroundProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.IsDropTarget)) { Converter = DropBackground });
         // source control: the name in the status colour, the letter after it, ignored rows dimmed, deleted ones struck through
         var badge = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 8, 0), FontSize = 11 };
         badge.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding(nameof(ExplorerNode.Decoration)) { Converter = DecorationBadge });
@@ -177,6 +181,9 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
     /// <summary>The decoration's theme colour; no decoration leaves the inherited foreground (UnsetValue).</summary>
     private static readonly Avalonia.Data.Converters.IValueConverter DecorationBrush = new DecorationBrushConverter();
 
+    private static readonly Avalonia.Data.Converters.IValueConverter DropBackground =
+        new Avalonia.Data.Converters.FuncValueConverter<bool, IBrush>(target => target ? ThemeBrushes.Get("list.dropBackground") : Brushes.Transparent);
+
     private static readonly Avalonia.Data.Converters.IValueConverter DecorationOpacity =
         new Avalonia.Data.Converters.FuncValueConverter<Core.Scm.FileDecoration?, double>(d => d?.Faded == true ? 0.6 : 1.0);
 
@@ -214,6 +221,8 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
             case Key.F2: e.Handled = true; if (!node.IsRoot) _vm.BeginRename(node); break;
             // Shift+Delete is Cut (below), not Delete. ⌘⌫ deletes too on macOS (Finder's Move to Trash), but not from the rename box.
             case Key.Delete or Key.Back when CommandKeys.IsDelete(e) && !node.IsEditing: e.Handled = true; await _vm.DeleteAsync(node).ConfigureAwait(true); break;
+            // ⌘Z (Ctrl+Z): the last drag and drop is undone (explorer.enableUndo)
+            case Key.Z when e.KeyModifiers == CommandKeys.Command && !node.IsEditing && _vm.CanUndo: e.Handled = true; await _vm.UndoAsync().ConfigureAwait(true); break;
             default: ClipboardKeys.TryHandle(e, this); break; // Ctrl+C/X/V, Ctrl+Insert, Shift+Insert, Shift+Delete: the files
         }
     }
@@ -235,8 +244,9 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
     public bool CanCopy => _vm.Selected is not null;
     public bool CanCut => _vm.Selected is { IsRoot: false };
     public bool CanPaste => _vm.Selected is not null && _vm.CanPaste;
-    public Task CopyAsync() { if (_vm.Selected is { } n) _vm.Copy([n]); return Task.CompletedTask; }
-    public Task CutAsync() { if (_vm.Selected is { IsRoot: false } n) _vm.Cut([n]); return Task.CompletedTask; }
+    // every selected row (Ctrl/⌘- and Shift-click select several), as VS Code's Explorer copies and cuts them
+    public Task CopyAsync() { if (_vm.Selected is { } n) _vm.Copy(DraggedNodes(n, includeRoots: true)); return Task.CompletedTask; }
+    public Task CutAsync() { if (_vm.Selected is { IsRoot: false } n) _vm.Cut(DraggedNodes(n)); return Task.CompletedTask; }
     public async Task PasteAsync() { if (_vm.Selected is { } n) await _vm.PasteAsync(n).ConfigureAwait(true); }
 
     private void OnTextInput(object? sender, TextInputEventArgs e)
@@ -246,6 +256,259 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
         _typeAheadAt = DateTime.UtcNow;
         _vm.TypeAhead(_typeAhead);
         e.Handled = true;
+    }
+
+    // ------------------------------------------------------------------ drag and drop (VS Code's Explorer)
+
+    /// <summary>How far the pointer moves with the button down before a press becomes a drag.</summary>
+    private const double DragThreshold = 4;
+
+    /// <summary>How long a drag hovers over a collapsed folder before it opens (VS Code: 500 ms).</summary>
+    internal static readonly TimeSpan ExpandOnHoverDelay = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>Within this distance of the list's top or bottom edge a drag scrolls the rows.</summary>
+    private const double AutoScrollMargin = 24;
+
+    private PointerPressedEventArgs? _press;
+    private Point _pressAt;
+    private ExplorerNode? _pressNode, _collapseOnRelease, _dropTarget, _hoverNode;
+    private IDisposable? _hoverExpand;
+    private DispatcherTimer? _autoScroll;
+    private int _autoScrollDirection;
+
+    /// <summary>Starts the platform's drag (a seam: headless tests capture the data instead, as Avalonia.Headless has no drag source).</summary>
+    internal Func<PointerPressedEventArgs, IDataTransfer, DragDropEffects, Task<DragDropEffects>> StartDragDrop { get; set; } = DragDrop.DoDragDropAsync;
+
+    /// <summary>Whether ⌥ (macOS) or Ctrl (elsewhere) copies: the platform's keys, settable for tests of the other platform's.</summary>
+    internal bool MacKeys { get; set; } = CommandKeys.IsMac;
+
+    /// <summary>A drag's feedback is up: a highlighted folder, a folder about to open, or rows scrolling (each holds the view while it runs).</summary>
+    internal bool DragFeedbackActive => _dropTarget is not null || _hoverExpand is not null || _autoScroll?.IsEnabled == true;
+
+    private void AttachDragAndDrop()
+    {
+        DragDrop.SetAllowDrop(_list, true);
+        // Tunnel: before the row's own press selects (a press on one of several selected rows must keep them all selected to drag them).
+        _list.AddHandler(PointerPressedEvent, OnRowPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _list.AddHandler(PointerMovedEvent, OnRowPointerMoved, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        _list.AddHandler(PointerReleasedEvent, OnRowReleased, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        _list.AddHandler(PointerCaptureLostEvent, (_, _) => ForgetPress(), Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        _list.AddHandler(DragDrop.DragEnterEvent, OnDragOver);
+        _list.AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        _list.AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
+        _list.AddHandler(DragDrop.DropEvent, OnDrop);
+        // Explorer items over the rest of the view (its header, the filter box) go nowhere: not on to the window, which would open them.
+        AddHandler(DragDrop.DragOverEvent, RefuseOwnItems);
+        AddHandler(DragDrop.DropEvent, RefuseOwnItems);
+    }
+
+    private static void RefuseOwnItems(object? sender, DragEventArgs e)
+    {
+        if (ExplorerDrag.Items(e.DataTransfer) is null) return;
+        e.DragEffects = DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private static ExplorerNode? NodeAt(object? source) => source is Visual v && ViewHelpersAncestor(v)?.DataContext is ExplorerNode node ? node : null;
+
+    private void OnRowPressed(object? sender, PointerPressedEventArgs e)
+    {
+        ForgetPress();
+        var point = e.GetCurrentPoint(_list);
+        if (!point.Properties.IsLeftButtonPressed || NodeAt(e.Source) is not { IsEditing: false } node) return; // (the row being renamed: the text box's)
+        _press = e;
+        _pressAt = point.Position;
+        _pressNode = node;
+        // A plain press on one of several selected rows keeps the selection, so they can be dragged together; if no drag follows, the release
+        // selects that row alone (as a press on it would have). The row still gets the keyboard and the click (Tapped) as usual.
+        if (e.KeyModifiers == KeyModifiers.None && _list.SelectedItems is { Count: > 1 } selected && selected.Contains(node))
+        {
+            e.Handled = true;
+            _collapseOnRelease = node;
+            _list.ContainerFromItem(node)?.Focus();
+        }
+    }
+
+    private void OnRowPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_press is not { } press || _pressNode is not { } node) return;
+        var point = e.GetCurrentPoint(_list);
+        if (!point.Properties.IsLeftButtonPressed) { ForgetPress(); return; }
+        var delta = point.Position - _pressAt;
+        if (Math.Abs(delta.X) < DragThreshold && Math.Abs(delta.Y) < DragThreshold) return;
+        ForgetPress();
+        _ = DragAsync(press, node);
+    }
+
+    private void OnRowReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_collapseOnRelease is { } node && _press is not null)
+        {
+            _list.SelectedItems?.Clear();
+            _list.SelectedItem = node;
+        }
+        ForgetPress();
+    }
+
+    private void ForgetPress()
+    {
+        _press = null;
+        _pressNode = null;
+        _collapseOnRelease = null;
+    }
+
+    /// <summary>The rows a drag that starts on <paramref name="pressed"/> carries (and Cut and Copy take): the selected rows when it is one of them,
+    /// else that row alone, in row order; never a workspace folder unless <paramref name="includeRoots"/> (VS Code drags those only to reorder a
+    /// multi-root workspace, which CsCode does not).</summary>
+    internal IReadOnlyList<ExplorerNode> DraggedNodes(ExplorerNode pressed, bool includeRoots = false)
+    {
+        var selected = _list.SelectedItems?.OfType<ExplorerNode>().ToList() ?? [];
+        var nodes = selected.Contains(pressed) ? selected : [pressed];
+        return [.. nodes.Where(n => includeRoots || !n.IsRoot).OrderBy(n => _vm.Rows.IndexOf(n))];
+    }
+
+    private async Task DragAsync(PointerPressedEventArgs press, ExplorerNode pressed)
+    {
+        var nodes = DraggedNodes(pressed);
+        if (nodes.Count == 0) return;
+        var uris = nodes.Select(n => n.Uri).ToList();
+        var files = await ExplorerDrag.StorageItemsAsync(TopLevel.GetTopLevel(_list)?.StorageProvider, uris).ConfigureAwait(true);
+        using var data = ExplorerDrag.Create(uris, files);
+        ExplorerDrag.Current = new ExplorerDragItems(uris);
+        try
+        {
+            await StartDragDrop(press, data, ExplorerDrag.Offered).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+        {
+            // a platform without a drag source, or a drag the platform refused to start: nothing was dragged
+        }
+        finally
+        {
+            ExplorerDrag.Current = null;
+            EndDropFeedback();
+            foreach (var file in files) (file as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>What a drag over the Explorer would do: copy, move (internal items only) or nothing, and the folder it would land in.</summary>
+    private (DragDropEffects Effect, ExplorerNode? Folder) Evaluate(DragEventArgs e, ExplorerNode? row)
+    {
+        if (!_vm.HasFolder) return (DragDropEffects.None, null);
+        var folder = _vm.DropFolder(row);
+        if (ExplorerDrag.Items(e.DataTransfer) is { } items)
+        {
+            var copy = ExplorerDrag.IsCopy(e.KeyModifiers, MacKeys);
+            return _vm.CanDrop(items, row, copy) ? (PickEffect(e.DragEffects, copy ? DragDropEffects.Copy : DragDropEffects.Move), folder) : (DragDropEffects.None, null);
+        }
+        var files = ExplorerDrag.Files(e.DataTransfer);
+        return files.Count > 0 && _vm.CanDropExternal(files, row) ? (PickEffect(e.DragEffects, DragDropEffects.Copy), folder) : (DragDropEffects.None, null);
+    }
+
+    /// <summary>The effect told to the platform (its cursor badge): the one wanted when the drag offers it, else one it offers. An Explorer drag offers
+    /// Copy only (<see cref="ExplorerDrag.Offered"/>), so a move shows the copy badge; what happens is decided on the drop.</summary>
+    private static DragDropEffects PickEffect(DragDropEffects offered, DragDropEffects wanted) =>
+        (offered & wanted) != 0 ? wanted : (offered & DragDropEffects.Copy) != 0 ? DragDropEffects.Copy : (offered & DragDropEffects.Move) != 0 ? DragDropEffects.Move : wanted;
+
+    private void OnDragOver(object? sender, DragEventArgs e)
+    {
+        if (!_vm.HasFolder) return; // no folder: the window takes it (a folder dropped there opens)
+        var row = NodeAt(e.Source);
+        var (effect, folder) = Evaluate(e, row);
+        e.DragEffects = effect;
+        e.Handled = true;
+        ShowDropTarget(effect == DragDropEffects.None ? null : folder);
+        // A collapsed folder hovered for a moment opens, so a drag can go deeper (VS Code).
+        var expandable = effect != DragDropEffects.None && row is { IsDirectory: true, IsExpanded: false } ? row : null;
+        if (!ReferenceEquals(expandable, _hoverNode))
+        {
+            _hoverExpand?.Dispose();
+            _hoverNode = expandable;
+            _hoverExpand = expandable is null ? null : DispatcherTimer.RunOnce(() =>
+            {
+                _hoverExpand = null;
+                if (ReferenceEquals(_hoverNode, expandable) && !expandable.IsExpanded) _ = _vm.ExpandAsync(expandable);
+            }, ExpandOnHoverDelay);
+        }
+        AutoScroll(e.GetPosition(_list).Y);
+    }
+
+    private void OnDragLeave(object? sender, DragEventArgs e)
+    {
+        // Leaving one row for another raises a leave too: only a pointer outside the list ends the feedback.
+        var p = e.GetPosition(_list);
+        if (p.X < 0 || p.Y < 0 || p.X >= _list.Bounds.Width || p.Y >= _list.Bounds.Height) EndDropFeedback();
+    }
+
+    private void OnDrop(object? sender, DragEventArgs e)
+    {
+        if (!_vm.HasFolder) return;
+        var row = NodeAt(e.Source);
+        var (effect, _) = Evaluate(e, row);
+        e.DragEffects = effect;
+        e.Handled = true;
+        EndDropFeedback();
+        if (effect == DragDropEffects.None) return;
+        // The drop returns to the platform at once; the move or copy (questions included) runs after it.
+        LastDrop = ExplorerDrag.Items(e.DataTransfer) is { } items
+            ? DropSafelyAsync(() => _vm.DropAsync(items, row, ExplorerDrag.IsCopy(e.KeyModifiers, MacKeys)))
+            : DropSafelyAsync(() => _vm.DropExternalAsync(ExplorerDrag.Files(e.DataTransfer), row));
+    }
+
+    /// <summary>The work of the last drop: what it created (tests await it).</summary>
+    internal Task<IReadOnlyList<Uri>> LastDrop { get; private set; } = Task.FromResult<IReadOnlyList<Uri>>([]);
+
+    private async Task<IReadOnlyList<Uri>> DropSafelyAsync(Func<Task<IReadOnlyList<Uri>>> drop)
+    {
+        try { return await drop().ConfigureAwait(true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
+        {
+            _ = _window.ShowMessageAsync(MessageSeverity.Error, "Drag and drop failed: " + ex.Message).AsTask(); // a toast: not awaited (it waits for its dismissal)
+            return [];
+        }
+    }
+
+    private void ShowDropTarget(ExplorerNode? folder)
+    {
+        if (ReferenceEquals(folder, _dropTarget)) return;
+        if (_dropTarget is not null) _dropTarget.IsDropTarget = false;
+        _dropTarget = folder;
+        if (folder is not null) folder.IsDropTarget = true;
+    }
+
+    private void EndDropFeedback()
+    {
+        ShowDropTarget(null);
+        _hoverExpand?.Dispose();
+        _hoverExpand = null;
+        _hoverNode = null;
+        AutoScroll(double.NaN);
+    }
+
+    /// <summary>Near the top or bottom edge a drag scrolls the rows, a row per tick, for as long as it stays there (drag events stop while the
+    /// pointer rests on some platforms).</summary>
+    private void AutoScroll(double y)
+    {
+        var direction = double.IsNaN(y) ? 0 : y < AutoScrollMargin ? -1 : y > _list.Bounds.Height - AutoScrollMargin ? 1 : 0;
+        _autoScrollDirection = direction;
+        if (direction == 0) { _autoScroll?.Stop(); return; }
+        if (_autoScroll is null)
+        {
+            _autoScroll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            _autoScroll.Tick += (_, _) => ScrollRows(_autoScrollDirection);
+        }
+        if (!_autoScroll.IsEnabled) { ScrollRows(direction); _autoScroll.Start(); }
+    }
+
+    /// <summary>Scrolls the rows by one row up (-1) or down (1). True when they moved.</summary>
+    internal bool ScrollRows(int direction)
+    {
+        if (direction == 0 || _list.Scroll is not ScrollViewer scroller) return false;
+        var before = scroller.Offset.Y;
+        var max = Math.Max(0, scroller.Extent.Height - scroller.Viewport.Height);
+        scroller.Offset = new Vector(scroller.Offset.X, Math.Clamp(before + direction * 22, 0, max));
+        if (scroller.Offset.Y == before) _autoScroll?.Stop();
+        return scroller.Offset.Y != before;
     }
 
     // ------------------------------------------------------------------ actions / context menu
@@ -316,6 +579,9 @@ public sealed class ExplorerView : UserControl, IDisposable, IClipboardTarget, I
 
     public void Dispose()
     {
+        EndDropFeedback();
+        _autoScroll = null;
+        ForgetPress();
         _vm.PropertyChanged -= OnVmChanged;
         _vm.Rows.CollectionChanged -= OnRowsChanged;
         _list.ItemsSource = null;
