@@ -81,10 +81,10 @@ internal static class BookmarkCommands
 
     public static IReadOnlyList<SubmenuContribution> Submenus { get; } = [new(Submenu, "B_ookmarks", "bookmark")];
 
-    /// <summary>The editor's right-click Bookmarks submenu (in the navigation group, after Find All References).</summary>
+    /// <summary>The editor's right-click Bookmarks submenu, beside the Breakpoint submenu (both mark lines in the indicator margin).</summary>
     public static IReadOnlyList<MenuContribution> Items { get; } =
     [
-        new(MenuIds.EditorContext, Submenu, "2_navigation@9", CanBookmarkKey) { Submenu = Submenu },
+        new(MenuIds.EditorContext, Submenu, "3_debug@1.5", CanBookmarkKey) { Submenu = Submenu },
         new(Submenu, BookmarkCommandIds.Toggle, "1@1", "!" + LineHasBookmarkKey) { Title = "_Add Bookmark", Icon = "bookmark" },
         new(Submenu, BookmarkCommandIds.Toggle, "1@2", LineHasBookmarkKey) { Title = "_Remove Bookmark" },
         new(Submenu, BookmarkCommandIds.ToggleEnabled, "1@3", LineBookmarkEnabledKey) { Title = "_Disable Bookmark" },

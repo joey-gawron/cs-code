@@ -70,6 +70,7 @@ public static class AppServices
         services.AddCsCodeNewProject(); // File > New > Project...: the New Project page and its generators (docs/NEW-PROJECT.md)
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         services.AddCodeActionsOnSave(); // after AddCsCodeRemote (see there): editor.codeActionsOnSave, the first will-save participant
+        services.AddBookmarkFileTracking(); // after AddCsCodeRemote: bookmarks follow a file renamed, moved or deleted in CsCode
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
@@ -139,6 +140,7 @@ public static class AppServices
         services.AddSingleton<IToolWindow, OutputToolWindow>();
         services.AddSingleton<IToolWindow, ErrorListToolWindow>();
         services.AddSingleton<IToolWindow, FindResultsToolWindow>();
+        services.AddSingleton<IToolWindow, ToolWindows.Bookmarks.BookmarksToolWindow>(); // the Bookmark Window (the bookmarks are the editor's)
         services.AddSingleton(sp => new ToolWindowManager(sp.GetRequiredService<ShellDockFactory>(), sp.GetServices<IToolWindow>(), sp));
         // Panels bring their views to the front through this (Find in Files, Settings, Keyboard Shortcuts); document-location windows open as tabs.
         services.AddSingleton<ShellViewActivator>();

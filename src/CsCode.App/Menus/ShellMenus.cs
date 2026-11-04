@@ -1,4 +1,5 @@
 using CsCode.Core.Platform;
+using CsCode.Core.Text;
 using CsCode.Ui.Icons;
 
 namespace CsCode.App.Menus;
@@ -111,13 +112,31 @@ public static class ShellMenus
             M("_Format Document", KnownCommands.FormatDocument, "hasOpenEditors && !editorReadonly"),
             M("Format Document _With...", "editor.action.formatDocument.multiple", "hasOpenEditors && !editorReadonly"),
             M("Co_mment Selection", "editor.action.addCommentLine", "editorTextFocus && !editorReadonly"),
-            M("Uncomme_nt Selection", "editor.action.removeCommentLine", "editorTextFocus && !editorReadonly")),
+            M("Uncomme_nt Selection", "editor.action.removeCommentLine", "editorTextFocus && !editorReadonly"),
+            S,
+            // Visual Studio's Edit > Bookmarks (the editor's bookmarks.* commands; docs/EDITOR.md §7g)
+            Sub("_Bookmarks",
+                M("_Toggle Bookmark", BookmarkCommandIds.Toggle, "hasOpenEditors", "bookmark"),
+                M("_Enable or Disable Bookmark", BookmarkCommandIds.ToggleEnabled, "hasOpenEditors"),
+                M("Enable or Disable _All Bookmarks", BookmarkCommandIds.ToggleAllEnabled),
+                S,
+                M("_Previous Bookmark", BookmarkCommandIds.JumpToPrevious, icon: "arrow-up"),
+                M("_Next Bookmark", BookmarkCommandIds.JumpToNext, icon: "arrow-down"),
+                M("Previous Bookmark in _Document", BookmarkCommandIds.JumpToPreviousInDocument, "hasOpenEditors"),
+                M("Next Bookmark in Docu_ment", BookmarkCommandIds.JumpToNextInDocument, "hasOpenEditors"),
+                S,
+                M("Clear Bookmarks in Do_cument", BookmarkCommandIds.Clear, "hasOpenEditors"),
+                M("C_lear All Bookmarks", BookmarkCommandIds.ClearFromAllFiles),
+                S,
+                M("Li_st Bookmarks...", BookmarkCommandIds.List),
+                M("Bookmark _Window", BookmarkCommandIds.ShowWindow))),
 
         Sub("_View",
             M("_Command Palette...", KnownCommands.CommandPalette),
             M("Go to _File...", KnownCommands.QuickOpen),
             S,
             new MenuNode("_Tool Windows", Dynamic: "toolWindows", Children: []),
+            M("Boo_kmark Window", BookmarkCommandIds.ShowWindow, icon: "bookmark"), // Visual Studio's View > Bookmark Window (Ctrl+K, Ctrl+W)
             Sub("Tool_bars", Views.ToolbarView.Groups.Select(g =>
                 new MenuNode("_" + g.Title, ToggleToolbar, CheckWhen: "config." + g.SettingKey, Argument: g.Id)).ToArray()),
             S,

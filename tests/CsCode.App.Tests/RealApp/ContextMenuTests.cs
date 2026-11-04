@@ -90,7 +90,7 @@ public class RealAppContextMenuTests
         // No language server is running (RealAppHost disables them): the capability-gated items are hidden, not dead; no debug session: no watch items.
         Assert.Equal(
         [
-            "Breakpoint", "Run To Cursor", "-",
+            "Breakpoint", "Bookmarks", "Run To Cursor", "-",
             "Snippet", "-",
             "Cut", "Copy", "Copy with Formatting", "Paste", "-",
             "Comment Selection", "Uncomment Selection", "-",
