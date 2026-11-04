@@ -8,7 +8,7 @@ namespace CsCode.Platform.Python;
 /// <summary>One finished (or killed) run of a small helper process: its exit code (null when killed or not started) and standard output.</summary>
 public sealed record PythonProcessResult(int? ExitCode, string Output);
 
-/// <summary>Runs a short helper process with a deadline (an interpreter probe, <c>poetry env info</c>, <c>py -0p</c>). Tests pass a fake.</summary>
+/// <summary>Runs a short helper process with a deadline (an interpreter probe, <c>poetry env info</c>, <c>nix print-dev-env</c>, <c>py -0p</c>). Tests pass a fake.</summary>
 public delegate Task<PythonProcessResult> PythonProcessRunner(string fileName, IReadOnlyList<string> arguments, string? workingDirectory, TimeSpan timeout, CancellationToken ct);
 
 /// <summary>The probes the environment service runs, and the real process runner.</summary>
@@ -24,6 +24,31 @@ public static class PythonProcess
     /// <summary>Exit 0 when the module named by the last argument can be imported (found, not imported: nothing of it runs).</summary>
     public static string[] ModuleArguments(string module) =>
         ["-I", "-c", "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 3)", module];
+
+    /// <summary>
+    /// The environment of a flake's default development shell, as JSON (what <c>nix develop</c> would start, without running its shellHook). The
+    /// features are named so a Nix that has not turned flakes on still answers.
+    /// </summary>
+    public static string[] DevShellArguments(string flakeDirectory) =>
+        ["--extra-experimental-features", "nix-command flakes", "print-dev-env", "--json", flakeDirectory];
+
+    /// <summary>The development shell's PATH (<c>variables.PATH.value</c>) from <see cref="DevShellArguments"/>' output; empty when it has none.</summary>
+    public static IReadOnlyList<string> ParseDevShellPath(string output)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            return doc.RootElement is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("variables", out var variables)
+                && variables.ValueKind == JsonValueKind.Object && variables.TryGetProperty("PATH", out var path)
+                && path.ValueKind == JsonValueKind.Object && path.TryGetProperty("value", out var value) && value.GetString() is { } dirs
+                ? dirs.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+                : [];
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return [];
+        }
+    }
 
     /// <summary>Version, sys.prefix and sys.base_prefix from a probe's output; null when it is not one.</summary>
     public static (string Version, string Prefix, string BasePrefix)? ParseProbe(string output)
@@ -46,7 +71,8 @@ public static class PythonProcess
     }
 
     /// <summary>
-    /// The real runner: standard input closed, output collected (at most 64 KB), the process tree killed when <paramref name="timeout"/> passes
+    /// The real runner: standard input closed, output collected (at most 1 MB: <c>nix print-dev-env --json</c> prints about 100 KB, its PATH near
+    /// the end), the process tree killed when <paramref name="timeout"/> passes
     /// or <paramref name="ct"/> is cancelled. Never throws for a program that cannot start (exit code null).
     /// </summary>
     public static async Task<PythonProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, string? workingDirectory, TimeSpan timeout, CancellationToken ct)
@@ -101,7 +127,7 @@ public static class PythonProcess
         {
             int n;
             while ((n = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
-                if (sink is not null) lock (sink) { if (sink.Length < 64 * 1024) sink.Append(buffer, 0, n); }
+                if (sink is not null) lock (sink) { if (sink.Length < 1024 * 1024) sink.Append(buffer, 0, n); }
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
     }
@@ -116,6 +142,7 @@ public static class PythonProcess
     {
         if (!string.Equals(prefix, basePrefix, StringComparison.Ordinal) || File.Exists(Path.Combine(prefix, "pyvenv.cfg"))) return PythonEnvironmentKind.Venv;
         if (Directory.Exists(Path.Combine(prefix, "conda-meta"))) return PythonEnvironmentKind.Conda;
+        if (prefix.StartsWith("/nix/store/", StringComparison.Ordinal)) return PythonEnvironmentKind.Nix;
         if (pyenvRoot is not null && IsUnder(prefix, Path.Combine(pyenvRoot, "versions"))) return PythonEnvironmentKind.Pyenv;
         if (prefix.Contains("/Cellar/", StringComparison.Ordinal) || prefix.StartsWith("/opt/homebrew/", StringComparison.Ordinal)
             || prefix.StartsWith("/home/linuxbrew/", StringComparison.Ordinal) || executable.StartsWith("/opt/homebrew/", StringComparison.Ordinal))

@@ -12,21 +12,30 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
 `IPythonEnvironmentService` (Core contract, `src/CsCode.Platform/Python/`).
 
 * **Discovery** (on the IO lane, each probe `python -I -c …` killed after 2 s, at most four at a time, cached per folder): the folder's
-  `.venv` / `venv` / `env` (marked by `pyvenv.cfg`), `VIRTUAL_ENV`, `CONDA_PREFIX`, Poetry (`poetry env info -p`, only when `poetry` is on PATH and
+  `.venv` / `venv` / `env` (marked by `pyvenv.cfg`), its **Nix flake's development shell** (below), `VIRTUAL_ENV`, `CONDA_PREFIX`, Poetry (`poetry env info -p`, only when `poetry` is on PATH and
   pyproject.toml has `[tool.poetry…]`), conda's `~/.conda/environments.txt` and `CONDA_EXE`'s base, pyenv's versions, Homebrew's `python3*`,
   python.org's framework builds, `python3` / `python` on PATH, `py -0p` on Windows. Two paths to one interpreter (same `sys.prefix`) are listed
   once. It waits for the login shell's environment first (a Dock-started app has launchd's PATH). macOS's `/usr/bin/python3` is used only when
   the Command Line Tools' (or Xcode's) Python exists: otherwise running it opens the "install developer tools" dialog.
+* **Nix**: a project whose libraries come from a flake (`python313.withPackages …` in `devShells.default`, no venv) has its interpreter in
+  the shell `nix develop` starts. The flake is the folder's own `flake.nix`, else the nearest one above it up to its git repository's root
+  (where `nix develop` stops looking; outside a repository only the folder's own). When `nix` is on PATH, `nix print-dev-env --json <flake>`
+  (with `nix-command flakes` turned on; no shellHook runs) gives the shell's PATH, and its first `python3` is listed as
+  `3.13.15 ('operations-dashboard': nix)`. It runs beside the file-system search, bounded at 30 s: about 2 s once Nix has cached the
+  evaluation, longer the first time it builds the shell (a timeout is logged and the shell's Python is left out until a Refresh). An
+  interpreter under `/nix/store` entered by hand is a `nix` one too.
 * **Choice**, per workspace folder: the one picked in **Python: Select Interpreter** (persisted in workspace state), else
   `python.defaultInterpreterPath` (user settings only: it names a program CsCode runs), else the best found: the folder's own venv, then
-  `VIRTUAL_ENV`, `CONDA_PREFIX`, Poetry's, then the first `python3` on PATH.
+  its Nix development shell's, `VIRTUAL_ENV`, `CONDA_PREFIX`, Poetry's, then the first `python3` on PATH. A project with both (a shell that
+  provides uv, a `.venv` that `uv sync` made) gets the venv, which holds its libraries.
 * **Picker**: version, kind and path of each, "Enter interpreter path…", "Refresh". **Status bar** (right side, while a Python file is active):
   `3.14.7 ('.venv': venv)`; a click opens the picker. **Python: Clear Workspace Interpreter Setting** forgets the pick.
   `${command:python.interpreterPath}` works in launch configurations and tasks.
 * **Fed to**: Pyright / basedpyright as `python.pythonPath` in their `workspace/configuration` answers (an additive
   `ILanguageServerSettingsContributor`; a change pushes `workspace/didChangeConfiguration` and the server asks again), debugpy (`python`), the
   test provider, and **new terminals** (`python.terminal.activateEnvironment`, default on): the environment's `bin` first on PATH and
-  `VIRTUAL_ENV` (or `CONDA_PREFIX`) set, through an additive `ITerminalEnvironmentContributor`. A macOS login shell's `path_helper` (and Nix's
+  `VIRTUAL_ENV` (or `CONDA_PREFIX`) set, through an additive `ITerminalEnvironmentContributor`. A `nix` interpreter's `bin` goes first on
+  PATH with no `VIRTUAL_ENV`: it is no venv, and pip or uv told one is there would install into the read-only store. A macOS login shell's `path_helper` (and Nix's
   profile scripts here) rebuild PATH and drop or demote that directory, so the shell integration (zsh, bash, fish) puts `CSCODE_PATH_PREPEND`
   first again after the user's startup files (`TerminalServiceTests.Contributed_PATH_directories_come_first_even_in_a_login_shell`).
 * Workspace trust: a folder's own `.venv/bin/python` is probed (with `-I`) and given to the type checker, as VS Code does in a trusted workspace. CsCode
@@ -217,4 +226,7 @@ Two things about typing into the app that the measurement depends on:
 * Remote workspaces: interpreters are discovered on this machine only; bridged providers carry no server id for `editor.defaultFormatter`.
 * Attach by process id on macOS (§4). No auto-save in CsCode, so `"always"` code actions run only on explicit saves too.
 * Changing the interpreter does not restart Ruff to pick a different environment's `ruff` (restart the server).
+* One interpreter per workspace folder: a monorepo opened at its root gets the root's (its venv or flake), not a sub-project's. Open the
+  sub-project's folder (or add it to the workspace) to get its own; nested venvs and flakes are not searched for. Nix: flakes only (no
+  `shell.nix`), and terminals get the interpreter's directory, not the whole development shell (direnv's job).
 * Not in this stage: Jupyter notebooks, a DataFrame viewer, Pylance-only features, coverage.

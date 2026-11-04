@@ -9,6 +9,8 @@ public enum PythonEnvironmentKind
     Venv,
     Poetry,
     Conda,
+    /// <summary>One built by Nix (in <c>/nix/store</c>): the folder's flake development shell (<c>nix develop</c>), or a store path entered by hand.</summary>
+    Nix,
     Pyenv,
     Homebrew,
     /// <summary>Any other global interpreter: python.org's framework builds, the OS's, one found on PATH, the Windows launcher's.</summary>
@@ -40,6 +42,7 @@ public sealed record PythonEnvironment(string Executable, PythonEnvironmentKind 
                 PythonEnvironmentKind.Venv => "venv",
                 PythonEnvironmentKind.Poetry => "poetry",
                 PythonEnvironmentKind.Conda => "conda",
+                PythonEnvironmentKind.Nix => "nix",
                 PythonEnvironmentKind.Pyenv => "pyenv",
                 PythonEnvironmentKind.Homebrew => "Homebrew",
                 PythonEnvironmentKind.Custom => "custom",

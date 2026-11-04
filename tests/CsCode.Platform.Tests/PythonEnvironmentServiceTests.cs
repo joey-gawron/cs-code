@@ -25,6 +25,11 @@ public sealed class PythonEnvironmentServiceTests : IDisposable
     private readonly ConcurrentDictionary<string, (string Version, string Prefix, string Base)> _pythons = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _runs = new(StringComparer.Ordinal);
     private TaskCompletionSource? _probeGate;
+    /// <summary>The fake <c>nix</c> on PATH (see <see cref="Nix"/>), the PATH its development shells have, and the flakes it was asked about.</summary>
+    private string? _nix;
+    private string? _devShellPath;
+    private int _devShellExit;
+    private readonly ConcurrentQueue<string> _flakesAsked = new();
 
     public PythonEnvironmentServiceTests()
     {
@@ -46,6 +51,13 @@ public sealed class PythonEnvironmentServiceTests : IDisposable
     {
         _runs.AddOrUpdate(file, 1, (_, n) => n + 1);
         if (_probeGate is { } gate) await gate.Task.WaitAsync(ct);
+        if (file == _nix)
+        {
+            Assert.Equal(PythonProcess.DevShellArguments(args[^1]), args);
+            Assert.Equal(args[^1], cwd);
+            _flakesAsked.Enqueue(args[^1]);
+            return new PythonProcessResult(_devShellExit, JsonSerializer.Serialize(new { variables = new { PATH = new { type = "exported", value = _devShellPath } } }));
+        }
         if (!_pythons.TryGetValue(file, out var p)) return new PythonProcessResult(1, "");
         if (args.SequenceEqual(PythonProcess.ProbeArguments))
             return new PythonProcessResult(0, JsonSerializer.Serialize(new { v = p.Version, p = p.Prefix, b = p.Base }) + "\n");
@@ -71,6 +83,115 @@ public sealed class PythonEnvironmentServiceTests : IDisposable
         _pythons[exe] = (version, prefix, prefix);
         _env["PATH"] = string.Join(Path.PathSeparator, new[] { _env["PATH"], dir }.Where(s => !string.IsNullOrEmpty(s)));
         return exe;
+    }
+
+    /// <summary>
+    /// A <c>nix</c> on PATH whose development shells have a tool directory, then a Nix-built interpreter's (python.withPackages: its prefix is its
+    /// base prefix, under /nix/store), on their PATH. Returns that interpreter.
+    /// </summary>
+    private string Nix(string version = "3.13.15")
+    {
+        var bin = _dir.Combine("nixbin").EnsureDirectory();
+        _nix = Path.Combine(bin, "nix");
+        File.WriteAllText(_nix, "");
+        _env["PATH"] = string.Join(Path.PathSeparator, new[] { _env["PATH"], bin }.Where(s => !string.IsNullOrEmpty(s)));
+        var tools = _dir.Combine("store", "ruff", "bin").EnsureDirectory();
+        File.WriteAllText(Path.Combine(tools, "ruff"), "");
+        var python = Path.Combine(_dir.Combine("store", "python3-env", "bin").EnsureDirectory(), "python3");
+        File.WriteAllText(python, "");
+        _pythons[python] = (version, "/nix/store/abc-python3-" + version + "-env", "/nix/store/abc-python3-" + version + "-env");
+        _devShellPath = string.Join(Path.PathSeparator, tools, Path.GetDirectoryName(python));
+        return python;
+    }
+
+    [Fact]
+    public async Task The_flake_s_development_shell_comes_after_the_folder_s_venv_and_before_VIRTUAL_ENV_and_PATH()
+    {
+        var project = _dir.Combine("ops").EnsureDirectory();
+        File.WriteAllText(Path.Combine(project, "flake.nix"), "{ }");
+        _workspace.Folders = [new Uri(project)];
+        var activated = Venv(_dir.Combine("elsewhere", "activated"), "3.12.1");
+        _env["VIRTUAL_ENV"] = _dir.Combine("elsewhere", "activated");
+        var global = Global(_dir.Combine("usr", "bin"), "python3", "3.14.7", "/framework/3.14");
+        var shell = Nix();
+        using var svc = Create();
+
+        var found = await svc.DiscoverAsync(new Uri(project), ct: Ct);
+        Assert.Equal([shell, activated, global], found.Select(e => e.Executable));
+        Assert.Equal("3.13.15 ('ops': nix)", found[0].Label);
+        Assert.Equal([project], _flakesAsked);
+        Assert.Equal(shell, (await svc.GetActiveAsync(new Uri(Path.Combine(project, "app.py")), ct: Ct))?.Executable);
+
+        // a venv the project made (uv sync inside the shell) holds its libraries: it comes first
+        var venv = Venv(Path.Combine(project, ".venv"));
+        found = await svc.DiscoverAsync(new Uri(project), refresh: true, ct: Ct);
+        Assert.Equal([venv, shell, activated, global], found.Select(e => e.Executable));
+    }
+
+    [Fact]
+    public void The_flake_is_the_folder_s_own_else_the_nearest_above_it_in_its_repository_and_never_one_outside_it()
+    {
+        var repo = _dir.Combine("sartools").EnsureDirectory();
+        Directory.CreateDirectory(Path.Combine(repo, ".git"));
+        File.WriteAllText(Path.Combine(repo, "flake.nix"), "{ }");
+        var dashboard = Path.Combine(repo, "operations-dashboard").EnsureDirectory();
+        File.WriteAllText(Path.Combine(dashboard, "flake.nix"), "{ }");
+        var app = Path.Combine(dashboard, "operations-log").EnsureDirectory();
+        var tools = Path.Combine(repo, "fieldtools").EnsureDirectory();
+
+        Assert.Equal(repo, PythonEnvironmentService.FlakeDirectory(repo + "/"));
+        Assert.Equal(dashboard, PythonEnvironmentService.FlakeDirectory(dashboard));
+        Assert.Equal(dashboard, PythonEnvironmentService.FlakeDirectory(app));
+        Assert.Equal(repo, PythonEnvironmentService.FlakeDirectory(tools));
+
+        // no repository: a flake.nix in a parent directory (a home directory's, say) is not the folder's
+        var home = _dir.Combine("home").EnsureDirectory();
+        File.WriteAllText(Path.Combine(home, "flake.nix"), "{ }");
+        var loose = Path.Combine(home, "scratch").EnsureDirectory();
+        Assert.Null(PythonEnvironmentService.FlakeDirectory(loose));
+        Assert.Equal(home, PythonEnvironmentService.FlakeDirectory(home));
+    }
+
+    [Fact]
+    public async Task A_development_shell_that_fails_or_has_no_python3_adds_nothing()
+    {
+        var project = _dir.Combine("p").EnsureDirectory();
+        File.WriteAllText(Path.Combine(project, "flake.nix"), "{ }");
+        _workspace.Folders = [new Uri(project)];
+        var global = Global(_dir.Combine("bin"), "python3", "3.13.0", "/g");
+        Nix();
+        using var svc = Create();
+
+        _devShellExit = 1;
+        Assert.Equal([global], (await svc.DiscoverAsync(null, ct: Ct)).Select(e => e.Executable));
+        _devShellExit = 0;
+        _devShellPath = _dir.Combine("store", "ruff", "bin");
+        Assert.Equal([global], (await svc.DiscoverAsync(null, refresh: true, ct: Ct)).Select(e => e.Executable));
+        Assert.Equal(2, _flakesAsked.Count);
+        Assert.Empty(PythonProcess.ParseDevShellPath("error: flake has no devShell"));
+        Assert.Empty(PythonProcess.ParseDevShellPath("""{"variables":{"PATH":{"type":"array","value":["/a"]}}}"""));
+    }
+
+    [Fact]
+    public async Task A_Nix_store_interpreter_entered_by_hand_is_a_nix_one_and_terminals_get_it_first_on_PATH_without_VIRTUAL_ENV()
+    {
+        var project = _dir.Combine("p").EnsureDirectory();
+        _workspace.Folders = [new Uri(project)];
+        Global(_dir.Combine("bin"), "python3", "3.14.7", "/g");
+        var store = Nix(); // not this folder's shell (it has no flake): entered by hand
+        using var svc = Create();
+        await svc.SetActiveAsync(new Uri(project), store, ct: Ct);
+
+        var active = svc.GetActive(new Uri(project));
+        Assert.Equal((store, PythonEnvironmentKind.Nix, "3.13.15 (nix)"), (active?.Executable, active?.Kind, active?.Label));
+        Assert.Empty(_flakesAsked);
+        var c = new PythonTerminalEnvironment(svc, _config, _workspace).Contribute(new TerminalCreateOptions { Cwd = project });
+        Assert.NotNull(c);
+        Assert.Equal([Path.GetDirectoryName(store)!], c.PathPrepend);
+        Assert.False(c.Variables.ContainsKey("VIRTUAL_ENV"));
+
+        // a venv made from a Nix interpreter is still a venv
+        Assert.Equal(PythonEnvironmentKind.Venv, PythonProcess.Classify("/p/.venv/bin/python", "/p/.venv", "/nix/store/abc-python3-3.13.15", null));
     }
 
     [Fact]
