@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using CsCode.Core.Diagnostics;
 using CsCode.Core.History;
 using CsCode.Core.Languages;
 using CsCode.Core.Platform;
@@ -31,7 +32,8 @@ public static class ServiceCollectionExtensions
             sp.GetService<IDocumentManager>(),
             sp.GetService<IWorkspaceService>(),
             sp.GetService<TimeProvider>(),
-            sp.GetService<ILoggerFactory>()?.CreateLogger("CsCode.LocalHistory")));
+            sp.GetService<ILoggerFactory>()?.CreateLogger("CsCode.LocalHistory"),
+            sp.GetService<IMemoryMonitor>()));
         services.TryAddSingleton<ILocalHistoryService>(sp => sp.GetRequiredService<LocalHistoryService>());
         services.AddSingleton<IFileOperationParticipant>(sp => sp.GetRequiredService<LocalHistoryService>());
         services.AddSingleton<ITimelineProvider>(sp => new LocalHistoryTimelineProvider(sp.GetRequiredService<LocalHistoryService>()));

@@ -217,7 +217,7 @@ public sealed class HistoryRig : IDisposable
 
     public void Dispose()
     {
-        History.Dispose();
+        History?.Dispose(); // null when the test composed its own service (start: false)
         foreach (var r in _open.Values) r.Dispose();
         _lane.Dispose();
         _dir.Dispose();

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using CsCode.Core.History;
+using CsCode.Core.Platform;
 using CsCode.Panels.Timeline.LocalHistory;
 using Xunit;
 
@@ -336,6 +337,78 @@ public class LocalHistoryServiceTests
         rig.Time.Advance(TimeSpan.FromMinutes(1));
         await rig.SaveAsync("old.txt", "o2");
         Assert.Equal(["old.txt", "new.txt"], (await rig.History.GetResourcesAsync()).Select(u => Path.GetFileName(u.LocalPath)));
+    }
+
+    /// <summary>
+    /// A file system serving <c>ssh://host/...</c> from a local folder (the remote module's provider stands behind the same router in the app),
+    /// counting the reads made over "the connection".
+    /// </summary>
+    private sealed class RemoteRouter(IFileSystem local, string remoteRoot) : IFileSystem
+    {
+        public int RemoteReads;
+        private Uri Map(Uri uri) => uri.Scheme == "ssh" ? new Uri(remoteRoot + Uri.UnescapeDataString(uri.AbsolutePath)) : uri;
+        public ValueTask<FileStat?> StatAsync(Uri uri, CancellationToken ct = default) => local.StatAsync(Map(uri), ct);
+        public ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(Uri uri, CancellationToken ct = default) => local.ReadDirectoryAsync(Map(uri), ct);
+        public ValueTask<byte[]> ReadFileAsync(Uri uri, CancellationToken ct = default)
+        {
+            if (uri.Scheme == "ssh") Interlocked.Increment(ref RemoteReads);
+            return local.ReadFileAsync(Map(uri), ct);
+        }
+        public ValueTask WriteFileAsync(Uri uri, ReadOnlyMemory<byte> content, bool createParents = true, CancellationToken ct = default) => local.WriteFileAsync(Map(uri), content, createParents, ct);
+        public ValueTask CreateDirectoryAsync(Uri uri, CancellationToken ct = default) => local.CreateDirectoryAsync(Map(uri), ct);
+        public ValueTask DeleteAsync(Uri uri, bool recursive = false, bool useTrash = true, CancellationToken ct = default) => local.DeleteAsync(Map(uri), recursive, useTrash, ct);
+        public ValueTask RenameAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default) => local.RenameAsync(Map(source), Map(target), overwrite, ct);
+        public ValueTask CopyAsync(Uri source, Uri target, bool overwrite = false, CancellationToken ct = default) => local.CopyAsync(Map(source), Map(target), overwrite, ct);
+    }
+
+    [Fact]
+    public async Task A_remote_files_history_is_kept_on_this_machine_and_follows_its_renames()
+    {
+        using var rig = new HistoryRig(start: false);
+        var remoteRoot = Path.Combine(rig.Workspace, "remote-host");
+        Directory.CreateDirectory(Path.Combine(remoteRoot, "home", "u"));
+        var router = new RemoteRouter(rig.Local, remoteRoot);
+        using var history = new LocalHistoryService(router, rig.Home, rig.Config, rig.Documents, new FakeWorkspace(router, new Uri("ssh://host/home/u/")), rig.Time);
+        var remote = new Uri("ssh://host/home/u/main.py");
+        Assert.True(history.CanTrack(remote));
+        File.WriteAllText(Path.Combine(remoteRoot, "home", "u", "main.py"), "print(1)\n");
+        using var _ = rig.Documents.Register(new Core.Text.InMemoryTextDocument(remote, "python", "print(1)\n"));
+        rig.Documents.NotifySaved(rig.Documents.Get(remote)!);
+        await history.WhenIdleAsync();
+
+        var entry = Assert.Single(await history.GetEntriesAsync(remote));
+        Assert.True(entry.Location.IsFile); // the copy is a local file
+        Assert.StartsWith(rig.Home, entry.Location.LocalPath);
+        Assert.Equal(HistoryFormat.Hash("ssh://host/home/u/main.py"), Path.GetFileName(Path.GetDirectoryName(entry.Location.LocalPath)));
+        Assert.Equal("print(1)\n", Encoding.UTF8.GetString((await history.ReadAsync(entry))!));
+        Assert.Equal(1, router.RemoteReads); // the saved file was read once over the connection; the stat said its size first
+
+        // a workspace-relative exclude pattern applies to remote folders too
+        rig.Config.Set(LocalHistorySettings.Exclude, new Dictionary<string, bool> { ["**/*.log"] = true });
+        Assert.True(history.IsExcluded(new Uri("ssh://host/home/u/out.log")));
+
+        File.Move(Path.Combine(remoteRoot, "home", "u", "main.py"), Path.Combine(remoteRoot, "home", "u", "app.py"));
+        rig.Time.Advance(TimeSpan.FromMinutes(1));
+        await history.DidRenameFilesAsync([(remote, new Uri("ssh://host/home/u/app.py"))], default);
+        await history.WhenIdleAsync();
+        Assert.Equal(["File Saved", "File Renamed"], (await history.GetEntriesAsync(new Uri("ssh://host/home/u/app.py"))).Select(e => e.SourceLabel));
+    }
+
+    [Fact]
+    public async Task Trimming_drops_the_caches_and_the_entries_are_read_again()
+    {
+        using var rig = new HistoryRig();
+        await rig.SaveAsync("a.txt", "one");
+        await rig.SaveAsync("b.txt", "two");
+        Assert.Equal(2, (await rig.History.GetResourcesAsync()).Count);
+        var trimmable = (CsCode.Core.Diagnostics.IMemoryTrimmable)rig.History;
+        Assert.True(trimmable.EstimatedBytes > 0);
+        Assert.Equal(0, trimmable.Trim(CsCode.Core.Diagnostics.MemoryTrimLevel.Idle));
+        Assert.True(trimmable.Trim(CsCode.Core.Diagnostics.MemoryTrimLevel.Moderate) > 0);
+        await rig.History.WhenIdleAsync();
+        Assert.Equal(0, trimmable.EstimatedBytes);
+        Assert.Equal(["one"], await rig.ContentsAsync("a.txt"));
+        Assert.Equal(2, (await rig.History.GetResourcesAsync()).Count);
     }
 
     [Fact]

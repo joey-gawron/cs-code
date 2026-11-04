@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
+using CsCode.Core.Diagnostics;
 using CsCode.Core.History;
 using CsCode.Core.Languages;
 using CsCode.Core.Lifecycle;
@@ -19,7 +20,7 @@ namespace CsCode.Panels.Timeline.LocalHistory;
 /// enqueues (bounded; a full queue drops the entry and logs it): a save never waits for history. Reads of the saved file happen after the save,
 /// from disk, so the entry is exactly what was written (encoding and line endings included).</para>
 /// </summary>
-public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationParticipant, IDisposable
+public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationParticipant, IMemoryTrimmable, IDisposable
 {
     public const string HistoryFolderName = "History";
     internal const int QueueCapacity = 4096;
@@ -51,7 +52,7 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
     private volatile bool _disposed;
 
     public LocalHistoryService(IFileSystem fileSystem, string historyHome, IConfigurationService? config = null, IDocumentManager? documents = null,
-        IWorkspaceService? workspace = null, TimeProvider? time = null, ILogger? log = null)
+        IWorkspaceService? workspace = null, TimeProvider? time = null, ILogger? log = null, IMemoryMonitor? memory = null)
     {
         _fs = fileSystem;
         _home = Path.GetFullPath(historyHome);
@@ -61,8 +62,34 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         _log = log;
         if (config is not null) _store.Add(config.RegisterProperties(LocalHistorySettings.Properties()));
         if (documents is not null) _store.Add(documents.Saved.Subscribe(OnSaved));
+        if (memory is not null) _store.Add(memory.Register(this));
         _ = PumpAsync();
     }
+
+    // ------------------------------------------------------------------------------------------------ memory
+
+    string IMemoryTrimmable.Name => "Local history";
+
+    /// <summary>The cached entry lists (≤ 256 files) and the index of every file with history: small records, re-read from disk when needed.</summary>
+    long IMemoryTrimmable.EstimatedBytes => (Volatile.Read(ref _cachedModels) * 8L + Volatile.Read(ref _indexed)) * 160;
+
+    long IMemoryTrimmable.Trim(MemoryTrimLevel level)
+    {
+        if (level == MemoryTrimLevel.Idle || _disposed) return 0;
+        var estimate = ((IMemoryTrimmable)this).EstimatedBytes;
+        // the caches belong to the queue's consumer: dropped there, between two operations
+        return _queue.Writer.TryWrite(() =>
+        {
+            _models.Clear();
+            _recent.Clear();
+            _index = null;
+            Volatile.Write(ref _cachedModels, 0);
+            Volatile.Write(ref _indexed, 0);
+            return Task.CompletedTask;
+        }) ? estimate : 0;
+    }
+
+    private int _cachedModels, _indexed;
 
     /// <summary>The folder that holds every file's history (<c>{UserDataDir}/History</c>).</summary>
     public string Home => _home;
@@ -166,6 +193,7 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
                 _models.Clear();
                 _recent.Clear();
                 _index = new Dictionary<string, IndexEntry>(StringComparer.Ordinal);
+                CountCaches();
                 Notify(null);
                 return true;
             }
@@ -425,6 +453,7 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
             oldest.Value.Node = null;
             _models.Remove(oldest.Value.Key);
         }
+        CountCaches();
         return model;
     }
 
@@ -467,11 +496,13 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
         {
             await DeleteQuietlyAsync(FolderUri(model), recursive: true, ct).ConfigureAwait(false);
             _index?.Remove(model.Key);
+            CountCaches();
             return;
         }
         var bytes = HistoryFormat.Serialize(new StoredHistory(model.Key, model.Entries));
         await _fs.WriteFileAsync(new Uri(Path.Combine(_home, model.Folder, HistoryFormat.EntriesFile)), bytes, createParents: true, ct).ConfigureAwait(false);
         if (_index is not null) _index[model.Key] = new IndexEntry(model.Folder, model.Entries[^1].Timestamp);
+        CountCaches();
     }
 
     /// <summary>Every file with history (resource → folder, newest entry), read from the entries.json files once and then kept up to date.</summary>
@@ -489,7 +520,15 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
             index[stored.Resource] = new IndexEntry(f.Name, stored.Entries[^1].Timestamp);
         }
         // models changed since their entries.json was written are already on disk (every change writes it): nothing to overlay
-        return _index = index;
+        _index = index;
+        CountCaches();
+        return index;
+    }
+
+    private void CountCaches()
+    {
+        Volatile.Write(ref _cachedModels, _models.Count);
+        Volatile.Write(ref _indexed, _index?.Count ?? 0);
     }
 
     // ------------------------------------------------------------------------------------------------ helpers
