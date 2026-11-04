@@ -13,7 +13,8 @@ internal enum MarkerKind : byte
     WordHighlight, WordHighlightStrong, FindMatch,
     // right lane: diagnostics
     Info, Warning, Error,
-    // all lanes: the caret lines
+    // all lanes: merge conflict sides (VS Code draws them across the ruler), then the caret lines
+    MergeCommon, MergeCurrent, MergeIncoming,
     Cursor,
 }
 

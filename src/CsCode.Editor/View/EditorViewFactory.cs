@@ -60,6 +60,9 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         // the minimap's and the overview ruler's settings (editor.minimap.side, editor.overviewRulerLanes, ...)
         _disposables.Add(services.Config.RegisterProperties(View.Decorations.ScrollDecorations.Properties));
         _disposables.Add(services.Features.Register<ICompletionProvider>(DocumentSelector.All, new SnippetCompletionProvider(snippets), "cscode.snippets"));
+        // inline merge conflicts: the per-version scan, the settings, the code lens, the commands and their right-click items (docs/SOURCE-CONTROL.md)
+        MergeConflicts = new Features.MergeConflictTracker(worker);
+        _disposables.Add(Features.MergeConflictCommands.Register(this));
         if (services.Commands is { } commands)
         {
             _disposables.Add(EditorCommands.Register(this, commands));
@@ -90,6 +93,8 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
     internal TokenizationManager Tokens { get; }
     internal SnippetService Snippets { get; }
     internal EditorWorker Worker { get; }
+    /// <summary>The conflict blocks of open documents, per version (decorations, code lens and commands share one scan).</summary>
+    internal Features.MergeConflictTracker MergeConflicts { get; }
     internal bool IsDisposed => _disposed;
 
     /// <summary>The view that most recently had keyboard focus (what editor commands act on), or null.</summary>
