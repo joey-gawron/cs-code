@@ -174,4 +174,13 @@ public sealed record EditorViewState(
     int DocumentVersion)
 {
     public static readonly EditorViewState Initial = new(TextPosition.Zero, TextPosition.Zero, TextPosition.Zero, 0, 0, [], 0);
+
+    /// <summary>
+    /// Every caret of a view with several (multi-cursor), the primary first, then the others in document order; null with one caret (the
+    /// selection above is then the whole story). <see cref="IEditorViewController.RestoreViewState"/> brings them all back.
+    /// </summary>
+    public IReadOnlyList<EditorCaretState>? Carets { get; init; }
 }
+
+/// <summary>One caret of a view: its selection from <see cref="Anchor"/> (where it started) to <see cref="Active"/> (where the caret is); equal for a plain caret.</summary>
+public sealed record EditorCaretState(TextPosition Anchor, TextPosition Active);

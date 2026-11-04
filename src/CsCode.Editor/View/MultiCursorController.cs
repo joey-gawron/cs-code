@@ -45,6 +45,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
 
     internal const string LimitKey = "editor.multiCursorLimit";
     internal const string PasteKey = "editor.multiCursorPaste";
+    internal const string ModifierKey = "editor.multiCursorModifier";
 
     /// <summary>The settings this feature reads (VS Code's own ids), registered by the factory so the Settings panel lists them.</summary>
     internal static IReadOnlyList<ConfigurationProperty> Properties { get; } =
@@ -55,6 +56,9 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         new(PasteKey, JsonSerializer.SerializeToElement("spread"),
             "Pasting with several cursors: spread puts one line of the clipboard at each cursor when the line count equals the cursor count; full pastes the whole text at every cursor.",
             JsonDocument.Parse("""{"type":"string","enum":["spread","full"]}""").RootElement.Clone()),
+        new(ModifierKey, JsonSerializer.SerializeToElement("alt"),
+            "The modifier that adds a caret with the mouse: alt (Alt+Click, Option+Click on macOS) or ctrlCmd (Ctrl+Click, ⌘+Click on macOS). Go to Definition and Open Link take the other one.",
+            JsonDocument.Parse("""{"type":"string","enum":["ctrlCmd","alt"]}""").RootElement.Clone()),
     ];
 
     private readonly CodeEditorControl _v;
@@ -90,8 +94,11 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         var buffer = view.Document.Buffer;
         view.TextView.BackgroundRenderers.Add(_selectionRenderer);
         view.TextView.BackgroundRenderers.Add(_caretRenderer);
-        // Registered before TypingBehaviors, the completion list and the snippet session (this component is created first), so with several
-        // carets these handlers see a key first; with one caret they return at once and those features run as before.
+        // Registered before TypingBehaviors, the completion list and the snippet session (this component is created first). TextEntering is a
+        // CLR event, so with several carets typing reaches this component first. Avalonia calls one element's tunnelling KeyDown handlers in
+        // the REVERSE order of registration, so the later features see a key first: they step aside while several carets exist (TypingBehaviors'
+        // Backspace) or keep the keys they own (the completion list, parameter hints and a snippet session; PopupWantsKey here). With one
+        // caret these handlers return at once and those features run as before.
         area.AddHandler(InputElement.KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         area.AddHandler(InputElement.PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel);
         area.AddHandler(InputElement.PointerReleasedEvent, OnPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
@@ -295,8 +302,15 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         var doc = _v.Document;
         if (doc.IsReadOnly || _disposed) return;
         var after = CaretSet.Create(batch.Carets, batch.Primary, Limit);
-        var record = before.Count <= UndoSnapshotLimit && after.Count <= UndoSnapshotLimit;
         var continues = typing && _typingRun is { } run && run.Version == doc.Version && ReferenceEquals(run.Set, _set);
+        if (batch.Edits.Length == 0)
+        {
+            // nothing to edit (closers over-typed at every caret): the carets move, and no empty undo step is made; a typed run goes on
+            SetCarets(after);
+            _typingRun = continues && IsActive ? (doc.Version, _set!) : null;
+            return;
+        }
+        var record = before.Count <= UndoSnapshotLimit && after.Count <= UndoSnapshotLimit;
         _applying = true;
         try
         {
@@ -354,11 +368,18 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         if (!IsActive) return;   // ... which may have collapsed the carets
         before = Current;
         var newline = text is "\n" or "\r" or "\r\n";
-        var batch = newline
-            ? MultiCaretOperations.Enter(_v.Document.Buffer, before, _v.GetEditingContext())
-            : MultiCaretOperations.Type(before, text);
-        ApplyBatch(before, batch, typing: !newline);
-        if (!newline) _v.Feature<TypingBehaviors>()?.NotifyTyped(text); // completion and signature help follow the primary
+        if (newline)
+        {
+            ApplyBatch(before, MultiCaretOperations.Enter(_v.Document.Buffer, before, _v.GetEditingContext()));
+            return;
+        }
+        // each caret auto-closes, over-types or surrounds as a single caret there would (TypingBehaviors decides per caret)
+        var typing = _v.Feature<TypingBehaviors>();
+        AutoCloseDecision[]? decisions = null;
+        var batch = typing?.TypedBatch(before, text, out decisions) ?? MultiCaretOperations.Type(before, text);
+        ApplyBatch(before, batch, typing: true);
+        typing?.AfterTypedBatch(this, text, decisions, batch.Carets); // closers to over-type later; a lone closer re-indented (same undo step)
+        typing?.NotifyTyped(text); // completion and signature help follow the primary
     }
 
     /// <summary>Replaces [caret − before, caret + after] around every caret with <paramref name="text"/> (a completion accepted with several carets).</summary>
@@ -382,6 +403,16 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         var offsets = edits.Select(e => new OffsetEdit(doc.OffsetAt(e.Range.Start), doc.OffsetAt(e.Range.End), e.NewText)).ToArray();
         var set = Current;
         ApplyBatch(set, MultiCaretOperations.Mapped(set, offsets, keepSelections));
+    }
+
+    /// <summary>
+    /// Edits in offsets of the current text that the carets follow (<see cref="MultiCaretOperations.Mapped"/>); with <paramref name="typing"/>
+    /// they join the typed run's undo step (a lone closer re-indented, snippet mirrors updated after typing at several carets).
+    /// </summary>
+    internal void ApplyMapped(IReadOnlyList<OffsetEdit> edits, bool keepSelections, bool typing)
+    {
+        var set = Current;
+        ApplyBatch(set, MultiCaretOperations.Mapped(set, edits, keepSelections), typing);
     }
 
     /// <summary>A paste with several carets: one line (or copied piece) per caret when the counts match (<c>editor.multiCursorPaste</c> "spread"), else all of it at each.</summary>
@@ -471,7 +502,9 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
                 Move(MultiCaretOperations.MoveHorizontal(buffer, set, forward: e.Key == Key.Right, word, shift));
                 break;
             case Key.Up or Key.Down when plain:
-                Move(MultiCaretOperations.MoveVertical(buffer, set, down: e.Key == Key.Down, shift, _v.Settings.TabSize));
+                Move(_v.Editor.WordWrap
+                    ? MultiCaretOperations.MoveVertical(buffer, set, down: e.Key == Key.Down, shift, _v.Settings.TabSize, RowStarts) // by wrapped rows, as one caret moves
+                    : MultiCaretOperations.MoveVertical(buffer, set, down: e.Key == Key.Down, shift, _v.Settings.TabSize));
                 break;
             case Key.Home when plain:
                 Move(MultiCaretOperations.MoveHome(buffer, set, shift));
@@ -480,7 +513,8 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
                 Move(MultiCaretOperations.MoveEnd(buffer, set, shift));
                 break;
             case Key.Back when (plain || (word && !shift)) && !readOnly: // Shift+Backspace is Backspace (AvaloniaEdit would delete at the primary alone)
-                ApplyBatch(set, MultiCaretOperations.Backspace(buffer, set, word));
+                // as one caret: an auto-inserted pair goes with its opener, leading whitespace back to the previous indentation stop
+                ApplyBatch(set, MultiCaretOperations.Backspace(buffer, set, word, _v.Settings.TabSize, _v.Settings.UseTabStops, _v.Feature<TypingBehaviors>()?.AutoClosedPairPredicate()));
                 break;
             case Key.Delete when (plain || word) && !shift && !readOnly:
                 ApplyBatch(set, MultiCaretOperations.Delete(buffer, set, word));
@@ -510,6 +544,34 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         return _v.Feature<SnippetFeature>()?.IsActive == true && key is Key.Tab or Key.Escape;
     }
 
+    /// <summary>
+    /// Where each wrapped row of <paramref name="line"/> starts (document offsets), from AvaloniaEdit's own layout of the line, so the carets
+    /// move by the rows the single caret moves by. A line too short to wrap is one row without laying it out; a line off screen is laid out
+    /// (AvaloniaEdit's caret does the same for its one line).
+    /// </summary>
+    private IReadOnlyList<int> RowStarts(DocumentLine line)
+    {
+        var tv = _v.TextView;
+        var cell = tv.WideSpaceWidth;
+        var width = tv.Bounds.Width;
+        if (width <= 0 || cell <= 0) return [line.Offset];
+        // twice the tab-expanded length: wide (CJK) characters take two cells
+        var expanded = MultiCaretOperations.VisualColumn(_v.Document.Buffer, line, line.EndOffset, Math.Max(1, _v.Settings.TabSize));
+        if (expanded * 2 < width / cell) return [line.Offset];
+        var visual = tv.GetVisualLine(line.LineNumber) ?? tv.GetOrConstructVisualLine(line);
+        if (visual.TextLines.Count <= 1) return [line.Offset];
+        var starts = new List<int>(visual.TextLines.Count);
+        var first = visual.FirstDocumentLine.Offset;
+        foreach (var row in visual.TextLines)
+        {
+            var offset = first + visual.GetRelativeOffset(visual.GetTextLineVisualStartColumn(row));
+            if (offset < line.Offset || offset > line.EndOffset) continue; // a fold joined other lines to this visual line
+            if (starts.Count == 0 && offset > line.Offset) starts.Add(line.Offset);
+            if (starts.Count == 0 || offset > starts[^1]) starts.Add(offset);
+        }
+        return starts.Count == 0 ? [line.Offset] : starts;
+    }
+
     private void Move(CaretSet moved)
     {
         _typingRun = null;
@@ -521,7 +583,8 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _altClick = null;
-        if (!Enabled || e.KeyModifiers != KeyModifiers.Alt || e.ClickCount != 1) return;
+        // editor.multiCursorModifier: Alt+Click (Option on macOS) by default, Ctrl+Click (⌘ on macOS) with "ctrlCmd"
+        if (!Enabled || e.KeyModifiers != EditorKeys.AddCaretModifier(_v.Settings.MultiCursorModifier) || e.ClickCount != 1) return;
         var point = e.GetCurrentPoint(_v.TextView);
         if (!point.Properties.IsLeftButtonPressed || !new Rect(_v.TextView.Bounds.Size).Contains(point.Position)) return;
         // AvaloniaEdit starts a box selection on Alt+press (Alt+drag keeps working): remember the carets, and decide at the release whether this
@@ -732,6 +795,28 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     internal bool AnySelection => Current.Carets.Any(c => !c.IsEmpty);
 
     private TextRange RangeOf(CaretRange c) => new(_v.PositionOf(c.Start), _v.PositionOf(c.End));
+
+    /// <summary>The carets for a view state (<see cref="EditorViewState.Carets"/>): the primary first, then the others in document order, with their direction.</summary>
+    internal IReadOnlyList<EditorCaretState> CaretStates()
+    {
+        var set = Current;
+        var list = new List<EditorCaretState>(set.Count) { StateOf(set.Primary) };
+        for (var i = 0; i < set.Count; i++)
+            if (i != set.PrimaryIndex) list.Add(StateOf(set[i]));
+        return list;
+    }
+
+    private EditorCaretState StateOf(CaretRange c) => new(_v.PositionOf(c.Anchor), _v.PositionOf(c.Active));
+
+    /// <summary>A recreated view gets the carets of its view state back (positions clamped to the text, which may have changed meanwhile).</summary>
+    internal void RestoreCarets(IReadOnlyList<EditorCaretState> carets)
+    {
+        if (_disposed || carets.Count == 0) return;
+        var doc = _v.Document;
+        var ranges = carets.Select(c => new CaretRange(doc.OffsetAt(doc.Validate(c.Anchor)), doc.OffsetAt(doc.Validate(c.Active)))).ToArray();
+        if (!Enabled) ranges = [ranges[0]];
+        SetCarets(CaretSet.Create(ranges, 0, Limit), reveal: false);
+    }
 
     /// <summary>Sets several selections at once (the first is the primary); the controller's <c>SetSelections</c>.</summary>
     internal void SetSelections(IReadOnlyList<TextRange> selections, bool reveal)
