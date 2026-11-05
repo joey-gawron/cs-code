@@ -10,6 +10,7 @@ const buffer_mod = @import("../../model/text/buffer.zig");
 const movement = @import("../../model/text/movement.zig");
 const regex_mod = @import("../../framework/util/regex.zig");
 const ui = @import("../../framework/ui/ui.zig");
+const search_tree = @import("../../model/project/search_tree.zig");
 
 const Allocator = std.mem.Allocator;
 const Editor = editor_mod.Editor;
@@ -17,7 +18,7 @@ const Buffer = buffer_mod.Buffer;
 const Selection = editor_mod.Selection;
 const Rect = ui.Rect;
 
-pub const Toggle = enum { regex, case_sensitive, whole_word, wrap, in_selection, highlight };
+pub const Toggle = enum { regex, case_sensitive, whole_word, wrap, in_selection, highlight, preserve_case };
 
 pub const Button = enum { find, find_prev, find_all, replace, replace_all, find_in_files, replace_in_files };
 
@@ -47,6 +48,7 @@ pub const FindPanel = struct {
         .wrap = true,
         .in_selection = false,
         .highlight = true,
+        .preserve_case = false,
     }),
 
     matches: std.ArrayList([2]usize) = .empty,
@@ -251,34 +253,19 @@ pub const FindPanel = struct {
         target.afterCommand(false);
     }
 
-    /// Replacement text for one match, expanding $1 / \1 groups in regex mode.
-    fn replacementFor(self: *FindPanel, alloc: Allocator, target: *Editor, m: [2]usize, template: []const u8) ![]const u8 {
-        if (!self.toggles.get(.regex)) return template;
-        const needle = try self.find_input.contents(alloc);
-        var re = try regex_mod.Regex.compile(self.gpa, needle, .{ .case_insensitive = !self.toggles.get(.case_sensitive) });
-        defer re.deinit();
+    /// The regex of the find string when regex mode is on (null otherwise or when it doesn't compile).
+    fn compiledRegex(self: *FindPanel, alloc: Allocator) ?regex_mod.Regex {
+        if (!self.toggles.get(.regex)) return null;
+        const needle = self.find_input.contents(alloc) catch return null;
+        return regex_mod.Regex.compile(self.gpa, needle, .{ .case_insensitive = !self.toggles.get(.case_sensitive) }) catch null;
+    }
+
+    /// Replacement text for one match of `target`.
+    fn replacementFor(self: *FindPanel, alloc: Allocator, target: *Editor, re: ?*regex_mod.Regex, m: [2]usize, template: []const u8) ![]const u8 {
         const p = target.buffer.offsetToPoint(m[0]);
         const ls = target.buffer.lineStart(p.row);
         const line = try target.buffer.textRange(alloc, ls, target.buffer.lineEnd(p.row));
-        const rm = re.matchAt(line, m[0] - ls) orelse return template;
-        var out: std.ArrayList(u8) = .empty;
-        var i: usize = 0;
-        while (i < template.len) : (i += 1) {
-            const ch = template[i];
-            if ((ch == '$' or ch == '\\') and i + 1 < template.len and std.ascii.isDigit(template[i + 1])) {
-                const g = template[i + 1] - '0';
-                i += 1;
-                if (g == 0) {
-                    try out.appendSlice(alloc, line[rm.start..rm.end]);
-                } else if (g <= 9) {
-                    if (rm.groups[g - 1]) |grp| try out.appendSlice(alloc, line[grp[0]..grp[1]]);
-                }
-            } else if (ch == '\\' and i + 1 < template.len and template[i + 1] == 'n') {
-                try out.append(alloc, '\n');
-                i += 1;
-            } else try out.append(alloc, ch);
-        }
-        return out.items;
+        return expandReplacement(alloc, re, line, m[0] - ls, @min(m[1] - ls, line.len), template, self.toggles.get(.preserve_case));
     }
 
     pub fn replaceNext(self: *FindPanel, target: *Editor) void {
@@ -289,8 +276,11 @@ pub const FindPanel = struct {
         // If the current selection is a match, replace it; then move on.
         for (self.matches.items) |m| {
             if (m[0] == sel.start() and m[1] == sel.end()) {
-                const template = self.replace_input.contents(arena.allocator()) catch return;
-                const text = self.replacementFor(arena.allocator(), target, m, template) catch return;
+                const alloc = arena.allocator();
+                const template = self.replace_input.contents(alloc) catch return;
+                var re = self.compiledRegex(alloc);
+                defer if (re) |*r| r.deinit();
+                const text = self.replacementFor(alloc, target, if (re) |*r| r else null, m, template) catch return;
                 var reps = [_]Editor.Replacement{.{ .start = m[0], .end = m[1], .text = text, .sel_anchor = text.len, .sel_head = text.len }};
                 target.applyReplacements(&reps, .other);
                 break;
@@ -308,8 +298,10 @@ pub const FindPanel = struct {
         const alloc = arena.allocator();
         const template = self.replace_input.contents(alloc) catch return 0;
         const reps = alloc.alloc(Editor.Replacement, n) catch return 0;
+        var re = self.compiledRegex(alloc);
+        defer if (re) |*r| r.deinit();
         for (self.matches.items, reps) |m, *r| {
-            const text = self.replacementFor(alloc, target, m, template) catch template;
+            const text = self.replacementFor(alloc, target, if (re) |*rr| rr else null, m, template) catch template;
             r.* = .{ .start = m[0], .end = m[1], .text = text, .sel_anchor = text.len, .sel_head = text.len };
         }
         target.applyReplacements(reps, .other);
@@ -337,7 +329,19 @@ pub const FindPanel = struct {
             .{ .highlight, "▭" },
         };
         // Find in Files only uses the matching options; keep the inputs aligned.
-        const labels = if (self.mode == .files) all_labels[0..3] else all_labels[0..];
+        const preserve_label = .{ Toggle.preserve_case, "AB" };
+        var label_buf: [7]@TypeOf(all_labels[0]) = undefined;
+        var n_labels: usize = 0;
+        for (all_labels[0..if (self.mode == .files) 3 else all_labels.len]) |l| {
+            label_buf[n_labels] = l;
+            n_labels += 1;
+        }
+        // Preserve case only matters while there is a replacement to type.
+        if (self.mode == .files or self.show_replace) {
+            label_buf[n_labels] = preserve_label;
+            n_labels += 1;
+        }
+        const labels = label_buf[0..n_labels];
         self.toggle_rects = .initFill(.{});
         if (self.mode == .files) x += (bh + 3) * 3;
         for (labels) |l| {
@@ -373,7 +377,7 @@ pub const FindPanel = struct {
             const label = if (self.current) |cur|
                 std.fmt.bufPrint(&buf, "{d} of {d}", .{ cur + 1, self.matches.items.len }) catch ""
             else
-                std.fmt.bufPrint(&buf, "{d} matches", .{self.matches.items.len}) catch "";
+                if (self.matches.items.len == 0) "No results" else std.fmt.bufPrint(&buf, "{d} matches", .{self.matches.items.len}) catch "";
             _ = ctx.labelRight(.{ .x = self.find_rect.x, .y = self.find_rect.y, .w = self.find_rect.w - 8, .h = bh }, label, ctx.fonts.ui_small, theme.list_foreground_dim);
         }
 
@@ -472,6 +476,36 @@ fn paintButton(ctx: *const ui.Ctx, r: Rect, label: []const u8) void {
 // Both searches read the rope's chunks where they lie: no copy of the buffer
 // (or of a 50 MB line) per keystroke. Whole words are judged by the bytes
 // around the searched range too, so a scope doesn't cut words.
+
+/// What replaces the match `line[start..end]`: `template` with `$1` / `\1`
+/// groups and `\n` expanded when `re` is given (the regex that found it), and
+/// with the case of the matched text when `preserve` is on.
+pub fn expandReplacement(alloc: Allocator, re: ?*regex_mod.Regex, line: []const u8, start: usize, end: usize, template: []const u8, preserve: bool) ![]const u8 {
+    var text: []const u8 = template;
+    if (re) |r| if (r.matchAt(line, start)) |rm| {
+        var out: std.ArrayList(u8) = .empty;
+        var i: usize = 0;
+        while (i < template.len) : (i += 1) {
+            const ch = template[i];
+            if ((ch == '$' or ch == '\\') and i + 1 < template.len and std.ascii.isDigit(template[i + 1])) {
+                const g = template[i + 1] - '0';
+                i += 1;
+                if (g == 0) {
+                    try out.appendSlice(alloc, line[rm.start..rm.end]);
+                } else if (g <= 9) {
+                    if (rm.groups[g - 1]) |grp| try out.appendSlice(alloc, line[grp[0]..grp[1]]);
+                }
+            } else if (ch == '\\' and i + 1 < template.len and template[i + 1] == 'n') {
+                try out.append(alloc, '\n');
+                i += 1;
+            } else try out.append(alloc, ch);
+        }
+        text = out.items;
+    };
+    if (!preserve or start >= end or end > line.len) return text;
+    const buf = try alloc.alloc(u8, text.len);
+    return search_tree.preserveCase(buf, line[start..end], text);
+}
 
 pub const SearchOptions = struct {
     case_sensitive: bool = false,

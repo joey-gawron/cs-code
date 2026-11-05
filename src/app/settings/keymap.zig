@@ -108,6 +108,7 @@ pub const Action = enum {
     toggle_find_regex,
     toggle_find_case,
     toggle_find_whole_word,
+    toggle_find_preserve_case,
     use_selection_for_find,
 
     // Overlays.
@@ -191,6 +192,7 @@ pub const Action = enum {
 
     // Find in files, and the project.
     show_find_in_files,
+    show_replace_in_files,
     next_result,
     prev_result,
     search_directory,
@@ -560,6 +562,7 @@ const defaults = [_]DefaultBinding{
     .{ "alt+r", .toggle_find_regex, .global },
     .{ "alt+c", .toggle_find_case, .global },
     .{ "alt+w", .toggle_find_whole_word, .global },
+    .{ "alt+p", .toggle_find_preserve_case, .global },
 
     .{ "ctrl+p", .goto_anything, .global },
     .{ "ctrl+g", .goto_line, .global },
@@ -614,6 +617,7 @@ const defaults = [_]DefaultBinding{
     .{ "ctrl+k up", .focus_group_up, .global },
     .{ "ctrl+k down", .focus_group_down, .global },
     .{ "ctrl+shift+f", .show_find_in_files, .global },
+    .{ "ctrl+shift+h", .show_replace_in_files, .global },
     .{ "f4", .next_result, .global },
     .{ "shift+f4", .prev_result, .global },
 

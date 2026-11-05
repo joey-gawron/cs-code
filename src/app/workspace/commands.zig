@@ -75,6 +75,8 @@ const base = [_]Command{
     .{ .caption = "Find: Incremental Find", .action = .show_incremental_find },
     .{ .caption = "Find: Quick Find", .action = .find_under },
     .{ .caption = "Find: Find in Files…", .action = .show_find_in_files },
+    .{ .caption = "Find: Replace in Files…", .action = .show_replace_in_files },
+    .{ .caption = "Find: Toggle Preserve Case", .action = .toggle_find_preserve_case },
     .{ .caption = "Find: Find in This Folder…", .action = .search_directory },
     .{ .caption = "Find: Project TODOs", .action = .project_todos },
     .{ .caption = "Project: Rescan Files", .action = .rescan_project },
