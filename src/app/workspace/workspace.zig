@@ -33,6 +33,7 @@ const git_ui = @import("git_ui.zig");
 const git_status_ui = @import("git_status_ui.zig");
 const groups = @import("groups.zig");
 const terminal_ui = @import("terminal_ui.zig");
+const settings_ui = @import("settings_ui.zig");
 const panel_ui = @import("panel_ui.zig");
 const leader_ui = @import("leader_ui.zig");
 const file_cmd = @import("file_cmd.zig");
@@ -88,6 +89,8 @@ pub const Tab = struct {
     agenda: ?*agenda_mod.Agenda = null,
     /// Set for terminal tabs (drawn instead of the editor; see terminal_ui.zig).
     terminal: ?*TerminalView = null,
+    /// Set for the Settings tab (settings_ui.zig).
+    settings: ?*settings_ui.View = null,
     /// Set for Diff, Log and Git Output tabs (opened from Source Control; git_status_ui.zig).
     git_diff: ?*git_status_ui.Diff = null,
     /// Set for a commit message (COMMIT_EDITMSG) tab (git_popup.zig).
@@ -427,6 +430,7 @@ pub const Workspace = struct {
                 self.gpa.destroy(a);
             }
             if (t.terminal) |tv| tv.destroy();
+            if (t.settings) |sv| sv.destroy();
             if (t.git_diff) |d| d.destroy(null);
             if (t.git_commit) |c| c.destroy();
         }
@@ -521,7 +525,7 @@ pub const Workspace = struct {
             .overlay => if (self.overlay) |o| return o.input,
             .find => if (self.find) |f| return f.activeInput(),
             .panel => if (panel_ui.focusedEditor(self)) |ed| return ed,
-            .editor => {},
+            .editor => if (settings_ui.focusedInput(self)) |ed| return ed,
         }
         return self.activeEditor();
     }
@@ -942,6 +946,7 @@ pub const Workspace = struct {
             self.gpa.destroy(a);
         }
         if (tab.terminal) |tv| tv.destroy();
+        if (tab.settings) |sv| sv.destroy();
         if (tab.git_diff) |d| d.destroy(ed.buffer);
         if (tab.git_commit) |c| git_status_ui.commitTabClosed(self, c, ed.buffer);
         for (self.mru.items, 0..) |e, i| if (e == ed) {
@@ -1775,6 +1780,7 @@ pub const Workspace = struct {
             else => {},
         };
         if (ev == .mouse_down and self.restOfSidebarToggle(ev.mouse_down)) return;
+        if (settings_ui.handleEvent(self, ev)) return;
         if (terminal_ui.handleEvent(self, ev)) return;
         switch (ev) {
             .key_down => |k| self.onKey(k),
@@ -2259,7 +2265,9 @@ pub const Workspace = struct {
                 self.quit_session = true;
                 self.requestQuit();
             },
-            .open_settings => if (self.prefs) |pr| {
+            .open_settings => settings_ui.open(self, .settings),
+            .open_keyboard_shortcuts => settings_ui.open(self, .shortcuts),
+            .open_settings_json => if (self.prefs) |pr| {
                 var pbuf: [std.fs.max_path_bytes]u8 = undefined;
                 const sp = pr.settingsPath(pr.ctx, &pbuf) orelse return;
                 @import("../settings/settings_file.zig").ensureExists(self.io) catch |err| {
@@ -2983,6 +2991,7 @@ pub const Workspace = struct {
             if (self.key_hook) |h| ed.block_caret = h.enabled and h.blockCaret(h.ctx);
             ed.layout(er);
             if (terminal_ui.paint(self, ed, er, scene)) continue;
+            if (settings_ui.paint(self, ed, er, scene)) continue;
             if (focused_group and self.find_visible) if (self.find) |f| if (f.mode == .buffer) f.update(ed);
             if (isFindResults(ed) and ed.highlights.items.len != self.result_ranges.items.len and !(focused_group and self.find_visible)) {
                 ed.highlights.clearRetainingCapacity();
@@ -3281,7 +3290,9 @@ pub const Workspace = struct {
             x += ctx.label(.{ .x = x, .y = r.y, .w = 120, .h = r.h }, dtext, font, fg) + 16;
         }
 
-        if (terminal_ui.statusText(self, &buf)) |t| {
+        if (settings_ui.statusText(self, &buf)) |t| {
+            _ = ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, t, font, fg);
+        } else if (terminal_ui.statusText(self, &buf)) |t| {
             x += ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, t, font, fg) + 20;
             _ = panel_ui.paintStatusItem(self, ctx, r, r.right() - 14);
         } else if (self.activeEditor()) |ed| {

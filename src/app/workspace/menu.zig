@@ -189,8 +189,11 @@ pub const menus = [_]Menu{
     } },
     .{ .title = "Preferences", .items = &.{
         a("Settings", .open_settings),
-        a("Key Bindings", .open_keymap),
-        a("Select Color Scheme…", .select_color_scheme),
+        a("Keyboard Shortcuts", .open_keyboard_shortcuts),
+        a("Color Theme…", .select_color_scheme),
+        sep,
+        a("Open settings.json", .open_settings_json),
+        a("Open keymap.json", .open_keymap),
         sep,
         a("Indent Using Spaces", .toggle_translate_tabs),
         a("Tab Width: 2", .set_tab_size_2),

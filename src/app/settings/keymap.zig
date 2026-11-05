@@ -308,6 +308,8 @@ pub const Action = enum {
     // Preferences.
     select_color_scheme,
     open_settings,
+    open_settings_json,
+    open_keyboard_shortcuts,
     open_keymap,
     reload_config,
 
