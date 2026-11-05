@@ -45,7 +45,10 @@ pub const Pty = struct {
         defer arena_state.deinit();
         const arena = arena_state.allocator();
 
-        const args = opts.argv orelse &.{defaultShell()};
+        // The user's shell runs as a login shell on macOS, where Terminal.app
+        // and VS Code do: ~/.zprofile is where PATH additions live there.
+        const shell_args: []const []const u8 = if (macos) &.{ defaultShell(), "-l" } else &.{defaultShell()};
+        const args = opts.argv orelse shell_args;
         if (args.len == 0) return error.NoProgram;
         const argv = try arena.allocSentinel(?[*:0]const u8, args.len, null);
         for (args, 0..) |a, i| argv[i] = try arena.dupeSentinel(u8, a, 0);
@@ -229,7 +232,7 @@ fn setSize(fd: i32, rows: u16, cols: u16) void {
 
 /// Our environment with terminal-related variables replaced.
 fn buildEnv(arena: Allocator, extra: []const []const u8) ![:null]?[*:0]const u8 {
-    const defaults = [_][]const u8{ "TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=cs-zig" };
+    const defaults = [_][]const u8{ "TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=cs-zig" } ++ if (macos) [_][]const u8{"TERM_PROGRAM_VERSION=0.0.1"} else [_][]const u8{};
     // Stale sizes would override the pty's.
     const drop = [_][]const u8{ "COLUMNS", "LINES" };
     var list: std.ArrayList(?[*:0]const u8) = .empty;
@@ -248,8 +251,18 @@ fn buildEnv(arena: Allocator, extra: []const []const u8) ![:null]?[*:0]const u8 
         for (extra) |e| if (sameName(e, name)) continue :defaults;
         try list.append(arena, try arena.dupeSentinel(u8, d, 0));
     }
+    // An app started from Finder has no locale, and a shell without one
+    // mangles UTF-8 (less, readline, ls).
+    if (macos and !hasLocale()) try list.append(arena, "LANG=en_US.UTF-8");
     for (extra) |e| try list.append(arena, try arena.dupeSentinel(u8, e, 0));
     return list.toOwnedSliceSentinel(arena, null);
+}
+
+fn hasLocale() bool {
+    for ([_][:0]const u8{ "LC_ALL", "LC_CTYPE", "LANG" }) |name| {
+        if (std.c.getenv(name)) |v| if (v[0] != 0) return true;
+    }
+    return false;
 }
 
 fn sameName(entry: []const u8, name: []const u8) bool {
@@ -300,4 +313,26 @@ test "starts in the requested directory with the requested size" {
         }
     }
     try std.testing.expectEqualStrings("/\r\n7 33\r\n", out.items);
+}
+
+test "the shell gets a terminal identity and a UTF-8 locale" {
+    var pty = try Pty.spawn(std.testing.allocator, .{ .argv = &.{ "/bin/sh", "-c", "printf '%s|%s|%s' \"$TERM_PROGRAM\" \"$COLORTERM\" \"$LANG$LC_ALL$LC_CTYPE\"" }, .cols = 80, .rows = 5 });
+    defer pty.deinit();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(std.testing.allocator);
+    var buf: [256]u8 = undefined;
+    var spins: usize = 0;
+    while (spins < 2000) : (spins += 1) {
+        switch (pty.read(&buf)) {
+            .data => |n| try out.appendSlice(std.testing.allocator, buf[0..n]),
+            .eof => break,
+            .would_block => {
+                var req: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+                _ = std.c.nanosleep(&req, null);
+            },
+        }
+    }
+    try std.testing.expect(std.mem.startsWith(u8, out.items, "cs-zig|truecolor|"));
+    // Whatever the locale is, it is set (macOS adds en_US.UTF-8 when the app had none).
+    try std.testing.expect(out.items.len > "cs-zig|truecolor|".len);
 }
