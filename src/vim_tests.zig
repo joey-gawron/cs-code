@@ -467,6 +467,13 @@ test "mode indicator, pending keys and caret shape" {
     try testing.expectEqualStrings("-- VISUAL BLOCK --", hook.statusText(hook.ctx, &buf));
     try h.keys("<Esc>R");
     try testing.expectEqualStrings("-- REPLACE --", hook.statusText(hook.ctx, &buf));
+    try testing.expect(hook.underlineCaret.?(hook.ctx));
+    try h.keys("<Esc>");
+    try testing.expect(!hook.underlineCaret.?(hook.ctx));
+    try h.keys("d");
+    try testing.expect(hook.underlineCaret.?(hook.ctx));
+    try h.keys("<Esc>");
+    try testing.expect(!hook.underlineCaret.?(hook.ctx));
 }
 
 test "window commands are the split groups" {
@@ -568,4 +575,32 @@ test "search wraps and reports a missing pattern" {
     try testing.expect(std.mem.indexOf(u8, hook.statusText(hook.ctx, &buf), "not found") != null);
     try h.keys("2/foo<CR>");
     try h.expectCaret(2, 8);
+}
+
+test "registers: the unnamed one is Vim's, the clipboard is \"+ and \"*" {
+    var h = try Harness.init("one two\n");
+    defer h.deinit();
+    try h.keys("yiw");
+    try testing.expectEqual(@as(?[]u8, null), h.app.clipboard);
+    try h.keys("w\"+yiw");
+    try testing.expectEqualStrings("two", h.app.clipboard.?);
+    try h.keys("0\"+P");
+    try h.expectText("twoone two\n");
+    // With 'clipboard' the unnamed register is the system clipboard too.
+    try h.keys(":set clipboard=unnamedplus<CR>yy");
+    try testing.expectEqualStrings("twoone two\n", h.app.clipboard.?);
+}
+
+test "registers: numbered deletes, the small delete and yank register" {
+    var h = try Harness.init("a\nb\nc\nxyz\n");
+    defer h.deinit();
+    try h.keys("yyjdddd");
+    try testing.expectEqualStrings("c\n", h.register('1').?);
+    try testing.expectEqualStrings("b\n", h.register('2').?);
+    try testing.expectEqualStrings("a\n", h.register('0').?);
+    try h.keys("x");
+    try testing.expectEqualStrings("x", h.register('-').?);
+    try testing.expectEqualStrings("c\n", h.register('1').?);
+    try h.keys("\"2p");
+    try h.expectText("a\nyz\nb\n");
 }

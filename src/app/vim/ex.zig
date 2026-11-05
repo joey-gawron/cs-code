@@ -235,6 +235,8 @@ fn setOption(vim: *Vim, ws: *Workspace, ed: *Editor, args: []const u8) void {
             vim.smart_case = true;
         } else if (eql(u8, key, "noscs") or eql(u8, key, "nosmartcase")) {
             vim.smart_case = false;
+        } else if (eql(u8, key, "clipboard") or eql(u8, key, "cb")) {
+            vim.clipboard_unnamed = std.mem.indexOf(u8, value, "unnamed") != null;
         } else if (eql(u8, key, "hls") or eql(u8, key, "hlsearch")) {
             // Matches are always highlighted.
         } else if (eql(u8, key, "nohls") or eql(u8, key, "nohlsearch")) {

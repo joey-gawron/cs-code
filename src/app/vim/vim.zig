@@ -97,6 +97,8 @@ pub const Vim = struct {
     last_search_forward: bool = true,
     ignore_case: bool = false,
     smart_case: bool = false,
+    /// 'clipboard' contains unnamed/unnamedplus: the unnamed register is the system clipboard.
+    clipboard_unnamed: bool = false,
     marks: [26]?usize = @splat(null),
 
     // Dot repeat: keys of the command in progress / the last change.
@@ -156,7 +158,7 @@ pub const Vim = struct {
     }
 
     pub fn hook(self: *Vim) workspace_mod.KeyHook {
-        return .{ .ctx = self, .handleKey = handleKeyThunk, .statusText = statusText, .paintCommandLine = paintCommandLine, .blockCaret = blockCaret, .onToggle = onToggle, .leaderState = leaderState, .recordKey = recordKey, .afterLeader = afterLeader };
+        return .{ .ctx = self, .handleKey = handleKeyThunk, .statusText = statusText, .paintCommandLine = paintCommandLine, .blockCaret = blockCaret, .underlineCaret = underlineCaret, .onToggle = onToggle, .leaderState = leaderState, .recordKey = recordKey, .afterLeader = afterLeader };
     }
 
     fn handleKeyThunk(ctx: *anyopaque, ws: *Workspace, ed: *Editor, k: KeyEvent) bool {
@@ -193,6 +195,12 @@ pub const Vim = struct {
             if (ws.activeEditor() == ed) return;
         };
         if (ws.activeEditor()) |ed| self.enterNormal(ed);
+    }
+
+    /// Replace mode and a pending operator draw an underline, as in vim.
+    fn underlineCaret(ctx: *anyopaque) bool {
+        const self: *Vim = @ptrCast(@alignCast(ctx));
+        return self.mode == .replace or (self.mode == .normal and self.operator != null);
     }
 
     fn blockCaret(ctx: *anyopaque) bool {
@@ -1492,9 +1500,22 @@ pub const Vim = struct {
         }.f;
         set(self, reg, text, linewise, std.ascii.isUpper(reg));
         if (reg != '"') set(self, '"', text, linewise, false);
-        if (is_yank) set(self, '0', text, linewise, false);
-        // The unnamed register is the system clipboard (like Zed's vim mode).
-        if (reg == '"' or reg == '+' or reg == '*') {
+        if (is_yank) {
+            if (self.register == null) set(self, '0', text, linewise, false);
+        } else if (self.register == null) {
+            // A delete or change: lines and longer text go to "1 (the older ones move up), a short one to "-.
+            if (linewise or std.mem.indexOfScalar(u8, text, '\n') != null) {
+                var n: u8 = '9';
+                while (n > '1') : (n -= 1) {
+                    if (self.registers[n]) |old| self.gpa.free(old.text);
+                    self.registers[n] = self.registers[n - 1];
+                    self.registers[n - 1] = null;
+                }
+                set(self, '1', text, linewise, false);
+            } else set(self, '-', text, linewise, false);
+        }
+        // "+ and "* are the system clipboard; the unnamed register is it too with 'clipboard' set.
+        if (reg == '+' or reg == '*' or (reg == '"' and self.clipboard_unnamed)) {
             ed.env.clipboard.set(ed.env.clipboard.ctx, text);
             if (ed.env.clipboard_whole_line) |old| ed.env.gpa.free(old);
             ed.env.clipboard_whole_line = null;
@@ -1503,7 +1524,7 @@ pub const Vim = struct {
 
     pub fn readRegister(self: *Vim, ed: *Editor, alloc: Allocator) ?Register {
         const reg: u8 = self.register orelse '"';
-        if (reg == '"' or reg == '+' or reg == '*') {
+        if (reg == '+' or reg == '*' or (reg == '"' and self.clipboard_unnamed)) {
             const text = ed.env.clipboard.get(ed.env.clipboard.ctx, alloc) orelse return null;
             // Our own yank: keep its linewise flag.
             if (self.registers['"']) |own| if (std.mem.eql(u8, own.text, text)) return .{ .text = text, .linewise = own.linewise };

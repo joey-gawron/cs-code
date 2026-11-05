@@ -683,7 +683,11 @@ fn paintCaret(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRan
         const next = s.nextBoundary(offset);
         var w = self.charWidth();
         if (next > offset and s.byte(offset) != '\n') w = @floatCast(self.xInSegment(seg, next) - xo);
-        scene.fill(.{ .x = x, .y = y, .w = @max(w, 2), .h = lh }, theme.caret.withAlpha(0.7));
+        if (self.underline_caret) {
+            scene.fill(.{ .x = x, .y = y + lh - 3, .w = @max(w, 2), .h = 2 }, theme.caret);
+        } else {
+            scene.fill(.{ .x = x, .y = y, .w = @max(w, 2), .h = lh }, theme.caret.withAlpha(0.7));
+        }
     } else {
         scene.fill(.{ .x = x - 1, .y = y, .w = 2, .h = lh }, theme.caret);
     }

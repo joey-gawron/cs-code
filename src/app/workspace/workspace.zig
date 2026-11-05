@@ -146,6 +146,8 @@ pub const KeyHook = struct {
     /// Draws a command line over the status bar; returns false if inactive.
     paintCommandLine: *const fn (ctx: *anyopaque, ui_ctx: *const ui.Ctx, rect: Rect) bool,
     blockCaret: *const fn (ctx: *anyopaque) bool,
+    /// An underline instead of a block: replace mode and a pending operator.
+    underlineCaret: ?*const fn (ctx: *anyopaque) bool = null,
     onToggle: *const fn (ctx: *anyopaque, editor: ?*Editor, enabled: bool) void,
     /// True when space starts the leader keys (leader_ui.zig) rather than
     /// being one of the hook's keys.
@@ -2980,7 +2982,10 @@ pub const Workspace = struct {
             };
             const focused_group = g == self.focused_group;
             ed.focused = focused_group and self.focus == .editor;
-            if (self.key_hook) |h| ed.block_caret = h.enabled and h.blockCaret(h.ctx);
+            if (self.key_hook) |h| {
+                ed.block_caret = h.enabled and h.blockCaret(h.ctx);
+                ed.underline_caret = h.enabled and if (h.underlineCaret) |u| u(h.ctx) else false;
+            }
             ed.layout(er);
             if (terminal_ui.paint(self, ed, er, scene)) continue;
             if (focused_group and self.find_visible) if (self.find) |f| if (f.mode == .buffer) f.update(ed);
