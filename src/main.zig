@@ -419,6 +419,7 @@ fn keyEvent(spec: []const u8) !platform.KeyEvent {
 
 test {
     _ = @import("model/text/selection.zig");
+    _ = @import("model/text/linediff.zig");
     _ = @import("model/lsp/signature.zig");
     _ = @import("app/session/store.zig");
     _ = @import("app/session/snapshot.zig");
