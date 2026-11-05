@@ -67,7 +67,7 @@ const Dropdown = struct {
     options: std.ArrayList(Option) = .empty,
     /// The option under the pointer or the arrow keys.
     hover: ?usize = null,
-    /// Option the list started on, and the scheme in force before previews.
+    /// How far the list is scrolled, in pixels.
     scroll: f32 = 0,
     popup: Rect = .{},
 };
@@ -521,10 +521,10 @@ pub fn handleEvent(ws: *Workspace, ev: platform.Event) bool {
             const dy = if (s.unit == .lines) s.delta.y * 3 * row_h else s.delta.y;
             if (v.dropdown) |*dd| if (dd.popup.contains(s.pos.x, s.pos.y)) {
                 const total = @as(f32, @floatFromInt(dd.options.items.len)) * row_h;
-                dd.scroll = std.math.clamp(dd.scroll - dy, 0, @max(0, total - dd.popup.h));
+                dd.scroll = std.math.clamp(dd.scroll + dy, 0, @max(0, total - dd.popup.h));
                 return true;
             };
-            v.scroll = std.math.clamp(v.scroll - dy, 0, @max(0, v.content_h - v.view_h));
+            v.scroll = std.math.clamp(v.scroll + dy, 0, @max(0, v.content_h - v.view_h));
             return true;
         },
         else => return false,

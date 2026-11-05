@@ -247,3 +247,17 @@ test "field text becomes a literal, or is refused" {
     defer gpa.free(quoted);
     try std.testing.expectEqualStrings("\"Menlo \\\"Bold\\\"\"", quoted);
 }
+
+test "the documented default file agrees with the catalog's defaults" {
+    const gpa = std.testing.allocator;
+    const settings_file = @import("settings_file.zig");
+    const strict = try settings_file.toStrictJson(gpa, settings_file.default_contents);
+    defer gpa.free(strict);
+    var parsed = try std.json.parseFromSlice(Value, gpa, strict, .{});
+    defer parsed.deinit();
+    for (defs) |d| {
+        const v = parsed.value.object.get(d.key) orelse continue;
+        if (!isDefault(d, v)) std.debug.print("default of {s} differs from settings.json's\n", .{d.key});
+        try std.testing.expect(isDefault(d, v));
+    }
+}

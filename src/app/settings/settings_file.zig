@@ -254,6 +254,11 @@ pub fn load(gpa: Allocator, io: Io, string_arena: Allocator, editor_settings: *e
         else => return err,
     };
     defer gpa.free(raw);
+    return loadText(gpa, raw, string_arena, editor_settings, theme_settings);
+}
+
+/// `load` for settings.json's text.
+pub fn loadText(gpa: Allocator, raw: []const u8, string_arena: Allocator, editor_settings: *editor_mod.Settings, theme_settings: *theme_manager.ThemeSettings) !Loaded {
     const strict = try toStrictJson(gpa, raw);
     defer gpa.free(strict);
     var parsed = try std.json.parseFromSlice(Value, gpa, strict, .{});
@@ -628,4 +633,63 @@ test "every edit leaves valid settings that load back" {
     try std.testing.expectEqualStrings("Solarized Light", parsed.value.object.get("color_scheme").?.string);
     try std.testing.expectEqualStrings("Menlo", parsed.value.object.get("font_face").?.string);
     try std.testing.expect(parsed.value.object.get("draw_minimap").?.bool == false);
+}
+
+test "settings written like the Settings page does load back" {
+    const gpa = std.testing.allocator;
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+
+    var text = try gpa.dupe(u8, default_contents);
+    defer gpa.free(text);
+    const writes = [_]struct { []const u8, []const u8 }{
+        .{ "font_size", "17" },
+        .{ "font_face", "\"Menlo\"" },
+        .{ "draw_minimap", "false" },
+        .{ "line_numbers", "false" },
+        .{ "draw_white_space", "\"all\"" },
+        .{ "word_wrap", "true" },
+        .{ "wrap_width", "80" },
+        .{ "caret_blink", "false" },
+        .{ "vim_mode", "true" },
+        .{ "which_key_delay_ms", "0" },
+        .{ "color_scheme", "\"Solarized Light\"" },
+        .{ "auto_color_scheme_by", "\"time\"" },
+        .{ "day_start", "\"06:30\"" },
+        .{ "org_capture_heading", "\"Inbox\"" },
+    };
+    for (writes) |w| {
+        const next = try editText(gpa, text, w[0], w[1]);
+        gpa.free(text);
+        text = next;
+    }
+    var settings: editor_mod.Settings = .{};
+    var themes: theme_manager.ThemeSettings = .{};
+    const loaded = try loadText(gpa, text, arena.allocator(), &settings, &themes);
+    try std.testing.expectEqual(@as(f32, 17), settings.font_size);
+    try std.testing.expectEqualStrings("Menlo", settings.font_family);
+    try std.testing.expect(loaded.fonts_changed);
+    try std.testing.expect(!settings.show_minimap);
+    try std.testing.expect(!settings.show_line_numbers);
+    try std.testing.expect(settings.draw_white_space == .all);
+    try std.testing.expect(settings.word_wrap == .on);
+    try std.testing.expectEqual(@as(u32, 80), settings.wrap_width);
+    try std.testing.expect(!settings.caret_blink);
+    try std.testing.expectEqual(@as(?bool, true), loaded.vim_mode);
+    try std.testing.expectEqual(@as(u32, 0), settings.which_key_delay_ms);
+    try std.testing.expectEqualStrings("Solarized Light", themes.color_scheme.get());
+    try std.testing.expect(themes.auto_by == .time);
+    try std.testing.expectEqual(@as(f64, 6 * 60 + 30), themes.day_start);
+    try std.testing.expectEqualStrings("Inbox", settings.org_capture_heading);
+
+    // Resetting every one of them gives the defaults back.
+    for (writes) |w| {
+        const next = try editText(gpa, text, w[0], null);
+        gpa.free(text);
+        text = next;
+    }
+    var again: editor_mod.Settings = .{};
+    _ = try loadText(gpa, text, arena.allocator(), &again, &themes);
+    try std.testing.expectEqual(@as(f32, 13), again.font_size);
+    try std.testing.expect(again.show_minimap);
 }
