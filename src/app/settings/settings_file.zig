@@ -254,6 +254,11 @@ pub fn load(gpa: Allocator, io: Io, string_arena: Allocator, editor_settings: *e
         else => return err,
     };
     defer gpa.free(raw);
+    return loadText(gpa, raw, string_arena, editor_settings, theme_settings);
+}
+
+/// `load` for settings.json's text.
+pub fn loadText(gpa: Allocator, raw: []const u8, string_arena: Allocator, editor_settings: *editor_mod.Settings, theme_settings: *theme_manager.ThemeSettings) !Loaded {
     const strict = try toStrictJson(gpa, raw);
     defer gpa.free(strict);
     var parsed = try std.json.parseFromSlice(Value, gpa, strict, .{});
@@ -357,37 +362,131 @@ pub fn load(gpa: Allocator, io: Io, string_arena: Allocator, editor_settings: *e
     return result;
 }
 
-/// Sets `"key": "value"` in the settings file, keeping its comments.
-pub fn setString(gpa: Allocator, io: Io, key: []const u8, value: []const u8) !void {
+/// Where the uncommented top-level `"key": value` of `raw` sits: the start
+/// of its line, the span of its value, and the end of its line (after the
+/// newline). Keys inside comments or nested objects (not first on their line)
+/// don't count.
+const KeySpan = struct { line_start: usize, value_start: usize, value_end: usize, line_end: usize };
+
+fn findKey(raw: []const u8, key: []const u8) ?KeySpan {
+    var needle_buf: [96]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\"{s}\"", .{key}) catch return null;
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, raw, search, needle)) |pos| : (search = pos + needle.len) {
+        const line_start = if (std.mem.lastIndexOfScalar(u8, raw[0..pos], '\n')) |n| n + 1 else 0;
+        if (std.mem.trim(u8, raw[line_start..pos], " \t").len != 0) continue;
+        var i = pos + needle.len;
+        while (i < raw.len and (raw[i] == ' ' or raw[i] == '\t')) i += 1;
+        if (i >= raw.len or raw[i] != ':') continue;
+        i += 1;
+        while (i < raw.len and (raw[i] == ' ' or raw[i] == '\t')) i += 1;
+        const value_start = i;
+        var depth: usize = 0;
+        var in_string = false;
+        while (i < raw.len) : (i += 1) {
+            const ch = raw[i];
+            if (in_string) {
+                if (ch == '\\') i += 1 else if (ch == '"') {
+                    in_string = false;
+                    if (depth == 0) {
+                        i += 1;
+                        break;
+                    }
+                }
+                continue;
+            }
+            switch (ch) {
+                '"' => in_string = true,
+                '{', '[' => depth += 1,
+                '}', ']' => if (depth == 0) break else {
+                    depth -= 1;
+                    if (depth == 0) {
+                        i += 1;
+                        break;
+                    }
+                },
+                ',', '\n' => if (depth == 0) break,
+                '/' => if (depth == 0 and i + 1 < raw.len and raw[i + 1] == '/') break,
+                else => {},
+            }
+        }
+        var value_end = i;
+        while (value_end > value_start and (raw[value_end - 1] == ' ' or raw[value_end - 1] == '\t')) value_end -= 1;
+        const line_end = if (std.mem.indexOfScalarPos(u8, raw, value_end, '\n')) |n| n + 1 else raw.len;
+        return .{ .line_start = line_start, .value_start = value_start, .value_end = value_end, .line_end = line_end };
+    }
+    return null;
+}
+
+/// `raw` with `key` set to the JSON text `literal` (comments and the other
+/// lines are kept; a key not in the file is added after the opening brace),
+/// or, when `literal` is null, with the key's line removed.
+pub fn editText(gpa: Allocator, raw: []const u8, key: []const u8, literal: ?[]const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    if (findKey(raw, key)) |span| {
+        if (literal) |lit| {
+            try out.appendSlice(gpa, raw[0..span.value_start]);
+            try out.appendSlice(gpa, lit);
+            try out.appendSlice(gpa, raw[span.value_end..]);
+        } else {
+            try out.appendSlice(gpa, raw[0..span.line_start]);
+            try out.appendSlice(gpa, raw[span.line_end..]);
+        }
+        return out.toOwnedSlice(gpa);
+    }
+    const lit = literal orelse return gpa.dupe(u8, raw);
+    const brace = std.mem.indexOfScalar(u8, raw, '{') orelse return error.InvalidSettings;
+    try out.appendSlice(gpa, raw[0 .. brace + 1]);
+    try out.print(gpa, "\n    \"{s}\": {s},", .{ key, lit });
+    try out.appendSlice(gpa, raw[brace + 1 ..]);
+    return out.toOwnedSlice(gpa);
+}
+
+fn writeEdited(gpa: Allocator, io: Io, key: []const u8, literal: ?[]const u8) !void {
     try ensureExists(io);
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const p = path(&buf) orelse return error.NoHome;
     const raw = try Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(1 << 20));
     defer gpa.free(raw);
-    var needle_buf: [80]u8 = undefined;
-    const needle = try std.fmt.bufPrint(&needle_buf, "\"{s}\"", .{key});
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(gpa);
+    const edited = try editText(gpa, raw, key, literal);
+    defer gpa.free(edited);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = edited });
+}
 
-    // Find an uncommented occurrence of the key.
-    var search: usize = 0;
-    while (std.mem.indexOfPos(u8, raw, search, needle)) |pos| : (search = pos + needle.len) {
-        const line_start = if (std.mem.lastIndexOfScalar(u8, raw[0..pos], '\n')) |n| n + 1 else 0;
-        if (std.mem.indexOf(u8, raw[line_start..pos], "//") != null) continue;
-        const colon = std.mem.indexOfScalarPos(u8, raw, pos + needle.len, ':') orelse break;
-        const q1 = std.mem.indexOfScalarPos(u8, raw, colon, '"') orelse break;
-        const q2 = std.mem.indexOfScalarPos(u8, raw, q1 + 1, '"') orelse break;
-        try out.appendSlice(gpa, raw[0 .. q1 + 1]);
-        try out.appendSlice(gpa, value);
-        try out.appendSlice(gpa, raw[q2..]);
-        return Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = out.items });
-    }
-    // Not present: add it after the opening brace.
-    const brace = std.mem.indexOfScalar(u8, raw, '{') orelse return error.InvalidSettings;
-    try out.appendSlice(gpa, raw[0 .. brace + 1]);
-    try out.print(gpa, "\n    \"{s}\": \"{s}\",", .{ key, value });
-    try out.appendSlice(gpa, raw[brace + 1 ..]);
-    try Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = out.items });
+/// Sets `"key": value` (a JSON literal such as `true`, `13` or `"Dayfox"`)
+/// in the settings file, keeping its comments.
+pub fn setRaw(gpa: Allocator, io: Io, key: []const u8, literal: []const u8) !void {
+    return writeEdited(gpa, io, key, literal);
+}
+
+/// Removes `key` from the settings file, so the default applies again.
+pub fn unset(gpa: Allocator, io: Io, key: []const u8) !void {
+    return writeEdited(gpa, io, key, null);
+}
+
+/// Sets `"key": "value"` in the settings file, keeping its comments.
+pub fn setString(gpa: Allocator, io: Io, key: []const u8, value: []const u8) !void {
+    const literal = try std.json.Stringify.valueAlloc(gpa, value, .{});
+    defer gpa.free(literal);
+    return setRaw(gpa, io, key, literal);
+}
+
+/// The settings file as a JSON object, or null when there is none yet.
+pub fn readObject(gpa: Allocator, io: Io) !?std.json.Parsed(Value) {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const p = path(&buf) orelse return null;
+    const raw = Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer gpa.free(raw);
+    const strict = try toStrictJson(gpa, raw);
+    defer gpa.free(strict);
+    var parsed = try std.json.parseFromSlice(Value, gpa, strict, .{});
+    errdefer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidSettings;
+    return parsed;
 }
 
 test "lenient json" {
@@ -413,4 +512,184 @@ test "default settings parse" {
     var parsed = try std.json.parseFromSlice(Value, gpa, strict, .{});
     defer parsed.deinit();
     try std.testing.expectEqualStrings("Visual Studio Dark", parsed.value.object.get("color_scheme").?.string);
+}
+
+fn expectEdit(raw: []const u8, key: []const u8, literal: ?[]const u8, want: []const u8) !void {
+    const got = try editText(std.testing.allocator, raw, key, literal);
+    defer std.testing.allocator.free(got);
+    try std.testing.expectEqualStrings(want, got);
+}
+
+test "editing a value keeps comments and neighbours" {
+    const raw =
+        \\{
+        \\    // the size
+        \\    "font_size": 13, // pixels
+        \\    "font_face": "Fira Code",
+        \\    // "line_numbers": false,
+        \\    "lsp": { "zls": { "a": [1, 2] }, "b": 1 },
+        \\    "vim_mode": false
+        \\}
+    ;
+    try expectEdit(raw, "font_size", "15",
+        \\{
+        \\    // the size
+        \\    "font_size": 15, // pixels
+        \\    "font_face": "Fira Code",
+        \\    // "line_numbers": false,
+        \\    "lsp": { "zls": { "a": [1, 2] }, "b": 1 },
+        \\    "vim_mode": false
+        \\}
+    );
+    try expectEdit(raw, "font_face", "\"Menlo, \\\"x\\\"\"",
+        \\{
+        \\    // the size
+        \\    "font_size": 13, // pixels
+        \\    "font_face": "Menlo, \"x\"",
+        \\    // "line_numbers": false,
+        \\    "lsp": { "zls": { "a": [1, 2] }, "b": 1 },
+        \\    "vim_mode": false
+        \\}
+    );
+    try expectEdit(raw, "vim_mode", "true",
+        \\{
+        \\    // the size
+        \\    "font_size": 13, // pixels
+        \\    "font_face": "Fira Code",
+        \\    // "line_numbers": false,
+        \\    "lsp": { "zls": { "a": [1, 2] }, "b": 1 },
+        \\    "vim_mode": true
+        \\}
+    );
+    // Whole nested values are replaced, commented-out keys are not touched.
+    try expectEdit(raw, "lsp", "null",
+        \\{
+        \\    // the size
+        \\    "font_size": 13, // pixels
+        \\    "font_face": "Fira Code",
+        \\    // "line_numbers": false,
+        \\    "lsp": null,
+        \\    "vim_mode": false
+        \\}
+    );
+}
+
+test "removing and adding keys" {
+    const raw =
+        \\{
+        \\    "font_size": 13, // pixels
+        \\    // "line_numbers": false,
+        \\    "vim_mode": false
+        \\}
+    ;
+    try expectEdit(raw, "font_size", null,
+        \\{
+        \\    // "line_numbers": false,
+        \\    "vim_mode": false
+        \\}
+    );
+    try expectEdit(raw, "line_numbers", "false",
+        \\{
+        \\    "line_numbers": false,
+        \\    "font_size": 13, // pixels
+        \\    // "line_numbers": false,
+        \\    "vim_mode": false
+        \\}
+    );
+    try expectEdit(raw, "absent", null, raw);
+}
+
+test "every edit leaves valid settings that load back" {
+    const gpa = std.testing.allocator;
+    var text = try gpa.dupe(u8, default_contents);
+    defer gpa.free(text);
+    const edits = [_]struct { []const u8, ?[]const u8 }{
+        .{ "font_size", "17" },
+        .{ "font_face", "\"Menlo\"" },
+        .{ "draw_minimap", "false" },
+        .{ "word_wrap", "true" },
+        .{ "latitude", "37.5" },
+        .{ "font_size", null },
+        .{ "color_scheme", "\"Solarized Light\"" },
+    };
+    for (edits) |e| {
+        const next = try editText(gpa, text, e[0], e[1]);
+        gpa.free(text);
+        text = next;
+        const strict = try toStrictJson(gpa, text);
+        defer gpa.free(strict);
+        var parsed = try std.json.parseFromSlice(Value, gpa, strict, .{});
+        defer parsed.deinit();
+        if (e[1]) |lit| {
+            const want = try std.json.parseFromSlice(Value, gpa, lit, .{});
+            defer want.deinit();
+            try std.testing.expect(parsed.value.object.get(e[0]) != null);
+        } else try std.testing.expect(parsed.value.object.get(e[0]) == null);
+    }
+    const strict_final = try toStrictJson(gpa, text);
+    defer gpa.free(strict_final);
+    var parsed = try std.json.parseFromSlice(Value, gpa, strict_final, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("Solarized Light", parsed.value.object.get("color_scheme").?.string);
+    try std.testing.expectEqualStrings("Menlo", parsed.value.object.get("font_face").?.string);
+    try std.testing.expect(parsed.value.object.get("draw_minimap").?.bool == false);
+}
+
+test "settings written like the Settings page does load back" {
+    const gpa = std.testing.allocator;
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+
+    var text = try gpa.dupe(u8, default_contents);
+    defer gpa.free(text);
+    const writes = [_]struct { []const u8, []const u8 }{
+        .{ "font_size", "17" },
+        .{ "font_face", "\"Menlo\"" },
+        .{ "draw_minimap", "false" },
+        .{ "line_numbers", "false" },
+        .{ "draw_white_space", "\"all\"" },
+        .{ "word_wrap", "true" },
+        .{ "wrap_width", "80" },
+        .{ "caret_blink", "false" },
+        .{ "vim_mode", "true" },
+        .{ "which_key_delay_ms", "0" },
+        .{ "color_scheme", "\"Solarized Light\"" },
+        .{ "auto_color_scheme_by", "\"time\"" },
+        .{ "day_start", "\"06:30\"" },
+        .{ "org_capture_heading", "\"Inbox\"" },
+    };
+    for (writes) |w| {
+        const next = try editText(gpa, text, w[0], w[1]);
+        gpa.free(text);
+        text = next;
+    }
+    var settings: editor_mod.Settings = .{};
+    var themes: theme_manager.ThemeSettings = .{};
+    const loaded = try loadText(gpa, text, arena.allocator(), &settings, &themes);
+    try std.testing.expectEqual(@as(f32, 17), settings.font_size);
+    try std.testing.expectEqualStrings("Menlo", settings.font_family);
+    try std.testing.expect(loaded.fonts_changed);
+    try std.testing.expect(!settings.show_minimap);
+    try std.testing.expect(!settings.show_line_numbers);
+    try std.testing.expect(settings.draw_white_space == .all);
+    try std.testing.expect(settings.word_wrap == .on);
+    try std.testing.expectEqual(@as(u32, 80), settings.wrap_width);
+    try std.testing.expect(!settings.caret_blink);
+    try std.testing.expectEqual(@as(?bool, true), loaded.vim_mode);
+    try std.testing.expectEqual(@as(u32, 0), settings.which_key_delay_ms);
+    try std.testing.expectEqualStrings("Solarized Light", themes.color_scheme.get());
+    try std.testing.expect(themes.auto_by == .time);
+    try std.testing.expectEqual(@as(f64, 6 * 60 + 30), themes.day_start);
+    try std.testing.expectEqualStrings("Inbox", settings.org_capture_heading);
+
+    // Resetting every one of them gives the defaults back.
+    for (writes) |w| {
+        const next = try editText(gpa, text, w[0], null);
+        gpa.free(text);
+        text = next;
+    }
+    var again: editor_mod.Settings = .{};
+    _ = try loadText(gpa, text, arena.allocator(), &again, &themes);
+    try std.testing.expectEqual(@as(f32, 13), again.font_size);
+    try std.testing.expect(again.show_minimap);
 }

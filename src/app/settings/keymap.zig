@@ -316,6 +316,8 @@ pub const Action = enum {
     // Preferences.
     select_color_scheme,
     open_settings,
+    open_settings_json,
+    open_keyboard_shortcuts,
     open_keymap,
     reload_config,
 
@@ -720,7 +722,7 @@ pub const Keymap = struct {
     }
 
     /// keymap.json's entries, ahead of the defaults.
-    fn addUserEntries(self: *Keymap, gpa: std.mem.Allocator, raw: []const u8) !void {
+    pub fn addUserEntries(self: *Keymap, gpa: std.mem.Allocator, raw: []const u8) !void {
         const strict = try settings_file.toStrictJson(gpa, raw);
         defer gpa.free(strict);
         var parsed = try std.json.parseFromSlice(std.json.Value, gpa, strict, .{});
