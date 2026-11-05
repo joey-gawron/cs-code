@@ -7,7 +7,9 @@
 
 const std = @import("std");
 const git = @import("../git/git.zig");
-const Executor = @import("../../framework/util/executor.zig").Executor;
+const executor_mod = @import("../../framework/util/executor.zig");
+const Executor = executor_mod.Executor;
+const Completion = executor_mod.Completion;
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -331,7 +333,7 @@ pub fn toolVersion(gen: usize) []const u8 {
 
 /// Starts checking every toolchain on a worker thread (once per process).
 /// `wake` runs on the main thread when the results are in.
-pub fn startToolChecks(gpa: Allocator, io: Io, executor: *Executor, wake: ?Executor.Completion) void {
+pub fn startToolChecks(gpa: Allocator, io: Io, executor: *Executor, wake: ?Completion) void {
     if (tools_started.swap(true, .acq_rel)) return;
     for (&tool_slots, 0..) |*slot, i| slot.status.store(if (generators[i].tool != null) @intFromEnum(ToolStatus.checking) else @intFromEnum(ToolStatus.found), .release);
     executor.spawn(checkTools, .{ gpa, io, executor, wake }) catch {
@@ -339,7 +341,7 @@ pub fn startToolChecks(gpa: Allocator, io: Io, executor: *Executor, wake: ?Execu
     };
 }
 
-fn checkTools(gpa: Allocator, io: Io, executor: *Executor, wake: ?Executor.Completion) void {
+fn checkTools(gpa: Allocator, io: Io, executor: *Executor, wake: ?Completion) void {
     defer executor.taskDone();
     for (generators, 0..) |g, i| {
         const tool = g.tool orelse continue;

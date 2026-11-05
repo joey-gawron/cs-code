@@ -39,6 +39,7 @@ const file_cmd = @import("file_cmd.zig");
 const path_complete = @import("path_complete.zig");
 const TerminalView = @import("../terminal/terminal_view.zig").TerminalView;
 const remote_ui = @import("remote_ui.zig");
+const page_ui = @import("page_ui.zig");
 const vfs = @import("../../model/remote/vfs.zig");
 const rpath = @import("../../model/remote/path.zig");
 
@@ -372,6 +373,8 @@ pub const Workspace = struct {
     quit_session: bool = false,
     /// Remote-SSH connections (remote_ui.zig).
     remote: remote_ui.State = .{},
+    /// The Welcome and New Project pages (page_ui.zig).
+    page: page_ui.State = .{},
     lsp: ?*lsp_mod.Lsp = null,
     lsp_state: lsp_ui.State = .{},
     /// The panel under the editors (terminals, language servers).
@@ -438,6 +441,7 @@ pub const Workspace = struct {
         self.buffers.deinit(self.gpa);
         self.mru.deinit(self.gpa);
         self.closed_paths.deinit(self.gpa);
+        page_ui.deinit(self);
         if (self.project) |p| p.destroy();
         self.sidebar_rows.deinit(self.gpa);
         self.tab_hits.deinit(self.gpa);
@@ -459,6 +463,7 @@ pub const Workspace = struct {
         self.project = try Project.create(self.gpa, self.io, self.executor, path);
         if (self.lsp) |l| l.setRoot(self.project.?.root);
         if (blocking) self.project.?.scanBlocking() else self.project.?.scan();
+        page_ui.noteOpened(self, self.project.?.root);
     }
 
     /// The view shown in the focused group.
@@ -640,7 +645,7 @@ pub const Workspace = struct {
 
     /// File ▸ Open Folder…: makes the folder the project shown in the side bar
     /// (a side bar the user hid stays hidden). Open tabs stay open.
-    fn openFolder(self: *Workspace, input: []const u8) void {
+    pub fn openFolder(self: *Workspace, input: []const u8) void {
         if (rpath.isRemote(input)) {
             _ = remote_ui.openArgument(self, input) catch |err| self.setStatus("Unable to open {s}: {t}", .{ input, err });
             return;
@@ -1229,7 +1234,7 @@ pub const Workspace = struct {
     /// File ▸ Open File… and Open Folder…: path prompts starting in the
     /// project root (else, for a folder, the current file's folder);
     /// `.file_here` (SPC .) starts in the current file's folder.
-    fn promptOpenPath(self: *Workspace, what: enum { file, file_here, folder }) void {
+    pub fn promptOpenPath(self: *Workspace, what: enum { file, file_here, folder }) void {
         const here = self.activeFolder();
         const start = (if (what == .file_here) here else null) orelse if (self.project) |p| p.root else if (what == .folder) here orelse "" else "";
         self.promptPathIn(what == .folder, start);
@@ -1403,12 +1408,12 @@ pub const Workspace = struct {
                     else => {},
                 };
             },
-            .prompt => if (!org_ui.confirmPrompt(self, tag, q) and !remote_ui.confirmPrompt(self, tag, q) and !panel_ui.confirmPrompt(self, tag, q) and !git_status_ui.confirmPrompt(self, tag, q) and !file_cmd.confirmPrompt(self, tag, q)) self.confirmPrompt(@enumFromInt(tag), q),
+            .prompt => if (!org_ui.confirmPrompt(self, tag, q) and !remote_ui.confirmPrompt(self, tag, q) and !panel_ui.confirmPrompt(self, tag, q) and !git_status_ui.confirmPrompt(self, tag, q) and !file_cmd.confirmPrompt(self, tag, q) and !page_ui.confirmPrompt(self, tag, q)) self.confirmPrompt(@enumFromInt(tag), q),
             .locations => if (item) |it| switch (it.payload) {
                 .location => |loc| lsp_ui.confirmLocation(self, loc.path, loc.line, loc.character, loc.utf8),
                 else => {},
             },
-            .list => if (!lsp_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !org_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !remote_ui.confirmList(self, tag, item, q) and !git_status_ui.confirmList(self, tag, item, q) and !file_cmd.confirmList(self, tag, item)) self.confirmList(@enumFromInt(tag), if (item) |it| it.payload.value else 2),
+            .list => if (!lsp_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !org_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !remote_ui.confirmList(self, tag, item, q) and !git_status_ui.confirmList(self, tag, item, q) and !file_cmd.confirmList(self, tag, item) and !page_ui.confirmList(self, tag, item)) self.confirmList(@enumFromInt(tag), if (item) |it| it.payload.value else 2),
         }
     }
 
@@ -1775,6 +1780,7 @@ pub const Workspace = struct {
             else => {},
         };
         if (ev == .mouse_down and self.restOfSidebarToggle(ev.mouse_down)) return;
+        if (page_ui.handleEvent(self, ev)) return;
         if (terminal_ui.handleEvent(self, ev)) return;
         switch (ev) {
             .key_down => |k| self.onKey(k),
@@ -2034,7 +2040,8 @@ pub const Workspace = struct {
             .new_file => _ = self.newFile() catch null,
             .open_file => self.promptOpenPath(.file),
             .open_file_here => self.promptOpenPath(.file_here),
-            .open_folder => self.promptOpenPath(.folder),
+            .open_folder => page_ui.openFolderDialog(self),
+            .new_project, .show_welcome, .open_recent, .close_folder, .add_folder_to_workspace, .clone_repository => page_ui.perform(self, action),
             .save => if (self.activeEditor()) |ed| {
                 // An org source block's tab saves into its block.
                 if (org_ui.isSrcTab(self, ed)) return org_ui.finishSrc(self);
@@ -3000,6 +3007,7 @@ pub const Workspace = struct {
         if (self.tabs_visible and !self.distraction_free) {
             for (0..self.groupCount()) |g| if (self.groupShown(g)) self.paintTabs(&ctx, @intCast(g));
         }
+        page_ui.paint(self, &ctx);
         if (!self.distraction_free) {
             if (self.sidebar_visible) self.paintSidebar(&ctx) else self.paintSidebarStrip(&ctx);
         }
