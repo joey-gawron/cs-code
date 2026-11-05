@@ -383,6 +383,7 @@ test {
     _ = @import("model/text/fold_tree.zig");
     _ = @import("framework/platform/file_watcher.zig");
     _ = @import("model/project/search.zig");
+    _ = @import("model/project/search_tree.zig");
     _ = @import("model/org/date.zig");
     _ = @import("model/org/parser.zig");
     _ = @import("model/org/highlight.zig");
