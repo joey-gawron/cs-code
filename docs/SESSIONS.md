@@ -168,6 +168,13 @@ discarded, so the session's backups are deleted (as VS Code discards its backups
 back. The backups of remote documents still waiting for their connection are the exception: they have no tab, nobody was asked about them,
 so they stay (and a rename writes them under the new name before the old session goes).
 
+A **merge editor**'s Result (the file's own document, edited in a tab of the merge editor's, docs/SOURCE-CONTROL.md) is a dirty document like
+any other once the user changed it while no editor tab shows the file (`DocumentWell.UnsavedAttachedDocuments`; the merge editor's own
+starting edit does not count): the window has unsaved changes, a quit's or a close's save prompts ask about it (Save / Don't Save / Cancel),
+`needsPrompt` and the autosave follow its edits, and hot exit backs it up under the file's URI, listed in the session as an editor of the file.
+The next start brings it back as the file in an editor tab with the unsaved text (the merge editor tab itself is not restored; Resolve in
+Merge Editor reads each conflict's state back from that text). Tests: `MergeEditorSessionTests`.
+
 ## Window lifecycle
 
 * **Closing the window hides it** when `cscode.background.keepRunning` is true (default on every OS): the process, documents, undo stacks,
