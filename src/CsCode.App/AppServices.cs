@@ -25,6 +25,7 @@ using CsCode.Panels.Terminal;
 using CsCode.Platform;
 using CsCode.Profiling;
 using CsCode.Remote;
+using CsCode.SpellCheck;
 using CsCode.Ui;
 using CsCode.Vim;
 using CsCode.Ui.Threading;
@@ -68,6 +69,7 @@ public static class AppServices
         services.AddCsCodeNavigationPanels(); // the Hierarchy window: call and type hierarchy (docs/NAVIGATION.md)
         services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame
         services.AddCsCodeNewProject(); // File > New > Project...: the New Project page and its generators (docs/NEW-PROJECT.md)
+        services.AddCsCodeSpellCheck(); // the built-in spell checker: cSpell diagnostics, quick fixes, commands, status bar (docs/SPELLCHECK.md)
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         services.AddCodeActionsOnSave(); // after AddCsCodeRemote (see there): editor.codeActionsOnSave, the first will-save participant
         configure?.Invoke(services); // dev/test host: replace anything above

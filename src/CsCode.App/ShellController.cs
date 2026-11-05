@@ -158,6 +158,9 @@ public sealed class ShellController : IDisposable
         // CMake (docs/C-CPP.md): the cmake.* commands, the configure / build / launch-target status bar items, configure on open, clangd's build directory.
         if (_sp.GetService<CsCode.Build.CMake.CMakeHost>() is { } cmake) _disposables.Add(cmake.Start());
 
+        // The spell checker (docs/SPELLCHECK.md): cSpell diagnostics, quick fixes, the cSpell.* commands and its status bar item.
+        if (_sp.GetService<CsCode.SpellCheck.SpellCheckHost>() is { } spell) _disposables.Add(spell.Start());
+
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
 

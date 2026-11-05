@@ -433,6 +433,31 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
     /// <summary>The dictionaries in force, loading them if needed (on the lane).</summary>
     public Task<SpellDictionarySet> GetDictionariesAsync() => _lane.Run(() => EnsureDictionaries(Settings));
 
+    private readonly Emitter<bool> _textsChanged = new();
+
+    /// <summary>Fires (any thread) when new settings or dictionaries are in force: texts checked by <see cref="CheckTextAsync"/> should be checked again.</summary>
+    public IEventSource<bool> TextsChanged => _textsChanged;
+
+    /// <summary>
+    /// The misspelt words of a text that is no open document (the commit message box), read whole as prose of <paramref name="languageId"/>,
+    /// on the lane; offsets are into <paramref name="text"/>. Empty when spell checking is off or the language is not enabled.
+    /// </summary>
+    public Task<IReadOnlyList<SpellingIssue>> CheckTextAsync(string text, string languageId, CancellationToken ct = default) => _lane.Run<IReadOnlyList<SpellingIssue>>(() =>
+    {
+        var settings = Settings;
+        if (!settings.Enabled || !settings.IsLanguageEnabled(languageId) || text.Length == 0) return [];
+        var run = new CheckRun(text, SyntaxClassification.Empty(SyntaxClassificationState.NoGrammar), prose: true, settings, EnsureDictionaries(settings));
+        while (!run.Step(TimeSpan.MaxValue, ct)) { }
+        if (run.Issues.Count == 0) return [];
+        var lineStarts = new List<int> { 0 };
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+            if (text[i] is '\n' or '\r') lineStarts.Add(i + 1);
+        }
+        return run.Issues.Select(issue => new SpellingIssue(lineStarts[issue.Line] + issue.Start, issue.Length, issue.Word, issue.Message)).ToArray();
+    }, ct);
+
     /// <summary>Spelling suggestions for <paramref name="word"/> (on the lane): the dictionaries', then near user words and software terms, case matched.</summary>
     public Task<IReadOnlyList<string>> SuggestAsync(string word, CancellationToken ct = default) => _lane.Run<IReadOnlyList<string>>(() =>
     {
@@ -488,6 +513,7 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
         _settingsReady = true;
         _firstSettings.TrySetResult();
         _settingsChanged.Fire(next);
+        _textsChanged.Fire(true);
         ScheduleAll(0);
     }
 
@@ -548,6 +574,7 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
             Watch(dictionaries, n => n.EndsWith(".dic", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".aff", StringComparison.OrdinalIgnoreCase), () =>
             {
                 _dictionaryFolderChanged = true;
+                _textsChanged.Fire(true);
                 ScheduleAll(0);
             });
         // the user file: a word added there while the workspace also sets cSpell.words changes no merged value, so the settings service is silent
@@ -605,6 +632,7 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
         _diagnostics.Clear(Owner);
         _resultsChanged.Clear();
         _settingsChanged.Clear();
+        _textsChanged.Clear();
         _lane.Run(() =>
         {
             _dictionaries = null;

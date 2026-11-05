@@ -28,6 +28,8 @@ public static class ServiceCollectionExtensions
             sp.GetService<IFileWatcher>(),
             sp.GetService<IMemoryMonitor>(),
             sp.GetService<ILoggerFactory>()));
+        // free text (the Source Control commit message box) through the same checker
+        services.TryAddSingleton<ITextSpellChecker>(sp => new TextSpellChecker(sp.GetRequiredService<SpellCheckService>(), sp.GetRequiredService<IConfigurationService>()));
         services.TryAddSingleton(sp => new SpellCheckHost(
             sp.GetRequiredService<SpellCheckService>(),
             sp.GetRequiredService<IConfigurationService>(),

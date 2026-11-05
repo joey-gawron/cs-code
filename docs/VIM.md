@@ -45,6 +45,8 @@ bar in Insert mode and an underline in Replace and Operator-pending mode.
   turns vimrc loading off. Errors are listed, never fatal.
 * **Language keys**: `gd` definition, `gD` declaration, `gi` implementation (nvim-lspconfig's convention, replacing Vim's own `gi`), `gr` references,
   `K`/`gh` hover, `]d`/`[d` next/previous problem, `g.` quick fix; a vimrc or settings binding of the same keys wins.
+* **Spelling keys** (CsCode's spell checker, docs/SPELLCHECK.md §6): `]s`/`[s` next/previous misspelt word (with a count; need `spell`,
+  `vim.spell` on by default, else `E756`), `z=` suggestions, `zg` add the word to the user dictionary, `zw` flag it (`zG`/`zW` act the same).
 * **Mouse**: a selection made with the mouse becomes Visual mode; a click in Visual mode ends it.
 
 ## Integration: the adapter in the shell
@@ -174,6 +176,7 @@ and the Neovim-blessed expectations, a 300-editor open/edit/close retention test
 | `vim.useSystemClipboard` | `false` | unnamed register uses the host clipboard (register `+`, not the `*` selection) |
 | `vim.leader` | `"\\"` | `<leader>` in bindings (vimrc: `let mapleader=`) |
 | `vim.hlsearch` / `incsearch` / `ignorecase` / `smartcase` / `wrapscan` | `false/true/true/true/true` | VSCodeVim's defaults; plain Vim defaults apply when no settings service is used |
+| `vim.spell` | `true` | Vim's `spell`: `]s`/`[s` jump between the spell checker's issues (docs/SPELLCHECK.md §6); plain Vim's default (off) applies when no settings service is used |
 | `vim.startInInsertMode` | `false` | new engines start in Insert mode |
 | `vim.timeout` | `1000` | `timeoutlen` in ms (a boolean turns `timeout` on/off) |
 | `vim.handleKeys` | `{}` | `{"<C-c>": false}` passes that key to the editor, `true` gives it to Vim (see [Using Vim](#using-vim-in-cscode)) |
@@ -216,7 +219,7 @@ then) and turns `autoindent` on before the vimrc is applied.
 ### Not supported (documented)
 
 `:!` and `:r !` (no shell), `:read`, `\=` and `<expr>` (no expression evaluator beyond string/register arithmetic in `:let`/`:echo`), regex atoms `\%V \%# \%'m \%23l \%23c \%23v \& \z( \%C`,
-`Ex mode (gQ)`, `Ctrl-X` completion sub-modes (stubbed to the host hook), `q:` command-line window, spell, diff, quickfix, window-local options (options are per session), abbreviations,
+`Ex mode (gQ)`, `Ctrl-X` completion sub-modes (stubbed to the host hook), `q:` command-line window, Vim's own spell checker (`spelllang`, `zug`/`zuw`, spell files; the spelling keys drive CsCode's checker instead), diff, quickfix, window-local options (options are per session), abbreviations,
 the `sneak/easymotion/camelCaseMotion/argumentObjects/replaceWithRegister/targets` emulations, `:s` backwards-range prompt ("Backwards range given, OK to swap").
 
 ## Known differences from Neovim

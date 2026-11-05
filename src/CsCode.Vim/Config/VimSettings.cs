@@ -16,6 +16,8 @@ public static class VimSettings
     public const string IgnoreCase = "vim.ignorecase";
     public const string SmartCase = "vim.smartcase";
     public const string WrapScan = "vim.wrapscan";
+    /// <summary>Vim's 'spell' (docs/SPELLCHECK.md): ]s [s jump between the spell checker's issues. On by default, as the spell checker is.</summary>
+    public const string Spell = "vim.spell";
     public const string StartInInsertMode = "vim.startInInsertMode";
     public const string Timeout = "vim.timeout";
     public const string HandleKeys = "vim.handleKeys";
@@ -82,6 +84,7 @@ public static class VimSettings
             new(IgnoreCase, J(true), "Ignore case in search patterns."),
             new(SmartCase, J(true), "Override ignorecase when the search pattern contains an uppercase letter."),
             new(WrapScan, J(true), "Searches wrap around the end of the file."),
+            new(Spell, J(true), "Vim's 'spell': ]s and [s jump to the next and previous misspelt word (z=, zg and zw work either way). :set nospell turns them off."),
             new(StartInInsertMode, J(false), "Start in Insert mode instead of Normal mode."),
             new(Timeout, J(1000), "Milliseconds to wait for the next key of an ambiguous key binding (timeoutlen)."),
             new(HandleKeys, J(new Dictionary<string, bool>()), "Keys to hand to the editor instead of Vim, e.g. {\"<C-c>\": false}."),

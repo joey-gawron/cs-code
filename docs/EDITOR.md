@@ -125,6 +125,10 @@ view components (renderers, margins,        parsing + code colouring for hovers 
   unchanged; parsing and queries run on the engine's own syntax lane, sliced and cancellable; any failure falls back to TextMate. The tree also gives Expand Selection,
   folding and an outline when no language server does. `CodeEditorControl.SyntaxEngine` tells which engine colours a view. Design, isolation and limits:
   `docs/TREE-SITTER.md` (evaluation: `docs/TREE-SITTER-EVALUATION.md`).
+* **Token kinds for other modules** (spell): `TextMate/SyntaxClassifier.cs` implements Core's `ISyntaxClassificationService` over the token store
+  (registered by `AddCsCodeEditor`): a capture copies the row references (`LineTokenStore.CopyRows`, one lock), each interned scope stack is
+  reduced once to Code / Comment / String / Text / Ignored (`SyntaxScopeRules`), and `TokenizationManager.TokenRowsChanged` (raised where the
+  views' redraw is) says which lines got tokens. The spell checker reads comments and strings through it (docs/SPELLCHECK.md §2).
 
 ## 3. What is implemented
 
