@@ -313,6 +313,10 @@ pub const Action = enum {
 
     // Session.
     quit_session,
+    session_switch,
+    session_new,
+    session_rename,
+    session_delete,
 
     // Remote-SSH.
     remote_connect,

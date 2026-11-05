@@ -309,6 +309,10 @@ const leader_rows = [_]Row{
 
     .{ "q", .group, "+quit" },
     .{ "q f", cmd(.quit), "Close window" },
+    .{ "q n", cmd(.session_new), "New session" },
+    .{ "q r", cmd(.session_rename), "Rename session" },
+    .{ "q s", cmd(.session_switch), "Switch session" },
+    .{ "q x", cmd(.session_delete), "Delete session" },
     .{ "q K", cmd(.quit_session), "Quit background session" },
     .{ "q q", cmd(.quit), "Quit" },
     .{ "q Q", cmd(.quit_without_saving), "Quit without saving" },

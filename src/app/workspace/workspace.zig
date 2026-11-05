@@ -39,6 +39,7 @@ const file_cmd = @import("file_cmd.zig");
 const path_complete = @import("path_complete.zig");
 const TerminalView = @import("../terminal/terminal_view.zig").TerminalView;
 const remote_ui = @import("remote_ui.zig");
+const session_ui = @import("session_ui.zig");
 const vfs = @import("../../model/remote/vfs.zig");
 const rpath = @import("../../model/remote/path.zig");
 
@@ -370,6 +371,10 @@ pub const Workspace = struct {
     file_closed_hook: ?struct { ctx: *anyopaque, onFileClosed: *const fn (ctx: *anyopaque, path: []const u8) void } = null,
     /// Quit the whole session process, not just close the window.
     quit_session: bool = false,
+    /// The saved session this process keeps (session_ui.zig); owned.
+    session_name: ?[]u8 = null,
+    /// Set by Rename Session…; the app renames the files and the socket.
+    session_rename_to: ?[]u8 = null,
     /// Remote-SSH connections (remote_ui.zig).
     remote: remote_ui.State = .{},
     lsp: ?*lsp_mod.Lsp = null,
@@ -438,6 +443,8 @@ pub const Workspace = struct {
         self.buffers.deinit(self.gpa);
         self.mru.deinit(self.gpa);
         self.closed_paths.deinit(self.gpa);
+        if (self.session_name) |n| self.gpa.free(n);
+        if (self.session_rename_to) |n| self.gpa.free(n);
         if (self.project) |p| p.destroy();
         self.sidebar_rows.deinit(self.gpa);
         self.tab_hits.deinit(self.gpa);
@@ -1403,12 +1410,12 @@ pub const Workspace = struct {
                     else => {},
                 };
             },
-            .prompt => if (!org_ui.confirmPrompt(self, tag, q) and !remote_ui.confirmPrompt(self, tag, q) and !panel_ui.confirmPrompt(self, tag, q) and !git_status_ui.confirmPrompt(self, tag, q) and !file_cmd.confirmPrompt(self, tag, q)) self.confirmPrompt(@enumFromInt(tag), q),
+            .prompt => if (!org_ui.confirmPrompt(self, tag, q) and !remote_ui.confirmPrompt(self, tag, q) and !session_ui.confirmPrompt(self, tag, q) and !panel_ui.confirmPrompt(self, tag, q) and !git_status_ui.confirmPrompt(self, tag, q) and !file_cmd.confirmPrompt(self, tag, q)) self.confirmPrompt(@enumFromInt(tag), q),
             .locations => if (item) |it| switch (it.payload) {
                 .location => |loc| lsp_ui.confirmLocation(self, loc.path, loc.line, loc.character, loc.utf8),
                 else => {},
             },
-            .list => if (!lsp_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !org_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !remote_ui.confirmList(self, tag, item, q) and !git_status_ui.confirmList(self, tag, item, q) and !file_cmd.confirmList(self, tag, item)) self.confirmList(@enumFromInt(tag), if (item) |it| it.payload.value else 2),
+            .list => if (!lsp_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !org_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !remote_ui.confirmList(self, tag, item, q) and !session_ui.confirmList(self, tag, item, q) and !git_status_ui.confirmList(self, tag, item, q) and !file_cmd.confirmList(self, tag, item)) self.confirmList(@enumFromInt(tag), if (item) |it| it.payload.value else 2),
         }
     }
 
@@ -1798,7 +1805,7 @@ pub const Workspace = struct {
         }
     }
 
-    fn requestQuit(self: *Workspace) void {
+    pub fn requestQuit(self: *Workspace) void {
         var dirty: usize = 0;
         for (self.tabs.items) |t| if (t.editor.buffer.isDirty()) {
             dirty += 1;
@@ -2255,6 +2262,10 @@ pub const Workspace = struct {
             .remote_connect => remote_ui.promptConnect(self),
             .remote_open_folder => remote_ui.promptOpenFolder(self),
             .remote_close => remote_ui.closeConnection(self),
+            .session_switch => session_ui.promptSwitch(self),
+            .session_new => session_ui.promptNew(self),
+            .session_rename => session_ui.promptRename(self),
+            .session_delete => session_ui.promptDelete(self),
             .quit_session => {
                 self.quit_session = true;
                 self.requestQuit();

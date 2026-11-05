@@ -38,6 +38,7 @@ const vim_mod = @import("app/vim/vim.zig");
 const theme_manager = @import("app/settings/theme_manager.zig");
 const settings_file = @import("app/settings/settings_file.zig");
 const session = @import("app/session/session.zig");
+const persist = @import("app/session/persist.zig");
 const app_icon = @import("app/app_icon.zig");
 
 const Allocator = std.mem.Allocator;
@@ -82,6 +83,10 @@ pub const App = struct {
     server: ?session.Server = null,
     /// Session daemon: closing the window keeps the process (and its state) alive.
     keep_running: bool = false,
+    /// Writes the session's file as it changes (null: standalone).
+    autosave: ?persist.Autosave = null,
+    /// The quit was decided in the window (after its save prompts).
+    quit_by_user: bool = false,
     window_close_requested: bool = false,
     /// The text field the input method was last enabled for (compared, never dereferenced).
     ime_field: ?*const anyopaque = null,
@@ -98,6 +103,9 @@ pub const App = struct {
         socket_path: ?[:0]const u8 = null,
         keep_running: bool = false,
         backend: ?window_mod.Backend = null,
+        /// Name of the saved session this process keeps and restores.
+        session: ?[]const u8 = null,
+        session_unnamed: bool = false,
     };
 
     pub fn create(gpa: Allocator, io: Io, opts: Options) !*App {
@@ -185,6 +193,7 @@ pub const App = struct {
         if (self.headless) |h| {
             self.workspace.size = .{ .x = @as(f32, @floatFromInt(h.width)) / self.scale, .y = @as(f32, @floatFromInt(h.height)) / self.scale };
         }
+        if (opts.session) |name| self.attachSession(name, opts.session_unnamed);
         if (opts.socket_path) |path| {
             self.server = session.Server.listen(gpa, path) catch |err| blk: {
                 log.warn("session server unavailable: {t}", .{err});
@@ -218,6 +227,7 @@ pub const App = struct {
         while (self.executor.active.load(.acquire) > 0) std.Thread.yield() catch {};
         self.executor.deinit();
         if (self.server) |*s| s.deinit();
+        if (self.autosave) |*a| a.deinit();
         if (self.window) |w| w.destroy();
         if (self.headless) |*h| h.deinit();
         self.poll_fds.deinit(self.gpa);
@@ -276,8 +286,47 @@ pub const App = struct {
         self.workspace.updateTitle();
     }
 
+    /// Restores saved session `name` into the workspace and starts keeping it.
+    fn attachSession(self: *App, name: []const u8, unnamed: bool) void {
+        const attached = persist.attach(self.gpa, self.io, &self.workspace, name, unnamed) orelse return;
+        self.autosave = attached.autosave;
+        self.workspace.session_name = self.gpa.dupe(u8, name) catch null;
+        if (attached.message) |m| {
+            self.workspace.setStatus("{s}", .{m});
+        } else if (attached.notes.restored > 0) {
+            self.workspace.setStatus("Restored session {s}: {d} {s}", .{ name, attached.notes.restored, if (attached.notes.restored == 1) "file" else "files" });
+        }
+    }
+
+    /// Rename Session…: the files, the socket and the autosaver move to the new name.
+    fn renameSession(self: *App) void {
+        const new = self.workspace.session_rename_to orelse return;
+        defer {
+            self.gpa.free(new);
+            self.workspace.session_rename_to = null;
+        }
+        const a = &(self.autosave orelse return);
+        // Flush under the old name first, so there is a file to rename.
+        a.flush(&self.workspace, true);
+        a.store.rename(a.name, new) catch |err| return self.workspace.setStatus("Cannot rename session: {t}", .{err});
+        if (self.server) |*srv| {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            if (session.socketPath(&buf, new)) |p| srv.rename(p) catch |err| log.warn("socket not renamed: {t}", .{err});
+        }
+        a.setName(new) catch {};
+        if (self.workspace.session_name) |old| self.gpa.free(old);
+        self.workspace.session_name = self.gpa.dupe(u8, new) catch null;
+        self.workspace.setStatus("Session renamed to {s}", .{new});
+    }
+
+    /// Writes the session file now, keeping unsaved text unless the user quit.
+    pub fn saveSession(self: *App, keep_unsaved: bool) void {
+        if (self.autosave) |*a| a.flush(&self.workspace, keep_unsaved);
+    }
+
     pub fn closeWindow(self: *App) void {
         const w = self.window orelse return;
+        self.saveSession(true);
         // On Linux the clipboard's text goes with its window: hand what we
         // copied to wl-copy or xclip, which keep it available.
         if (w.ownedClipboard()) |text| {
@@ -398,8 +447,23 @@ pub const App = struct {
                 server.reply(client, std.fmt.bufPrint(&buf, "ok {d}", .{c.getpid()}) catch "ok");
             },
             .quit => {
+                self.saveSession(true);
                 server.reply(client, "ok");
                 self.quit = true;
+            },
+            .save => {
+                self.saveSession(true);
+                server.reply(client, "ok");
+            },
+            .info => {
+                const ws = &self.workspace;
+                var unsaved: usize = 0;
+                for (ws.buffers.items) |b| {
+                    if (b.isDirty() and !b.scratch) unsaved += 1;
+                }
+                var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+                const folder: []const u8 = if (ws.project) |p| p.root else "-";
+                server.reply(client, std.fmt.bufPrint(&buf, "ok {d} {d} {d} {s}", .{ c.getpid(), ws.tabs.items.len, unsaved, folder }) catch "ok");
             },
             .open => {
                 self.openWindow() catch |err| {
@@ -585,6 +649,9 @@ pub const App = struct {
             } else if (self.workspace.nextRedrawIn()) |ms| timeout = @intCast(@max(1, ms));
         }
         if (self.executor.active.load(.monotonic) > 0 and timeout < 0) timeout = 250;
+        if (self.autosave) |*a| if (a.nextDeadlineMs()) |ms| {
+            if (timeout < 0 or timeout > ms) timeout = ms;
+        };
         // Wake up to switch day/night schemes even when idle.
         if (self.themes.isAuto() and (timeout < 0 or timeout > 60_000)) timeout = 60_000;
         return timeout;
@@ -624,6 +691,9 @@ pub const App = struct {
             self.workspace.serviceExtraFds(fds[n_fixed..]);
             self.executor.drain();
             self.workspace.tick();
+            if (self.workspace.session_rename_to != null) self.renameSession();
+            if (self.autosave) |*a| a.tick(&self.workspace);
+            if (persist.terminate.load(.acquire)) self.quit = true;
             self.checkTheme();
 
             if (self.window_close_requested) {
@@ -632,7 +702,12 @@ pub const App = struct {
             }
             if (self.workspace.should_quit) {
                 self.workspace.should_quit = false;
-                if (self.keep_running and !self.workspace.quit_session) self.closeWindow() else self.quit = true;
+                if (self.keep_running and !self.workspace.quit_session) {
+                    self.closeWindow();
+                } else {
+                    self.quit = true;
+                    self.quit_by_user = true;
+                }
             }
             if (self.window == null and !self.keep_running) self.quit = true;
 
@@ -651,6 +726,7 @@ pub const App = struct {
                 }
             }
         }
+        self.saveSession(!self.quit_by_user or persist.terminate.load(.acquire));
     }
 
     /// Renders one frame offscreen and writes it as a PNG.
