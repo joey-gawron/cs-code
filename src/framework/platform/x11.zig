@@ -16,8 +16,8 @@ const Event = platform.Event;
 const log = std.log.scoped(.x11);
 
 pub const Options = struct {
-    title: [:0]const u8 = "jiffy-edit",
-    app_id: [:0]const u8 = "jiffy-edit",
+    title: [:0]const u8 = "cs-zig",
+    app_id: [:0]const u8 = "cs-zig",
     width: i32 = 1280,
     height: i32 = 800,
     icons: []const platform.IconImage = &.{},
@@ -45,7 +45,7 @@ const Atoms = struct {
     INCR: c.Atom = 0,
     @"text/plain;charset=utf-8": c.Atom = 0,
     /// Property our clipboard requests are delivered into.
-    JIFFY_EDIT_SELECTION: c.Atom = 0,
+    CS_ZIG_SELECTION: c.Atom = 0,
 };
 
 const event_mask: c_long = c.KeyPressMask | c.KeyReleaseMask | c.ButtonPressMask | c.ButtonReleaseMask |
@@ -379,8 +379,8 @@ pub const Window = struct {
         if (owner == c.None) return null;
 
         for ([_]c.Atom{ a.UTF8_STRING, c.XA_STRING }) |target| {
-            _ = c.XDeleteProperty(self.display, self.window, a.JIFFY_EDIT_SELECTION);
-            _ = c.XConvertSelection(self.display, a.CLIPBOARD, target, a.JIFFY_EDIT_SELECTION, self.window, self.last_time);
+            _ = c.XDeleteProperty(self.display, self.window, a.CS_ZIG_SELECTION);
+            _ = c.XConvertSelection(self.display, a.CLIPBOARD, target, a.CS_ZIG_SELECTION, self.window, self.last_time);
             var ev: c.XEvent = undefined;
             if (!self.waitForEvent(&ev, .{ .type = c.SelectionNotify, .window = self.window, .atom = a.CLIPBOARD, .target = target }, 1000)) {
                 log.warn("clipboard owner did not respond", .{});
@@ -1052,7 +1052,7 @@ pub const Window = struct {
     /// Reads (and deletes) the converted selection from our property,
     /// following INCR transfers.
     fn readSelection(self: *Window, gpa: Allocator) !?[]u8 {
-        const prop = self.atoms.JIFFY_EDIT_SELECTION;
+        const prop = self.atoms.CS_ZIG_SELECTION;
         var kind: c.Atom = 0;
         const first = self.takeProperty(prop, &kind) orelse return null;
         defer _ = c.XFree(first.ptr);

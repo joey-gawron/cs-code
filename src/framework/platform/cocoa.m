@@ -446,7 +446,7 @@ static void initApp(void) {
     NSApp.delegate = app_delegate;
     NSWindow.allowsAutomaticWindowTabbing = NO;
 
-    NSString *name = @"Jiffy Edit";
+    NSString *name = @"CS Zig";
     NSMenu *bar = [NSMenu new];
     NSMenuItem *app_item = [NSMenuItem new];
     [bar addItem:app_item];
@@ -826,6 +826,15 @@ char *je_take_opened_paths(size_t *len) {
     }
 }
 
+int je_process_cwd(int pid, char *buf, size_t len) {
+    struct proc_vnodepathinfo info;
+    if (proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, sizeof info) != sizeof info) return -1;
+    size_t n = strnlen(info.pvi_cdir.vip_path, sizeof info.pvi_cdir.vip_path);
+    if (n == 0 || n >= len) return -1;
+    memcpy(buf, info.pvi_cdir.vip_path, n + 1);
+    return 0;
+}
+
 const void *je_gl_proc_address(const char *name) {
     static void *lib;
     if (!lib) lib = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY | RTLD_LOCAL);
@@ -855,3 +864,129 @@ void je_headless_context_destroy(void *ctx) {
     CGLReleaseContext(ctx);
 }
 
+// ---- File watching ------------------------------------------------------------------
+
+#include <CoreServices/CoreServices.h>
+#include <sys/stat.h>
+
+struct JeWatcher {
+    FSEventStreamRef stream;
+    dispatch_queue_t queue;
+    int pipe[2];
+    pthread_mutex_t mu;
+    NSMutableData *pending;
+    /// Watched folders as the editor names them, and as FSEvents reports them
+    /// (symlinks resolved: /tmp is /private/tmp).
+    NSArray<NSString *> *dirs;
+    NSArray<NSString *> *real_dirs;
+};
+
+static void watcherCallback(ConstFSEventStreamRef stream, void *info, size_t count, void *paths,
+                            const FSEventStreamEventFlags *flags, const FSEventStreamEventId *ids) {
+    JeWatcher *w = info;
+    NSArray *list = (__bridge NSArray *)paths;
+    NSMutableData *out = [NSMutableData data];
+    for (size_t i = 0; i < count; i++) {
+        if (flags[i] & kFSEventStreamEventFlagItemIsDir) continue;
+        NSString *path = list[i];
+        NSString *parent = path.stringByDeletingLastPathComponent;
+        NSUInteger at = [w->real_dirs indexOfObject:parent];
+        if (at == NSNotFound) continue;
+        NSString *named = [w->dirs[at] stringByAppendingPathComponent:path.lastPathComponent];
+        struct stat st;
+        char kind = stat(path.fileSystemRepresentation, &st) == 0 ? 'c' : 'd';
+        [out appendBytes:&kind length:1];
+        const char *bytes = named.fileSystemRepresentation;
+        [out appendBytes:bytes length:strlen(bytes) + 1];
+    }
+    if (out.length == 0) return;
+    pthread_mutex_lock(&w->mu);
+    [w->pending appendData:out];
+    pthread_mutex_unlock(&w->mu);
+    char byte = 1;
+    (void)!write(w->pipe[1], &byte, 1);
+}
+
+JeWatcher *je_watcher_create(void) {
+    JeWatcher *w = calloc(1, sizeof(JeWatcher));
+    if (pipe(w->pipe) != 0) {
+        free(w);
+        return NULL;
+    }
+    for (int i = 0; i < 2; i++) {
+        fcntl(w->pipe[i], F_SETFD, FD_CLOEXEC);
+        fcntl(w->pipe[i], F_SETFL, O_NONBLOCK);
+    }
+    pthread_mutex_init(&w->mu, NULL);
+    w->pending = [NSMutableData data];
+    w->queue = dispatch_queue_create("cs-zig.watcher", DISPATCH_QUEUE_SERIAL);
+    w->dirs = @[];
+    w->real_dirs = @[];
+    return w;
+}
+
+static void stopStream(JeWatcher *w) {
+    if (!w->stream) return;
+    FSEventStreamStop(w->stream);
+    FSEventStreamInvalidate(w->stream);
+    FSEventStreamRelease(w->stream);
+    w->stream = NULL;
+    // Wait for a callback in flight.
+    dispatch_sync(w->queue, ^{});
+}
+
+void je_watcher_destroy(JeWatcher *w) {
+    stopStream(w);
+    close(w->pipe[0]);
+    close(w->pipe[1]);
+    pthread_mutex_destroy(&w->mu);
+    w->pending = nil;
+    w->dirs = nil;
+    w->real_dirs = nil;
+    w->queue = nil;
+    free(w);
+}
+
+int je_watcher_fd(JeWatcher *w) { return w->pipe[0]; }
+
+void je_watcher_set_dirs(JeWatcher *w, const char *const *dirs, const size_t *lens, size_t count) {
+    @autoreleasepool {
+        stopStream(w);
+        NSMutableArray *named = [NSMutableArray array];
+        NSMutableArray *real = [NSMutableArray array];
+        for (size_t i = 0; i < count; i++) {
+            NSString *dir = [[NSString alloc] initWithBytes:dirs[i] length:lens[i] encoding:NSUTF8StringEncoding];
+            if (!dir) continue;
+            char resolved[PATH_MAX];
+            if (!realpath(dir.fileSystemRepresentation, resolved)) continue;
+            [named addObject:dir];
+            [real addObject:[NSString stringWithUTF8String:resolved]];
+        }
+        w->dirs = named;
+        w->real_dirs = real;
+        if (real.count == 0) return;
+        FSEventStreamContext ctx = {.info = w};
+        FSEventStreamCreateFlags flags = kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer |
+                                         kFSEventStreamCreateFlagUseCFTypes;
+        w->stream = FSEventStreamCreate(NULL, watcherCallback, &ctx, (__bridge CFArrayRef)real,
+                                        kFSEventStreamEventIdSinceNow, 0.05, flags);
+        if (!w->stream) return;
+        FSEventStreamSetDispatchQueue(w->stream, w->queue);
+        FSEventStreamStart(w->stream);
+    }
+}
+
+char *je_watcher_read(JeWatcher *w, size_t *len) {
+    char drain[64];
+    while (read(w->pipe[0], drain, sizeof drain) > 0) {}
+    pthread_mutex_lock(&w->mu);
+    char *out = NULL;
+    *len = w->pending.length;
+    if (*len > 0) {
+        out = malloc(*len);
+        if (out) memcpy(out, w->pending.bytes, *len);
+        w->pending.length = 0;
+    }
+    pthread_mutex_unlock(&w->mu);
+    return out;
+}

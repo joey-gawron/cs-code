@@ -10,7 +10,7 @@ const Allocator = std.mem.Allocator;
 const Event = platform.Event;
 
 pub const Options = struct {
-    title: [:0]const u8 = "jiffy-edit",
+    title: [:0]const u8 = "cs-zig",
     width: i32 = 1280,
     height: i32 = 800,
     /// The largest one becomes the Dock icon.
@@ -100,7 +100,7 @@ pub const Window = struct {
     }
 
     fn key(ev: *const c.JeEvent) ?platform.Key {
-        if (ev.named != c.JE_KEY_NONE) return .{ .named = @fromBackingInt(@intCast(ev.named - 1)) };
+        if (ev.named != c.JE_KEY_NONE) return .{ .named = @enumFromInt(ev.named - 1) };
         if (ev.codepoint == 0 or ev.codepoint > std.math.maxInt(u21)) return null;
         return .{ .char = @intCast(ev.codepoint) };
     }
@@ -185,7 +185,7 @@ pub const Window = struct {
     }
 
     pub fn setCursor(self: *Window, shape: platform.CursorShape) void {
-        c.je_set_cursor(self.handle, @backingInt(shape));
+        c.je_set_cursor(self.handle, @intFromEnum(shape));
     }
 
     pub fn toggleFullscreen(self: *Window) void {

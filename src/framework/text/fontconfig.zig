@@ -38,7 +38,7 @@ pub fn deinit() void {
 
 /// macOS has no fontconfig setup of its own: point it at the system's font
 /// folders and give the generic families Mac fonts.
-const mac_config =
+const mac_config_format =
     \\<?xml version="1.0"?>
     \\<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
     \\<fontconfig>
@@ -46,6 +46,8 @@ const mac_config =
     \\  <dir>/Library/Fonts</dir>
     \\  <dir>~/Library/Fonts</dir>
     \\  <cachedir>~/Library/Caches/cs-zig/fontconfig</cachedir>
+    \\  <dir>{s}/../share/cs-zig/fonts</dir>
+    \\  <alias><family>Fira Code</family><default><family>monospace</family></default></alias>
     \\  <alias><family>monospace</family><prefer><family>Menlo</family><family>SF Mono</family><family>Monaco</family></prefer></alias>
     \\  <alias><family>sans-serif</family><prefer><family>SF Pro</family><family>Helvetica Neue</family><family>Helvetica</family></prefer></alias>
     \\  <alias><family>serif</family><prefer><family>New York</family><family>Times</family></prefer></alias>
@@ -58,7 +60,17 @@ fn installMacConfig() !void {
     const cfg = c.FcConfigCreate() orelse return error.FontconfigInitFailed;
     // FcConfigSetCurrent takes its own reference; FcFini frees it.
     defer c.FcConfigDestroy(cfg);
-    if (c.FcConfigParseAndLoadFromMemory(cfg, mac_config, c.FcTrue) == c.FcFalse) return error.FontconfigInitFailed;
+    // The bundled fonts (Fira Code) are installed beside the binary: <exe dir>/../share/cs-zig/fonts.
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var exe_len: u32 = exe_buf.len;
+    var exe_dir: []const u8 = ".";
+    if (std.c._NSGetExecutablePath(&exe_buf, &exe_len) == 0) {
+        const exe = std.mem.sliceTo(&exe_buf, 0);
+        exe_dir = std.fs.path.dirname(exe) orelse ".";
+    }
+    var config_buf: [4096]u8 = undefined;
+    const config = std.fmt.bufPrintSentinel(&config_buf, mac_config_format, .{exe_dir}, 0) catch return error.FontconfigInitFailed;
+    if (c.FcConfigParseAndLoadFromMemory(cfg, config.ptr, c.FcTrue) == c.FcFalse) return error.FontconfigInitFailed;
     if (c.FcConfigBuildFonts(cfg) == c.FcFalse) return error.FontconfigInitFailed;
     if (c.FcConfigSetCurrent(cfg) == c.FcFalse) return error.FontconfigInitFailed;
 }

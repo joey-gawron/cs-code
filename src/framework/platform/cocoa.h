@@ -1,6 +1,6 @@
 // C interface of the Cocoa backend (cocoa.m), used from cocoa.zig.
-#ifndef JIFFY_EDIT_COCOA_H
-#define JIFFY_EDIT_COCOA_H
+#ifndef CS_ZIG_COCOA_H
+#define CS_ZIG_COCOA_H
 
 #include <stddef.h>
 #include <poll.h>
@@ -100,11 +100,25 @@ char *je_get_clipboard(size_t *len);
 /// malloc'd (free with free()), or NULL when there are none.
 char *je_take_opened_paths(size_t *len);
 
+/// A process's current directory into buf (NUL-terminated); 0 on success.
+int je_process_cwd(int pid, char *buf, size_t len);
+
 /// OpenGL entry points for gl.load.
 const void *je_gl_proc_address(const char *name);
 
 /// An offscreen OpenGL 3.3+ core context, made current (headless rendering).
 void *je_headless_context_create(void);
 void je_headless_context_destroy(void *ctx);
+
+/// File watching with FSEvents: changes to files directly inside the watched
+/// folders. `fd` becomes readable when there are changes to read.
+typedef struct JeWatcher JeWatcher;
+JeWatcher *je_watcher_create(void);
+void je_watcher_destroy(JeWatcher *w);
+int je_watcher_fd(JeWatcher *w);
+void je_watcher_set_dirs(JeWatcher *w, const char *const *dirs, const size_t *lens, size_t count);
+/// Changed paths since the last call, malloc'd (free with free()): records of
+/// one byte ('c' changed, 'd' deleted), the path, and a NUL. NULL if none.
+char *je_watcher_read(JeWatcher *w, size_t *len);
 
 #endif

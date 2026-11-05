@@ -9,7 +9,6 @@
 // The Cocoa window backend's C interface (cocoa.m).
 #include "cocoa.h"
 #else
-// Linux backends (not built by this spike's build.zig yet).
 #include <wayland-client.h>
 #include <wayland-egl.h>
 #include "xdg-shell-client-protocol.h"
@@ -19,8 +18,14 @@
 #include "cursor-shape-v1-client-protocol.h"
 #include "text-input-unstable-v3-client-protocol.h"
 #include "primary-selection-unstable-v1-client-protocol.h"
+// Optional: build.zig defines this when wayland-protocols has the protocol.
+#ifdef CS_ZIG_TOPLEVEL_ICON
+#include "xdg-toplevel-icon-v1-client-protocol.h"
+#endif
+
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-compose.h>
 #endif
@@ -33,9 +38,26 @@
 #include <hb-ft.h>
 #include <fontconfig/fontconfig.h>
 
+#include <tree_sitter/api.h>
+
 #include <poll.h>
+#ifndef __APPLE__
+#include <sys/eventfd.h>
+#include <sys/timerfd.h>
+#include <sys/inotify.h>
+#endif
 #include <unistd.h>
-#include <stdlib.h>
+#include <fcntl.h>
+#include <dlfcn.h>
+#include <locale.h>
 #include <time.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <signal.h>
-#include <sys/resource.h>
+
+// Built-in terminal: pseudo-terminals and libvterm.
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <termios.h>
+#include <vterm.h>
