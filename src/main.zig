@@ -5,6 +5,9 @@ const platform = @import("framework/platform/platform.zig");
 const window_mod = @import("framework/platform/window.zig");
 const keymap = @import("app/settings/keymap.zig");
 const session = @import("app/session/session.zig");
+const session_cli = @import("app/session/cli.zig");
+const session_store = @import("app/session/store.zig");
+const persist = @import("app/session/persist.zig");
 const askpass = @import("model/remote/askpass.zig");
 const login_path = @import("framework/platform/login_path.zig");
 
@@ -21,7 +24,12 @@ const usage =
     \\                      later `cs-zig` calls connect to it instantly and
     \\                      language servers stay warm
     \\  --kill-server       Stop the running session
-    \\  --session NAME      Use a named session (default: "default")
+    \\  -s, --session NAME  Use a named session, restoring its files, layout and
+    \\                      unsaved text (default: "default"); created if new
+    \\  -n, --new-window    Open a new unnamed session (window-1, window-2, ...)
+    \\  --list-sessions     Same as `sessions list`
+    \\  sessions COMMAND    list, info, attach, save, kill, rename, delete NAME
+    \\                      (`cs-zig sessions help`)
     \\  --standalone        Don't connect to or start a session
     \\  --x11 / --wayland   Force a window system (Linux)
     \\  --vim               Start with vim mode enabled
@@ -87,13 +95,25 @@ pub fn main(init: std.process.Init) !void {
     var standalone = false;
     var remote_host: ?[]const u8 = null;
     var session_name: []const u8 = "default";
+    var session_given = false;
+    var new_window = false;
     var backend: ?window_mod.Backend = null;
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
     var steps: std.ArrayList(Step) = .empty;
     defer steps.deinit(gpa);
 
-    var i: usize = 1;
+    if (args.len > 1 and std.mem.eql(u8, args[1], "sessions")) {
+        // `sessions attach NAME` is `--session NAME`; the rest is session_cli's.
+        if (args.len > 3 and std.mem.eql(u8, args[2], "attach")) {
+            session_name = args[3];
+            session_given = true;
+        } else {
+            const rest: []const []const u8 = @ptrCast(args[2..]);
+            std.process.exit(session_cli.run(gpa, io, rest));
+        }
+    }
+    var i: usize = if (session_given) 4 else 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         const next = struct {
@@ -141,8 +161,13 @@ pub fn main(init: std.process.Init) !void {
             standalone = true;
         } else if (eql(u8, arg, "--remote")) {
             remote_host = try next(args, &i);
-        } else if (eql(u8, arg, "--session")) {
+        } else if (eql(u8, arg, "--session") or eql(u8, arg, "-s")) {
             session_name = try next(args, &i);
+            session_given = true;
+        } else if (eql(u8, arg, "-n") or eql(u8, arg, "--new-window")) {
+            new_window = true;
+        } else if (eql(u8, arg, "--list-sessions")) {
+            std.process.exit(session_cli.run(gpa, io, &.{"list"}));
         } else if (eql(u8, arg, "--x11") or eql(u8, arg, "--wayland")) {
             // Only Linux has a choice of window system.
             backend = std.meta.stringToEnum(window_mod.Backend, arg[2..]);
@@ -169,12 +194,19 @@ pub fn main(init: std.process.Init) !void {
     const ignore: std.posix.Sigaction = .{ .handler = .{ .handler = std.posix.SIG.IGN }, .mask = std.posix.sigemptyset(), .flags = 0 };
     std.posix.sigaction(std.posix.SIG.PIPE, &ignore, null);
 
-    if (headless) |size| return runHeadless(gpa, io, size, scale, enable_lsp, vim, paths.items, steps.items, screenshot);
+    if (!session_store.validName(session_name)) {
+        std.debug.print("cs-zig: \"{s}\" is not a session name (letters, digits, . _ -)\n", .{session_name});
+        return error.InvalidArgument;
+    }
+    if (headless) |size| return runHeadless(gpa, io, size, scale, enable_lsp, vim, paths.items, steps.items, screenshot, if (session_given and !standalone) session_name else null);
 
     var cwd_buf: [std.fs.max_path_bytes]u8 = @splat(0); // See Workspace.realPath.
     const cwd = cwd_buf[0 .. std.process.currentPath(io, &cwd_buf) catch 0];
+    var name_buf: [32]u8 = undefined;
+    if (new_window) session_name = freshWindowName(gpa, io, &name_buf);
     var sock_buf: [std.fs.max_path_bytes]u8 = undefined;
     const sock = session.socketPath(&sock_buf, session_name);
+    const persisted: ?[]const u8 = if (standalone) null else session_name;
 
     if (kill_server) {
         const path = sock orelse return error.NoSocketPath;
@@ -192,7 +224,8 @@ pub fn main(init: std.process.Init) !void {
     if (daemon_child) {
         // Our own session, detached from the launching terminal.
         _ = c.setsid();
-        const app = try App.create(gpa, io, .{ .open_window = false, .socket_path = sock, .keep_running = true, .enable_lsp = enable_lsp, .backend = backend });
+        persist.installSignalHandlers();
+        const app = try App.create(gpa, io, .{ .open_window = false, .socket_path = sock, .keep_running = true, .enable_lsp = enable_lsp, .backend = backend, .session = persisted, .session_unnamed = new_window });
         defer app.destroy();
         try app.run();
         return;
@@ -205,10 +238,13 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("cs-zig: the running session didn't answer; starting a new window\n", .{});
     };
 
+    persist.installSignalHandlers();
     const app = try App.create(gpa, io, .{
         .socket_path = if (standalone) null else sock,
         .enable_lsp = enable_lsp,
         .backend = backend,
+        .session = persisted,
+        .session_unnamed = new_window,
     });
     defer app.destroy();
     const ws = &app.workspace;
@@ -216,6 +252,24 @@ pub fn main(init: std.process.Init) !void {
     for (paths.items) |p| _ = ws.openArgument(cwd, p) catch |err| std.log.err("cannot open {s}: {t}", .{ p, err });
     try ws.openStartTabs(paths.items.len > 0);
     try app.run();
+}
+
+/// `window-N` for the first N with no saved and no running session of that name.
+fn freshWindowName(gpa: std.mem.Allocator, io: std.Io, buf: []u8) []const u8 {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const running = session.running(gpa, io, arena.allocator());
+    var store = session_store.Store.open(gpa, io);
+    defer if (store) |*st| st.deinit();
+    var n: u32 = 1;
+    while (true) : (n += 1) {
+        const name = std.fmt.bufPrint(buf, "window-{d}", .{n}) catch return "window-0";
+        if (store) |*st| if (st.exists(name)) continue;
+        const taken = for (running) |r| {
+            if (std.mem.eql(u8, r.name, name)) break true;
+        } else false;
+        if (!taken) return name;
+    }
 }
 
 /// Starts `cs-zig --daemon-child` detached and waits until its socket answers.
@@ -245,8 +299,8 @@ fn startDaemon(gpa: std.mem.Allocator, io: std.Io, name: []const u8, sock: [:0]c
     return error.DaemonDidNotStart;
 }
 
-fn runHeadless(gpa: std.mem.Allocator, io: std.Io, size: [2]u32, scale: f32, enable_lsp: bool, vim: bool, paths: []const []const u8, steps: []const Step, screenshot: ?[]const u8) !void {
-    const app = try App.create(gpa, io, .{ .headless_size = size, .scale = scale, .enable_lsp = enable_lsp });
+fn runHeadless(gpa: std.mem.Allocator, io: std.Io, size: [2]u32, scale: f32, enable_lsp: bool, vim: bool, paths: []const []const u8, steps: []const Step, screenshot: ?[]const u8, session_name: ?[]const u8) !void {
+    const app = try App.create(gpa, io, .{ .headless_size = size, .scale = scale, .enable_lsp = enable_lsp, .session = session_name });
     defer app.destroy();
     const ws = &app.workspace;
     if (vim) ws.perform(.toggle_vim_mode);
@@ -310,6 +364,7 @@ fn runHeadless(gpa: std.mem.Allocator, io: std.Io, size: [2]u32, scale: f32, ena
                     _ = std.c.poll(@ptrCast(fds.items.ptr), @intCast(fds.items.len), 10);
                     ws.serviceExtraFds(fds.items);
                     ws.tick();
+                    if (app.autosave) |*a| a.tick(ws);
                 }
             },
             .action => |name| {
@@ -324,6 +379,8 @@ fn runHeadless(gpa: std.mem.Allocator, io: std.Io, size: [2]u32, scale: f32, ena
     }
     settleGrammars(app);
     if (screenshot) |path| try app.screenshot(path);
+    // Like the event loop's end: a quit in the steps was the user's, so unsaved text is dropped.
+    app.saveSession(!ws.should_quit);
 }
 
 /// Grammars load in the background, and highlighting with one can ask for
@@ -363,6 +420,9 @@ fn keyEvent(spec: []const u8) !platform.KeyEvent {
 test {
     _ = @import("model/text/selection.zig");
     _ = @import("model/lsp/signature.zig");
+    _ = @import("app/session/store.zig");
+    _ = @import("app/session/snapshot.zig");
+    _ = @import("app/session/persist.zig");
     _ = @import("framework/util/regex.zig");
     _ = @import("framework/util/png.zig");
     _ = @import("framework/platform/login_path.zig");

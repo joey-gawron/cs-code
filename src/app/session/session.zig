@@ -5,8 +5,10 @@
 //!
 //! Protocol: one JSON object per line from the client,
 //!   {"cmd":"open","cwd":"/dir","paths":["a.zig"],"wait":false}
-//!   {"cmd":"quit"} / {"cmd":"ping"}
-//! answered with "ok" lines; `wait` clients get "done" when their files close.
+//!   {"cmd":"quit"} / {"cmd":"ping"} / {"cmd":"save"} / {"cmd":"info"}
+//! answered with "ok" lines ("ok <pid>" to ping, "ok <pid> <tabs> <unsaved>
+//! <folder>" to info); `wait` clients get "done" when their files close.
+//! Saved sessions on disk are store.zig's; what keeps them current is persist.zig.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -16,7 +18,7 @@ const platform = @import("../../framework/platform/platform.zig");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.session);
 
-pub const Command = enum { open, quit, ping };
+pub const Command = enum { open, quit, ping, save, info };
 
 pub const Request = struct {
     cmd: Command = .open,
@@ -25,17 +27,34 @@ pub const Request = struct {
     wait: bool = false,
 };
 
-/// Socket path for a named session: $XDG_RUNTIME_DIR/cs-zig/<name>.sock,
-/// or /tmp/cs-zig-<uid>/<name>.sock.
-pub fn socketPath(buf: []u8, name: []const u8) ?[:0]const u8 {
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+/// Where the sockets are: `$CS_ZIG_HOME/run` when set (tests and portable
+/// installs never meet the user's own sessions), else
+/// $XDG_RUNTIME_DIR/cs-zig, else /tmp/cs-zig-<uid>. Created, mode 0700.
+pub fn socketDir(buf: []u8) ?[:0]const u8 {
     const dir = blk: {
+        if (std.c.getenv("CS_ZIG_HOME")) |x| if (x[0] != 0) {
+            break :blk std.fmt.bufPrintSentinel(buf, "{s}/run", .{std.mem.span(x)}, 0) catch return null;
+        };
         if (std.c.getenv("XDG_RUNTIME_DIR")) |x| {
-            break :blk std.fmt.bufPrintSentinel(&dir_buf, "{s}/cs-zig", .{std.mem.span(x)}, 0) catch return null;
+            break :blk std.fmt.bufPrintSentinel(buf, "{s}/cs-zig", .{std.mem.span(x)}, 0) catch return null;
         }
-        break :blk std.fmt.bufPrintSentinel(&dir_buf, "/tmp/cs-zig-{d}", .{c.getuid()}, 0) catch return null;
+        break :blk std.fmt.bufPrintSentinel(buf, "/tmp/cs-zig-{d}", .{c.getuid()}, 0) catch return null;
+    };
+    // A fresh CS_ZIG_HOME has no parent for `run` yet.
+    if (std.mem.lastIndexOfScalar(u8, dir, '/')) |i| if (i > 0) {
+        var parent: [std.fs.max_path_bytes]u8 = undefined;
+        @memcpy(parent[0..i], dir[0..i]);
+        parent[i] = 0;
+        _ = c.mkdir(@ptrCast(&parent), 0o700);
     };
     _ = c.mkdir(dir.ptr, 0o700);
+    return dir;
+}
+
+/// Socket path for a named session: `<socketDir>/<name>.sock`.
+pub fn socketPath(buf: []u8, name: []const u8) ?[:0]const u8 {
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = socketDir(&dir_buf) orelse return null;
     return std.fmt.bufPrintSentinel(buf, "{s}/{s}.sock", .{ dir, name }, 0) catch null;
 }
 
@@ -121,6 +140,51 @@ pub fn sendRequest(gpa: Allocator, fd: i32, req: Request) bool {
     }
 }
 
+/// Sends `req` and returns the first reply line (in `buf`), for the verbs
+/// that answer with data.
+pub fn requestLine(gpa: Allocator, fd: i32, req: Request, buf: []u8) ?[]const u8 {
+    const json = std.json.Stringify.valueAlloc(gpa, req, .{}) catch return null;
+    defer gpa.free(json);
+    if (!writeAll(fd, json) or !writeAll(fd, "\n")) return null;
+    var have: usize = 0;
+    while (have < buf.len) {
+        const n = c.read(fd, buf[have..].ptr, buf.len - have);
+        if (n <= 0) return null;
+        have += @intCast(n);
+        if (std.mem.indexOfScalar(u8, buf[0..have], '\n')) |nl| return buf[0..nl];
+    }
+    return null;
+}
+
+pub const Running = struct { name: []const u8, pid: i32 };
+
+/// The sessions with a live process, found through their sockets. Sockets
+/// nobody answers on are removed. Strings live in `arena`.
+pub fn running(gpa: Allocator, io: std.Io, arena: Allocator) []Running {
+    var out: std.ArrayList(Running) = .empty;
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_path = socketDir(&dir_buf) orelse return out.items;
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return out.items;
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (!std.mem.endsWith(u8, entry.name, ".sock")) continue;
+        const name = entry.name[0 .. entry.name.len - ".sock".len];
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ dir_path, entry.name }, 0) catch continue;
+        const fd = connect(path) orelse {
+            _ = c.unlink(path.ptr);
+            continue;
+        };
+        defer _ = c.close(fd);
+        var line: [64]u8 = undefined;
+        const reply = requestLine(gpa, fd, .{ .cmd = .ping }, &line) orelse continue;
+        const pid = if (std.mem.startsWith(u8, reply, "ok ")) std.fmt.parseInt(i32, reply[3..], 10) catch 0 else 0;
+        out.append(arena, .{ .name = arena.dupe(u8, name) catch continue, .pid = pid }) catch {};
+    }
+    return out.items;
+}
+
 pub const Client = struct {
     fd: i32,
     buf: std.ArrayList(u8) = .empty,
@@ -164,6 +228,14 @@ pub const Server = struct {
         _ = c.close(self.listen_fd);
         _ = c.unlink(self.path.ptr);
         self.gpa.free(self.path);
+    }
+
+    /// The session was renamed: its socket follows, so `--session NEW` finds it.
+    pub fn rename(self: *Server, new_path: [:0]const u8) !void {
+        if (std.c.rename(self.path.ptr, new_path.ptr) != 0) return error.RenameFailed;
+        const copy = try self.gpa.dupeSentinel(u8, new_path, 0);
+        self.gpa.free(self.path);
+        self.path = copy;
     }
 
     fn freeClient(self: *Server, cl: *Client) void {
