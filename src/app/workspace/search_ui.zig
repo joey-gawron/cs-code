@@ -61,6 +61,8 @@ pub const State = struct {
     text: []u8 = &.{},
     ranges: [][2]usize = &.{},
     sel: ?Sel = null,
+    /// Which hit of the selected line F4 is on.
+    hit: u32 = 0,
     scroll_y: f32 = 0,
     /// From the last paint.
     rect: Rect = .{},
@@ -411,7 +413,7 @@ fn paintPreview(ws: *Workspace, ctx: *const ui.Ctx, row: Rect, px: f32, m: searc
 // ---- Opening ------------------------------------------------------------------------
 
 /// Opens the file of `sel` at its match (a preview tab unless `keep`).
-fn open(ws: *Workspace, sel: Sel, keep: bool) void {
+fn open(ws: *Workspace, sel: Sel, hit: u32, keep: bool) void {
     const st = &ws.panel.search;
     const t = st.tree orelse return;
     const file = t.files[sel.file];
@@ -425,7 +427,7 @@ fn open(ws: *Workspace, sel: Sel, keep: bool) void {
         const row = @min(m.line -| 1, buf.lineCount() - 1);
         const ls = buf.lineStart(row);
         const le = buf.lineEnd(row);
-        const first: [2]u32 = if (m.ranges.len > 0) m.ranges[0] else .{ 0, 0 };
+        const first: [2]u32 = if (hit < m.ranges.len) m.ranges[hit] else .{ 0, 0 };
         const a = @min(ls + m.preview_col + first[0], le);
         const b = @min(ls + m.preview_col + first[1], le);
         ed.setSingleSelection(.range(a, b));
@@ -458,6 +460,7 @@ pub fn click(ws: *Workspace, m: platform.MouseEvent) void {
     for (st.rows.items) |h| {
         if (!h.rect.contains(m.pos.x, m.pos.y)) continue;
         st.sel = h.sel;
+        st.hit = 0;
         if (m.button != .left) return;
         if (h.dismiss.contains(m.pos.x, m.pos.y)) return dismiss(ws, h.sel);
         if (h.replace.contains(m.pos.x, m.pos.y)) return replaceFile(ws, h.sel.file);
@@ -465,7 +468,7 @@ pub fn click(ws: *Workspace, m: platform.MouseEvent) void {
             t.files[h.sel.file].collapsed = !t.files[h.sel.file].collapsed;
             return;
         }
-        open(ws, h.sel, m.click_count >= 2);
+        open(ws, h.sel, 0, m.click_count >= 2);
         return;
     }
 }
@@ -484,6 +487,7 @@ pub fn key(ws: *Workspace, k: platform.KeyEvent) bool {
     const n = rowCount(&t);
     const cur = st.sel orelse Sel{ .file = 0 };
     const flat = flatIndex(&t, cur);
+    st.hit = 0;
     switch (k.key.named) {
         .down => if (flat + 1 < n) {
             st.sel = selAt(&t, flat + 1);
@@ -508,7 +512,7 @@ pub fn key(ws: *Workspace, k: platform.KeyEvent) bool {
         .enter => {
             if (cur.match == null) {
                 t.files[cur.file].collapsed = !t.files[cur.file].collapsed;
-            } else open(ws, cur, true);
+            } else open(ws, cur, 0, true);
         },
         .delete, .backspace => dismiss(ws, cur),
         else => return false,
@@ -517,58 +521,58 @@ pub fn key(ws: *Workspace, k: platform.KeyEvent) bool {
     return true;
 }
 
-/// F4 / Shift+F4: the next or previous match, expanding a collapsed file.
-/// Returns false when there are no results to step through.
+/// The position of hit `hit` of line `sel` among all hits, in tree order.
+fn ordinalOf(t: *const search_tree.Tree, sel: Sel, hit: u32) usize {
+    var n: usize = 0;
+    for (t.files, 0..) |f, fi| {
+        for (f.matches, 0..) |m, mi| {
+            if (fi == sel.file and sel.match != null and mi == sel.match.?) return n + hit;
+            n += m.ranges.len;
+        }
+    }
+    return n;
+}
+
+fn fromOrdinal(t: *const search_tree.Tree, ordinal: usize) ?struct { sel: Sel, hit: u32 } {
+    var n: usize = 0;
+    for (t.files, 0..) |f, fi| {
+        for (f.matches, 0..) |m, mi| {
+            if (ordinal < n + m.ranges.len) return .{ .sel = .{ .file = @intCast(fi), .match = @intCast(mi) }, .hit = @intCast(ordinal - n) };
+            n += m.ranges.len;
+        }
+    }
+    return null;
+}
+
+/// F4 / Shift+F4: the next or previous hit, across files and wrapping
+/// around, expanding a collapsed file. Returns false when there are no
+/// results to step through.
 pub fn step(ws: *Workspace, forward: bool) bool {
     const st = &ws.panel.search;
-    var t = st.tree orelse return false;
-    if (t.lines == 0) return false;
-    var f: usize = 0;
-    var m: usize = 0;
-    if (st.sel) |s| {
-        f = s.file;
-        m = if (s.match) |mi| (if (forward) mi + 1 else mi) else 0;
-        if (s.match == null and !forward) m = 0;
-    }
-    // Walk to the neighbouring match, across files and wrapping around.
-    var tries: usize = 0;
-    var cur: ?Sel = null;
-    if (forward) {
-        while (tries <= t.files.len) : (tries += 1) {
-            if (m < t.files[f].matches.len) {
-                cur = .{ .file = @intCast(f), .match = @intCast(m) };
-                break;
-            }
-            f = (f + 1) % t.files.len;
-            m = 0;
-        }
-    } else {
-        var mi: isize = @as(isize, @intCast(m)) - 1;
-        if (st.sel) |s| if (s.match == null) {
-            f = if (f == 0) t.files.len - 1 else f - 1;
-            mi = @as(isize, @intCast(t.files[f].matches.len)) - 1;
-        };
-        while (tries <= t.files.len) : (tries += 1) {
-            if (mi >= 0) {
-                cur = .{ .file = @intCast(f), .match = @intCast(mi) };
-                break;
-            }
-            f = if (f == 0) t.files.len - 1 else f - 1;
-            mi = @as(isize, @intCast(t.files[f].matches.len)) - 1;
-        }
-    }
-    const sel = cur orelse return false;
-    t.files[sel.file].collapsed = false;
-    st.tree = t;
-    st.sel = sel;
+    const t = st.tree orelse return false;
+    if (t.hits == 0) return false;
+    // From a file row (or nothing selected) the first (last) hit is next.
+    const target: usize = if (st.sel) |s| blk: {
+        if (s.match == null) break :blk if (forward) ordinalOfFile(&t, s.file) else (ordinalOfFile(&t, s.file) + t.hits - 1) % t.hits;
+        const cur = ordinalOf(&t, s, st.hit);
+        break :blk if (forward) (cur + 1) % t.hits else (cur + t.hits - 1) % t.hits;
+    } else if (forward) 0 else t.hits - 1;
+    const next = fromOrdinal(&t, target) orelse return false;
+    t.files[next.sel.file].collapsed = false;
+    st.sel = next.sel;
+    st.hit = next.hit;
     ensureVisible(st);
-    open(ws, sel, false);
+    open(ws, next.sel, next.hit, false);
     var buf: [64]u8 = undefined;
-    var index: usize = 0;
-    for (t.files[0..sel.file]) |file| index += file.matches.len;
-    index += sel.match.? + 1;
-    ws.setStatus("{s}", .{std.fmt.bufPrint(&buf, "Result {d} of {d}", .{ index, t.lines }) catch ""});
+    ws.setStatus("{s}", .{std.fmt.bufPrint(&buf, "Result {d} of {d}", .{ target + 1, t.hits }) catch ""});
     return true;
+}
+
+/// The ordinal of the first hit of file `file`.
+fn ordinalOfFile(t: *const search_tree.Tree, file: u32) usize {
+    var n: usize = 0;
+    for (t.files[0..file]) |f| n += f.hits;
+    return n;
 }
 
 pub fn runAction(ws: *Workspace, a: Action) void {

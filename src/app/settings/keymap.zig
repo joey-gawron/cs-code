@@ -186,6 +186,7 @@ pub const Action = enum {
 
     // Find in files, and the project.
     show_find_in_files,
+    show_replace_in_files,
     next_result,
     prev_result,
     search_directory,
@@ -602,6 +603,7 @@ const defaults = [_]DefaultBinding{
     .{ "ctrl+k up", .focus_group_up, .global },
     .{ "ctrl+k down", .focus_group_down, .global },
     .{ "ctrl+shift+f", .show_find_in_files, .global },
+    .{ "ctrl+shift+h", .show_replace_in_files, .global },
     .{ "f4", .next_result, .global },
     .{ "shift+f4", .prev_result, .global },
 

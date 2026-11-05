@@ -2173,6 +2173,13 @@ pub const Workspace = struct {
             .goto_word => self.openGotoAnything("#"),
             .show_find => self.showFind(false, false),
             .show_find_in_files => self.showFindInFiles(),
+            .show_replace_in_files => {
+                self.showFindInFiles();
+                if (self.find) |f| {
+                    f.focus_where = false;
+                    f.focus_replace = true;
+                }
+            },
             .search_directory => self.showFindIn(self.activeFolder() orelse "<open folders>"),
             .project_todos => self.findTodos(),
             .rescan_project => if (self.project) |p| {
