@@ -22,6 +22,7 @@ const vfs = @import("../../model/remote/vfs.zig");
 const rpath = @import("../../model/remote/path.zig");
 const ui = @import("../../framework/ui/ui.zig");
 const regex_mod = @import("../../framework/util/regex.zig");
+const pattern_mod = @import("pattern.zig");
 
 const Allocator = std.mem.Allocator;
 const Editor = editor_mod.Editor;
@@ -94,6 +95,8 @@ pub const Vim = struct {
     last_find: ?struct { char: u21, forward: bool, till: bool } = null,
     last_search: ?[]u8 = null,
     last_search_forward: bool = true,
+    ignore_case: bool = false,
+    smart_case: bool = false,
     marks: [26]?usize = @splat(null),
 
     // Dot repeat: keys of the command in progress / the last change.
@@ -500,6 +503,15 @@ pub const Vim = struct {
                         self.prefix = .around;
                         return false;
                     },
+                    // A search is a motion: the operator waits for Enter.
+                    '/', '?' => {
+                        self.openCmdline(ws, ed, @intCast(ch));
+                        return false;
+                    },
+                    'n', 'N' => {
+                        self.searchNext(ed, ch == 'n', self.totalCount());
+                        return true;
+                    },
                     else => {},
                 },
                 .named => |n| if (n == .escape) return true,
@@ -688,7 +700,7 @@ pub const Vim = struct {
                     defer self.gpa.free(ranges);
                     for (ed.selections.items, 0..) |sel, i| {
                         const r = c.row(sel.head) + @as(u32, @intCast(@max(self.count, 1) - 1));
-                        ranges[i] = .{ .start = sel.head, .end = ed.buffer.lineEnd(@min(r, ed.buffer.lineCount() - 1)) };
+                        ranges[i] = .{ .start = sel.head, .end = ed.buffer.lineEnd(@min(r, motions.lastRow(ed.buffer))) };
                     }
                     folds.includeClosed(ed, ranges);
                     self.operate(ed, if (ch == 'D') .delete else .change, ranges);
@@ -743,7 +755,8 @@ pub const Vim = struct {
                 },
                 '/', '?', ':' => {
                     self.openCmdline(ws, ed, @intCast(ch));
-                    return true;
+                    // A search is a motion: its operator and count wait for Enter.
+                    return ch == ':';
                 },
                 '&' => {
                     if (self.last_ex) |cmd| ex.execute(self, ws, ed, cmd);
@@ -1113,7 +1126,7 @@ pub const Vim = struct {
                         '^' => c.firstNonBlank(c.row(h)),
                         '$' => blk: {
                             kind = .inclusive;
-                            const r: u32 = @intCast(@min(ed.buffer.lineCount() - 1, c.row(h) + n - 1));
+                            const r: u32 = @intCast(@min(motions.lastRow(ed.buffer), c.row(h) + n - 1));
                             break :blk if (for_op) c.lastChar(r) else c.lastChar(r);
                         },
                         '|' => blk: {
@@ -1124,7 +1137,7 @@ pub const Vim = struct {
                         },
                         'G' => blk: {
                             kind = .linewise;
-                            const r: u32 = if (self.count == 0 and self.op_count == 0) ed.buffer.lineCount() - 1 else @intCast(@min(ed.buffer.lineCount(), n) - 1);
+                            const r: u32 = if (self.count == 0 and self.op_count == 0) motions.lastRow(ed.buffer) else @intCast(@min(motions.lastRow(ed.buffer) + 1, n) - 1);
                             break :blk c.firstNonBlank(r);
                         },
                         '%' => blk: {
@@ -1144,7 +1157,7 @@ pub const Vim = struct {
                             const lh = ed.lineHeight();
                             const first: u32 = @intFromFloat(@ceil(ed.scroll_y / lh));
                             const rows = ed.visibleRows();
-                            const last = @min(ed.buffer.lineCount() - 1, first + rows - 1);
+                            const last = @min(motions.lastRow(ed.buffer), first + rows - 1);
                             const r: u32 = switch (ch) {
                                 'H' => @min(last, first + @as(u32, @intCast(@max(self.count, 1) - 1))),
                                 'L' => last -| @as(u32, @intCast(@max(self.count, 1) - 1)),
@@ -1192,7 +1205,7 @@ pub const Vim = struct {
             '_' => {
                 kind = .inclusive;
                 for (ed.selections.items) |sel| {
-                    const r: u32 = @intCast(@min(ed.buffer.lineCount() - 1, c.row(sel.head) + n - 1));
+                    const r: u32 = @intCast(@min(motions.lastRow(ed.buffer), c.row(sel.head) + n - 1));
                     var o = c.lastChar(r);
                     while (o > ed.buffer.lineStart(r) and (c.s.byte(o) == ' ' or c.s.byte(o) == '\t')) o -= 1;
                     try t.append(self.gpa, o);
@@ -1296,7 +1309,7 @@ pub const Vim = struct {
             const goal = (if (cursors == null) ed.selections.items[i].goal_x else null) orelse ed.xForOffset(head);
             // Move over display rows: folds are skipped, wrapped lines walked visually.
             const d = ed.displayRowOfOffset(head);
-            const last_d = ed.displayRowCount() - 1;
+            const last_d = @min(ed.displayRowCount() - 1, ed.displayRowOfOffset(ed.buffer.lineStart(motions.lastRow(ed.buffer))));
             const nd: u32 = if (down) @intCast(@min(last_d, d + n)) else d -| @as(u32, @intCast(n));
             var target = ed.offsetForDisplayRow(nd, goal);
             if (self.mode == .normal or self.isVisual()) {
@@ -1488,7 +1501,7 @@ pub const Vim = struct {
         }
     }
 
-    fn readRegister(self: *Vim, ed: *Editor, alloc: Allocator) ?Register {
+    pub fn readRegister(self: *Vim, ed: *Editor, alloc: Allocator) ?Register {
         const reg: u8 = self.register orelse '"';
         if (reg == '"' or reg == '+' or reg == '*') {
             const text = ed.env.clipboard.get(ed.env.clipboard.ctx, alloc) orelse return null;
@@ -1856,7 +1869,7 @@ pub const Vim = struct {
                         const n = (self.visualRanges(ed) catch return true);
                         defer self.gpa.free(n);
                         var c = Ctx.init(ed.buffer);
-                        const rows = c.row(n[0].end) - c.row(n[0].start) + 1;
+                        const rows = c.row(if (n[0].end > n[0].start) n[0].end - 1 else n[0].end) - c.row(n[0].start) + 1;
                         self.exitVisual(ed);
                         ed.setSingleSelection(.caret(n[0].start));
                         self.join(ed, @max(rows, 2), true);
@@ -1978,28 +1991,12 @@ pub const Vim = struct {
         self.last_search_forward = forward;
     }
 
-    /// Vim regex flavour → ours: \< \> become \b; a trailing \c means ignore case.
-    fn compileSearch(self: *Vim, pattern: []const u8) ?regex_mod.Regex {
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(self.gpa);
-        var ci = false;
-        var i: usize = 0;
-        while (i < pattern.len) : (i += 1) {
-            if (pattern[i] == '\\' and i + 1 < pattern.len) {
-                switch (pattern[i + 1]) {
-                    '<', '>' => buf.appendSlice(self.gpa, "\\b") catch return null,
-                    'c' => ci = true,
-                    else => buf.appendSlice(self.gpa, pattern[i .. i + 2]) catch return null,
-                }
-                i += 1;
-            } else buf.append(self.gpa, pattern[i]) catch return null;
-        }
-        // smartcase
-        var has_upper = false;
-        for (pattern) |ch| if (std.ascii.isUpper(ch)) {
-            has_upper = true;
-        };
-        return regex_mod.Regex.compile(self.gpa, buf.items, .{ .case_insensitive = ci or !has_upper }) catch null;
+    /// Vim's regex syntax → ours (see pattern.zig), with 'ignorecase', 'smartcase' and \c \C.
+    pub fn compileSearch(self: *Vim, pattern: []const u8) ?regex_mod.Regex {
+        const t = pattern_mod.translate(self.gpa, pattern) catch return null;
+        defer self.gpa.free(t.pattern);
+        const ci = pattern_mod.ignoresCase(t.case, self.ignore_case, self.smart_case, pattern);
+        return regex_mod.Regex.compile(self.gpa, t.pattern, .{ .case_insensitive = ci }) catch null;
     }
 
     /// All matches of the last search (also used for hlsearch).
@@ -2144,7 +2141,8 @@ pub const Vim = struct {
         }
         self.cmdline.?.setText("", false);
         self.cmdline_kind = kind;
-        self.resetPending();
+        // A search is a motion: its operator and count wait for the Enter.
+        if (kind == ':') self.resetPending() else self.pending_len = 0;
     }
 
     fn closeCmdline(self: *Vim) void {
@@ -2157,6 +2155,7 @@ pub const Vim = struct {
         if (k.key == .named) switch (k.key.named) {
             .escape => {
                 self.closeCmdline();
+                self.resetPending();
                 return true;
             },
             .enter => {
@@ -2174,7 +2173,8 @@ pub const Vim = struct {
                     if (ws.activeEditor()) |cur| folds.adjustCursors(cur);
                 } else {
                     if (text.len > 0) self.setSearch(text, kind == '/') else self.last_search_forward = kind == '/';
-                    self.searchNext(ed, true, 1);
+                    self.searchNext(ed, true, self.totalCount());
+                    self.resetPending();
                     // Searching opens the folds a match is in ('foldopen').
                     if (self.isVisual()) {
                         for (self.visual_cursors.items) |cur| _ = ed.display.folds.unfoldContaining(cur);

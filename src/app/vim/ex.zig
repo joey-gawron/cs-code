@@ -8,6 +8,10 @@ const groups = @import("../workspace/groups.zig");
 const workspace_mod = @import("../workspace/workspace.zig");
 const editor_mod = @import("../editor/editor.zig");
 const regex_mod = @import("../../framework/util/regex.zig");
+const motions = @import("motions.zig");
+const pattern_mod = @import("pattern.zig");
+
+const platform_mod = @import("../../framework/platform/platform.zig");
 
 const Vim = vim_mod.Vim;
 const Workspace = workspace_mod.Workspace;
@@ -18,7 +22,7 @@ const Range = struct { first: u32, last: u32, given: bool };
 fn parseLine(vim: *Vim, ed: *Editor, s: []const u8, i: *usize) ?u32 {
     if (i.* >= s.len) return null;
     const cur = ed.buffer.offsetToPoint(ed.primarySelection().head).row;
-    const last = ed.buffer.lineCount() - 1;
+    const last = motions.lastRow(ed.buffer);
     var base: ?u32 = null;
     switch (s[i.*]) {
         '.' => {
@@ -70,7 +74,7 @@ fn parseRange(vim: *Vim, ed: *Editor, s: []const u8, i: *usize) Range {
     const cur = ed.buffer.offsetToPoint(ed.primarySelection().head).row;
     if (i.* < s.len and s[i.*] == '%') {
         i.* += 1;
-        return .{ .first = 0, .last = ed.buffer.lineCount() - 1, .given = true };
+        return .{ .first = 0, .last = motions.lastRow(ed.buffer), .given = true };
     }
     const a = parseLine(vim, ed, s, i) orelse return .{ .first = cur, .last = cur, .given = false };
     if (i.* < s.len and (s[i.*] == ',' or s[i.*] == ';')) {
@@ -164,7 +168,7 @@ pub fn execute(vim: *Vim, ws: *Workspace, ed: *Editor, cmd_in: []const u8) void 
     } else if (eql(u8, name, "enew")) {
         _ = ws.newFile() catch {};
     } else if (eql(u8, name, "sort") or eql(u8, name, "sor")) {
-        selectRows(ed, range, true);
+        selectRows(ed, if (range.given) range else .{ .first = 0, .last = motions.lastRow(ed.buffer), .given = true }, true);
         ed.permuteLines(if (std.mem.indexOfScalar(u8, args, 'i') != null) .sort else .sort_case);
         vim.enterNormal(ed);
     } else if (eql(u8, name, "d") or eql(u8, name, "delete") or eql(u8, name, "y") or eql(u8, name, "yank")) {
@@ -184,6 +188,14 @@ pub fn execute(vim: *Vim, ws: *Workspace, ed: *Editor, cmd_in: []const u8) void 
         selectRows(ed, range, true);
         ed.joinLines();
         vim.enterNormal(ed);
+    } else if (eql(u8, name, "pu") or eql(u8, name, "put")) {
+        put(vim, ed, range, args, bang);
+    } else if (eql(u8, name, "t") or eql(u8, name, "co") or eql(u8, name, "copy") or eql(u8, name, "m") or eql(u8, name, "move")) {
+        copyOrMove(vim, ed, range, args, name[0] == 'm');
+    } else if (eql(u8, name, "norm") or eql(u8, name, "normal")) {
+        normal(vim, ws, ed, range, args);
+    } else if (eql(u8, name, "g") or eql(u8, name, "global") or eql(u8, name, "v") or eql(u8, name, "vglobal")) {
+        globalCommand(vim, ws, ed, if (range.given) range else .{ .first = 0, .last = motions.lastRow(ed.buffer), .given = true }, args, bang or name[0] == 'v');
     } else if (eql(u8, name, "syntax") or eql(u8, name, "sy")) {
         ws.perform(.command_palette);
     } else {
@@ -215,8 +227,16 @@ fn setOption(vim: *Vim, ws: *Workspace, ed: *Editor, args: []const u8) void {
         if (eql(u8, key, "nu") or eql(u8, key, "number")) settings.show_line_numbers = true else if (eql(u8, key, "nonu") or eql(u8, key, "nonumber")) settings.show_line_numbers = false else if (eql(u8, key, "list")) settings.draw_white_space = .all else if (eql(u8, key, "nolist")) settings.draw_white_space = .selection else if (eql(u8, key, "et") or eql(u8, key, "expandtab")) ed.buffer.translate_tabs_to_spaces = true else if (eql(u8, key, "noet") or eql(u8, key, "noexpandtab")) ed.buffer.translate_tabs_to_spaces = false else if (eql(u8, key, "ts") or eql(u8, key, "tabstop") or eql(u8, key, "sw") or eql(u8, key, "shiftwidth") or eql(u8, key, "sts")) {
             const n = std.fmt.parseInt(u32, value, 10) catch continue;
             if (n > 0 and n <= 16) ed.buffer.tab_size = n;
-        } else if (eql(u8, key, "hls") or eql(u8, key, "hlsearch") or eql(u8, key, "ic") or eql(u8, key, "ignorecase") or eql(u8, key, "scs") or eql(u8, key, "smartcase")) {
-            // Always on.
+        } else if (eql(u8, key, "ic") or eql(u8, key, "ignorecase")) {
+            vim.ignore_case = true;
+        } else if (eql(u8, key, "noic") or eql(u8, key, "noignorecase")) {
+            vim.ignore_case = false;
+        } else if (eql(u8, key, "scs") or eql(u8, key, "smartcase")) {
+            vim.smart_case = true;
+        } else if (eql(u8, key, "noscs") or eql(u8, key, "nosmartcase")) {
+            vim.smart_case = false;
+        } else if (eql(u8, key, "hls") or eql(u8, key, "hlsearch")) {
+            // Matches are always highlighted.
         } else if (eql(u8, key, "nohls") or eql(u8, key, "nohlsearch")) {
             ed.highlights.clearRetainingCapacity();
         } else if (eql(u8, key, "minimap")) settings.show_minimap = true else if (eql(u8, key, "nominimap")) settings.show_minimap = false else if (folds.setOption(vim, ed, key, value)) {} else {
@@ -261,8 +281,10 @@ fn substitute(vim: *Vim, ed: *Editor, range: Range, args: []const u8) void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const translated = std.mem.replaceOwned(u8, alloc, std.mem.replaceOwned(u8, alloc, pattern, "\\<", "\\b") catch return, "\\>", "\\b") catch return;
-    var re = regex_mod.Regex.compile(gpa, translated, .{ .case_insensitive = ignore_case }) catch {
+    const t = pattern_mod.translate(alloc, pattern) catch return;
+    const no_ignore = std.mem.indexOfScalar(u8, flags, 'I') != null;
+    const ci = !no_ignore and (ignore_case or pattern_mod.ignoresCase(t.case, vim.ignore_case, vim.smart_case, pattern));
+    var re = regex_mod.Regex.compile(gpa, t.pattern, .{ .case_insensitive = ci }) catch {
         vim.setMessageText("E486: Invalid pattern");
         return;
     };
@@ -315,4 +337,180 @@ fn substitute(vim: *Vim, ed: *Editor, range: Range, args: []const u8) void {
     vim.enterNormal(ed);
     var buf: [64]u8 = undefined;
     vim.setMessageText(std.fmt.bufPrint(&buf, "{d} substitution(s)", .{count}) catch "");
+}
+
+/// The text of rows first..last with their newlines (the last without one when
+/// the buffer ends there), and the offset just past them.
+fn rowsText(alloc: std.mem.Allocator, ed: *Editor, first: u32, last: u32) ?struct { text: []u8, end: usize } {
+    const start = ed.buffer.lineStart(first);
+    const end = if (last + 1 < ed.buffer.lineCount()) ed.buffer.lineStart(last + 1) else ed.buffer.len();
+    const text = ed.buffer.textRange(alloc, start, end) catch return null;
+    return .{ .text = text, .end = end };
+}
+
+/// Where lines inserted after row `after` go (null: above the first line),
+/// and whether a newline must come first because the buffer ends without one.
+fn insertionPoint(ed: *Editor, after: ?u32) struct { at: usize, lead_newline: bool } {
+    const row = after orelse return .{ .at = 0, .lead_newline = false };
+    if (row + 1 < ed.buffer.lineCount()) return .{ .at = ed.buffer.lineStart(row + 1), .lead_newline = false };
+    const len = ed.buffer.len();
+    return .{ .at = len, .lead_newline = !endsWithNewline(ed) };
+}
+
+fn endsWithNewline(ed: *Editor) bool {
+    const len = ed.buffer.len();
+    if (len == 0) return true;
+    var c = motions.Ctx.init(ed.buffer);
+    return c.s.byte(len - 1) == '\n';
+}
+
+fn insertLines(vim: *Vim, ed: *Editor, after: ?u32, text_in: []const u8) void {
+    var arena = std.heap.ArenaAllocator.init(ed.gpa);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const where = insertionPoint(ed, after);
+    var text = text_in;
+    if (text.len == 0 or text[text.len - 1] != '\n') text = std.mem.concat(alloc, u8, &.{ text, "\n" }) catch return;
+    if (where.lead_newline) text = std.mem.concat(alloc, u8, &.{ "\n", text[0 .. text.len - 1] }) catch return;
+    var edits = [_]editor_mod.Edit{.{ .start = where.at, .end = where.at, .text = text }};
+    ed.commitTransform(&edits, .other);
+    const first_new: u32 = if (after) |r| r + 1 else 0;
+    var c = motions.Ctx.init(ed.buffer);
+    ed.setSingleSelection(.caret(c.firstNonBlank(first_new)));
+    vim.enterNormal(ed);
+}
+
+/// :[line]put [x] — the register's text as lines below `line` (above with !).
+fn put(vim: *Vim, ed: *Editor, range: Range, args: []const u8, above: bool) void {
+    var arena = std.heap.ArenaAllocator.init(ed.gpa);
+    defer arena.deinit();
+    if (args.len > 0) vim.register = args[0];
+    defer vim.register = null;
+    const reg = vim.readRegister(ed, arena.allocator()) orelse {
+        vim.setMessageText("E353: Nothing in register");
+        return;
+    };
+    insertLines(vim, ed, if (above) (if (range.last == 0) null else range.last - 1) else range.last, reg.text);
+}
+
+/// :[range]t {address} (copy) and :[range]m {address} (move): below the
+/// address line; address 0 is above the first line.
+fn copyOrMove(vim: *Vim, ed: *Editor, range: Range, args: []const u8, move: bool) void {
+    var arena = std.heap.ArenaAllocator.init(ed.gpa);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var i: usize = 0;
+    const trimmed = std.mem.trim(u8, args, " ");
+    const after: ?u32 = if (std.mem.eql(u8, trimmed, "0")) null else parseLine(vim, ed, trimmed, &i) orelse {
+        vim.setMessageText("E14: Invalid address");
+        return;
+    };
+    const rows = rowsText(alloc, ed, range.first, range.last) orelse return;
+    if (!move) return insertLines(vim, ed, after, rows.text);
+    // Moving into the lines being moved changes nothing.
+    if (after) |a| if (a >= range.first and a < range.last) {
+        vim.setMessageText("E134: Cannot move a range of lines into itself");
+        return;
+    };
+    const dest_row: u32 = after orelse 0;
+    const dest_before_first = after == null or dest_row < range.first;
+    const where = insertionPoint(ed, after);
+    var text = rows.text;
+    if (text.len == 0 or text[text.len - 1] != '\n') text = std.mem.concat(alloc, u8, &.{ text, "\n" }) catch return;
+    if (where.lead_newline) text = std.mem.concat(alloc, u8, &.{ "\n", text[0 .. text.len - 1] }) catch return;
+    var del_start = ed.buffer.lineStart(range.first);
+    // The last line of a buffer with no final newline takes the newline before it.
+    if (rows.end == ed.buffer.len() and !endsWithNewline(ed) and del_start > 0) del_start -= 1;
+    var edits = [_]editor_mod.Edit{
+        .{ .start = del_start, .end = rows.end, .text = "" },
+        .{ .start = where.at, .end = where.at, .text = text },
+    };
+    _ = dest_before_first;
+    ed.commitTransform(&edits, .other);
+    const moved_to: u32 = if (after == null) 0 else if (dest_row < range.first) dest_row + 1 else dest_row - (range.last - range.first);
+    var c = motions.Ctx.init(ed.buffer);
+    ed.setSingleSelection(.caret(c.firstNonBlank(moved_to + (range.last - range.first))));
+    vim.enterNormal(ed);
+}
+
+/// :[range]normal {keys} — the keys as normal-mode commands on each line.
+fn normal(vim: *Vim, ws: *Workspace, ed: *Editor, range: Range, keys: []const u8) void {
+    var rows: std.ArrayList(u32) = .empty;
+    defer rows.deinit(ed.gpa);
+    var r = range.first;
+    while (r <= range.last) : (r += 1) rows.append(ed.gpa, r) catch return;
+    ed.buffer.beginGroup();
+    defer ed.buffer.endGroup();
+    var delta: i64 = 0;
+    for (rows.items) |row0| {
+        const row: i64 = @as(i64, row0) + delta;
+        if (row < 0 or row >= ed.buffer.lineCount()) continue;
+        const before: i64 = ed.buffer.lineCount();
+        ed.setSingleSelection(.caret(ed.buffer.lineStart(@intCast(row))));
+        vim.enterNormal(ed);
+        runKeys(vim, ws, ed, keys);
+        delta += @as(i64, ed.buffer.lineCount()) - before;
+    }
+}
+
+/// Feeds `keys` to vim as typed; whatever is left open ends as on Escape.
+pub fn runKeys(vim: *Vim, ws: *Workspace, ed: *Editor, keys: []const u8) void {
+    var it = std.unicode.Utf8View.initUnchecked(keys).iterator();
+    while (it.nextCodepointSlice()) |cp| {
+        const code = std.unicode.utf8Decode(cp) catch continue;
+        const ev: platform_mod.KeyEvent = switch (code) {
+            0x1b => .{ .key = .{ .named = .escape }, .mods = .{} },
+            '\r' => .{ .key = .{ .named = .enter }, .mods = .{} },
+            0x01...0x0c, 0x0e...0x1a => .{ .key = .{ .char = code + 0x60 }, .mods = .{ .ctrl = true } },
+            else => .{ .key = .{ .char = code }, .mods = .{}, .text = cp },
+        };
+        if (!vim.handleKey(ws, ed, ev) and ev.text.len > 0) ed.insertText(ev.text);
+    }
+    if (vim.mode != .normal) _ = vim.handleKey(ws, ed, .{ .key = .{ .named = .escape }, .mods = .{} });
+}
+
+/// :[range]g/pattern/command (and :v, :g!) — `command` on every line that
+/// matches (does not match); one undo step.
+fn globalCommand(vim: *Vim, ws: *Workspace, ed: *Editor, range: Range, args: []const u8, invert: bool) void {
+    if (args.len < 2) return;
+    const delim = args[0];
+    var end: usize = 1;
+    while (end < args.len and args[end] != delim) : (end += 1) {
+        if (args[end] == '\\' and end + 1 < args.len) end += 1;
+    }
+    const pattern = args[1..@min(end, args.len)];
+    const command = if (end < args.len) std.mem.trim(u8, args[end + 1 ..], " ") else "";
+    var re = vim.compileSearch(if (pattern.len == 0) (vim.last_search orelse return) else pattern) orelse {
+        vim.setMessageText("E486: Invalid pattern");
+        return;
+    };
+    defer re.deinit();
+    if (pattern.len > 0) vim.setSearch(pattern, true);
+
+    var rows: std.ArrayList(u32) = .empty;
+    defer rows.deinit(ed.gpa);
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(ed.gpa);
+    var row = range.first;
+    while (row <= range.last) : (row += 1) {
+        const text = ed.buffer.lineText(row, &line) catch return;
+        if ((re.search(text, 0) != null) != invert) rows.append(ed.gpa, row) catch return;
+    }
+    if (rows.items.len == 0) {
+        vim.setMessageText("E486: Pattern not found");
+        return;
+    }
+    ed.buffer.beginGroup();
+    defer ed.buffer.endGroup();
+    var delta: i64 = 0;
+    for (rows.items) |row0| {
+        const cur: i64 = @as(i64, row0) + delta;
+        if (cur < 0 or cur >= ed.buffer.lineCount()) continue;
+        const before: i64 = ed.buffer.lineCount();
+        ed.setSingleSelection(.caret(ed.buffer.lineStart(@intCast(cur))));
+        if (command.len == 0) continue;
+        execute(vim, ws, ed, command);
+        delta += @as(i64, ed.buffer.lineCount()) - before;
+    }
+    vim.enterNormal(ed);
 }
