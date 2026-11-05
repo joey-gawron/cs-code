@@ -361,6 +361,22 @@ public class BuiltinServerTests
         Assert.Equal(new Uri(outside.Combine("ws/mod") + "/"), new RootDetector().Resolve(jdtls, new Uri(doc), []).Uri);
     }
 
+    [Fact]
+    public void The_crates_of_a_cargo_workspace_share_one_rust_analyzer()
+    {
+        using var dir = new TempDirectory("cscode-cargo-");
+        dir.WriteFile("ws/Cargo.toml", "[workspace]");
+        dir.WriteFile("ws/libball/Cargo.toml", "");
+        dir.WriteFile("ws/assetman/Cargo.toml", "");
+        var a = new Uri(dir.WriteFile("ws/libball/src/lib.rs", ""));
+        var b = new Uri(dir.WriteFile("ws/assetman/src/lib.rs", ""));
+        var ws = new Uri(dir.Combine("ws") + "/");
+        var ra = Get("rust-analyzer").Definition;
+        var detector = new RootDetector();
+        Assert.Equal(ws, detector.Resolve(ra, a, [ws]).Uri);
+        Assert.Equal(detector.Resolve(ra, a, [ws]).Key, detector.Resolve(ra, b, [ws]).Key);
+    }
+
     // ---- options that reach the server -------------------------------------------------------------------------------------------------
 
     private static async Task<(LspTestEnv Env, FakeLspServer Server)> StartBuiltinAsync(string path, string language)

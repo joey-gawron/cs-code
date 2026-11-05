@@ -151,7 +151,7 @@ public static class BuiltinLanguageServers
             "clangd (clang-format rules)"),
         S(Def("rust-analyzer", "Rust (rust-analyzer)", ["rust"], "rust-analyzer", [], ["Cargo.toml"]),
             All3("Install it with: rustup component add rust-analyzer"),
-            "rust-analyzer (rustfmt)"),
+            "rust-analyzer (rustfmt)", RootStrategy.Outermost), // a Cargo workspace's members share the root manifest: one server, not one per crate
         S(Def("gopls", "Go (gopls)", ["go"], "gopls", [], ["go.work", "go.mod"]),
             All3("Install it with: go install golang.org/x/tools/gopls@latest"),
             "gopls (gofmt)"),
