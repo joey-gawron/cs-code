@@ -144,6 +144,19 @@
   { "key": "ctrl+r ctrl+l",      "command": "testing.debugLastRun",               "mac": "cmd+r cmd+l" },
   { "key": "ctrl+e t",           "command": "workbench.view.testing.focus",       "mac": "cmd+e t" },
 
+  // ---- word wrap, font zoom and case (docs/EDITOR.md §7): VS Code's Alt+Z toggles wrapping in the editor; the zoom keys share the Ctrl+wheel
+  // zoom of the editor. Ctrl+- stays Navigate Backward off the Mac, so zooming out takes Ctrl+NumPad- there (Cmd+- on a Mac). Visual Studio's
+  // Edit.MakeUppercase is Ctrl+Shift+U; its Edit.MakeLowercase (Ctrl+U) is Cursor Undo here and Edit.Duplicate (Ctrl+D) is Copy Line Down. ----
+  { "key": "alt+z",              "command": "editor.action.toggleWordWrap",       "when": "editorTextFocus" },
+  { "key": "ctrl+=",             "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+=" },
+  { "key": "ctrl+shift+=",       "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+shift+=" },
+  { "key": "ctrl+numpad_add",    "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+numpad_add" },
+  {                              "command": "editor.action.fontZoomOut",          "when": "editorTextFocus", "mac": "cmd+-" },
+  { "key": "ctrl+numpad_subtract", "command": "editor.action.fontZoomOut",        "when": "editorTextFocus", "mac": "cmd+numpad_subtract" },
+  { "key": "ctrl+0",             "command": "editor.action.fontZoomReset",        "when": "editorTextFocus", "mac": "cmd+0" },
+  { "key": "ctrl+numpad0",       "command": "editor.action.fontZoomReset",        "when": "editorTextFocus", "mac": "cmd+numpad0" },
+  { "key": "ctrl+shift+u",       "command": "editor.action.transformToUppercase", "when": "editorTextFocus && !editorReadonly", "mac": "cmd+shift+u" },
+
   // ---- tool windows ----
   { "key": "ctrl+alt+l",         "command": "workbench.view.explorer",            "mac": "cmd+alt+l" },
   { "key": "ctrl+alt+o",         "command": "workbench.action.output.toggleOutput", "mac": "cmd+alt+o" },

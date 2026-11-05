@@ -151,8 +151,8 @@ public class FormatterChoiceAndCodeActionsOnSaveTests
     {
         var setting = Json("""{"source.organizeImports": "explicit", "source.fixAll": true, "source.addMissingImports": "always", "source.sortMembers": "never", "source.x": false}""");
         Assert.Equal(["source.fixAll", "source.organizeImports", "source.addMissingImports"], CodeActionsOnSaveParticipant.KindsToRun(setting, DocumentSaveReason.Manual));
-        // auto-save runs only "always"
-        Assert.Equal(["source.addMissingImports"], CodeActionsOnSaveParticipant.KindsToRun(setting, DocumentSaveReason.AfterDelay));
+        // an auto save on a focus or window change runs only "always"; one after a delay runs nothing (VS Code)
+        Assert.Empty(CodeActionsOnSaveParticipant.KindsToRun(setting, DocumentSaveReason.AfterDelay));
         Assert.Equal(["source.addMissingImports"], CodeActionsOnSaveParticipant.KindsToRun(setting, DocumentSaveReason.FocusOut));
     }
 
@@ -218,6 +218,8 @@ public class FormatterChoiceAndCodeActionsOnSaveTests
             Task.FromResult<IReadOnlyList<CodeAction>?>([Action(ctx.Only!.Single(), ctx.Only!.Single(), doc, t => t + ctx.Only!.Single() + "\n")])));
         var (doc, _, _) = await host.OpenAsync("", "a.py");
         await Participant(host).OnWillSaveAsync(doc, DocumentSaveReason.AfterDelay, CancellationToken.None);
+        Assert.Equal("", doc.GetText()); // not even "always" after a delay
+        await Participant(host).OnWillSaveAsync(doc, DocumentSaveReason.FocusOut, CancellationToken.None);
         Assert.Equal("source.organizeImports\n", doc.GetText());
         var (other, _, _) = await host.OpenAsync("", "b.txt"); // the setting is Python's only
         await Participant(host).OnWillSaveAsync(other, DocumentSaveReason.Manual, CancellationToken.None);

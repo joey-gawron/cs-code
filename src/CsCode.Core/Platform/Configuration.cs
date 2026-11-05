@@ -90,6 +90,8 @@ public static class SettingKeys
     public const string EditorQuickSuggestions = "editor.quickSuggestions";
     public const string EditorLargeFileOptimizationsLimit = "cscode.editor.largeFileThresholdBytes";
     public const string FilesAutoSave = "files.autoSave";
+    /// <summary>Milliseconds after the last edit before <c>files.autoSave: "afterDelay"</c> saves (VS Code's default: 1000).</summary>
+    public const string FilesAutoSaveDelay = "files.autoSaveDelay";
     public const string FilesExclude = "files.exclude";
     public const string FilesWatcherExclude = "files.watcherExclude";
     public const string WorkbenchColorTheme = "workbench.colorTheme";

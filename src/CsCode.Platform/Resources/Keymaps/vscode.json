@@ -136,6 +136,17 @@
   { "key": "ctrl+; l",           "command": "testing.reRunLastRun",               "mac": "cmd+; l" },
   { "key": "ctrl+; ctrl+l",      "command": "testing.debugLastRun",               "mac": "cmd+; cmd+l" },
 
+  // ---- word wrap and font zoom (docs/EDITOR.md §7): VS Code's Alt+Z; the zoom keys are VS Code's window zoom keys (CsCode has no window zoom)
+  // and share the Ctrl+wheel zoom of the editor. The case transforms and Duplicate Selection have no key in VS Code (Command Palette). ----
+  { "key": "alt+z",              "command": "editor.action.toggleWordWrap",       "when": "editorTextFocus" },
+  { "key": "ctrl+=",             "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+=" },
+  { "key": "ctrl+shift+=",       "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+shift+=" },
+  { "key": "ctrl+numpad_add",    "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+numpad_add" },
+  { "key": "ctrl+-",             "command": "editor.action.fontZoomOut",          "when": "editorTextFocus", "mac": "cmd+-" },
+  { "key": "ctrl+numpad_subtract", "command": "editor.action.fontZoomOut",        "when": "editorTextFocus", "mac": "cmd+numpad_subtract" },
+  { "key": "ctrl+0",             "command": "editor.action.fontZoomReset",        "when": "editorTextFocus", "mac": "cmd+0" },
+  { "key": "ctrl+numpad0",       "command": "editor.action.fontZoomReset",        "when": "editorTextFocus", "mac": "cmd+numpad0" },
+
   // ---- views ----
   { "key": "ctrl+shift+e",       "command": "workbench.view.explorer",            "mac": "cmd+shift+e" },
   { "key": "ctrl+shift+u",       "command": "workbench.action.output.toggleOutput", "mac": "cmd+shift+u" },

@@ -43,6 +43,13 @@ public interface IEditorDocument : ITextDocument
     string EndOfLine { get; }
     void SetLanguageId(string languageId);
     Task SaveAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Saves for <paramref name="reason"/> (additive; the default saves as <see cref="SaveAsync(CancellationToken)"/> does). An auto save after a
+    /// delay skips what VS Code skips then: format on save, and edits at the lines that hold a caret.
+    /// </summary>
+    Task SaveAsync(Languages.DocumentSaveReason reason, CancellationToken ct) => SaveAsync(ct);
+
     Task SaveAsAsync(Uri target, CancellationToken ct = default);
     Task ReloadAsync(CancellationToken ct = default);
     IEventSource<IEditorDocument> Saved { get; }

@@ -51,6 +51,8 @@ public static class BuiltInSettings
             "Controls whether suggestions should automatically show up while typing.", """{"type":"object"}"""),
         P(SettingKeys.EditorLargeFileOptimizationsLimit, 5L * 1024 * 1024, "Files larger than this many bytes open in large-file mode (no tokenisation, folding or squiggles).", """{"type":"integer","minimum":0}"""),
         P(SettingKeys.FilesAutoSave, "off", "Controls auto save of dirty editors.", """{"type":"string","enum":["off","afterDelay","onFocusChange","onWindowChange"]}"""),
+        P(SettingKeys.FilesAutoSaveDelay, 1000, "Controls the delay in milliseconds after which a dirty editor is saved automatically. Only applies when files.autoSave is set to afterDelay.",
+            """{"type":"integer","minimum":0}"""),
         P(SettingKeys.FilesExclude, WithMacClutter(new Dictionary<string, bool>
         {
             ["**/.git"] = true, ["**/.svn"] = true, ["**/.hg"] = true, ["**/CVS"] = true, ["**/.DS_Store"] = true, ["**/Thumbs.db"] = true,

@@ -135,12 +135,13 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
             view.TextView.ScrollOffset.Y,
             view.TextView.ScrollOffset.X,
             FoldedLinesProvider?.Invoke() ?? [],
-            doc.Version);
+            doc.Version) { WordWrap = view.WordWrapOverride };
     }
 
     public void RestoreViewState(EditorViewState state)
     {
         var doc = view.Document;
+        if (state.WordWrap is { } wrap) view.WordWrapOverride = wrap; // before the folds and the scroll: wrapping changes the line heights
         FoldRestorer?.Invoke(state.FoldedStartLines);
         var caret = doc.Validate(state.Caret);
         var a = doc.Validate(state.SelectionStart);

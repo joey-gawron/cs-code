@@ -45,6 +45,15 @@ public sealed class ShellStatusItems : IDisposable
 
         _subs.Add(nav.ActiveCaretChanged.Subscribe(_ => UpdateEditorItems()));
         _subs.Add(nav.ActiveDocumentChanged.Subscribe(_ => UpdateEditorItems()));
+        // the active document's encoding, line ending or chosen indentation changed (its status items' commands), or the settings did
+        _subs.Add(nav.ActiveDocumentChanged.Subscribe(FollowOptions));
+        _subs.Add(Disposable.Create(() => FollowOptions(null)));
+        FollowOptions(nav.ActiveDocument);
+        if (config is not null)
+            _subs.Add(config.Changed.Subscribe(e =>
+            {
+                if (e.Affects("editor") || e.AffectedKeys.Any(k => k.StartsWith('['))) _ui.PostCoalesced("status.editorOptions", UpdateEditorItems);
+            }));
         if (languages is not null) _subs.Add(languages.LanguagesChanged.Subscribe(_ => UpdateEditorItems()));
         if (diagnostics is not null)
         {
@@ -68,6 +77,16 @@ public sealed class ShellStatusItems : IDisposable
         UpdateEditorItems();
     }
 
+    private IDisposable? _optionsSub;
+
+    private void FollowOptions(IEditorDocument? document)
+    {
+        _optionsSub?.Dispose();
+        _optionsSub = document is CsCode.Editor.Documents.EditorDocument editor
+            ? editor.OptionsChanged.Subscribe(_ => _ui.PostCoalesced("status.editorOptions", UpdateEditorItems))
+            : null;
+    }
+
     private void Put(StatusBarItemModel item)
     {
         if (_items.TryGetValue(item.Id, out var old)) old.Dispose();
@@ -81,6 +100,7 @@ public sealed class ShellStatusItems : IDisposable
 
     private void UpdateEditorItems()
     {
+        if (_disposed) return; // (a coalesced post can arrive after the window closed)
         if (_nav.ActiveDocument is not { } doc)
         {
             foreach (var id in new[] { "editor.position", "editor.indent", "editor.encoding", "editor.eol", "editor.language" }) Remove(id);
@@ -90,9 +110,10 @@ public sealed class ShellStatusItems : IDisposable
         Put(new StatusBarItemModel("editor.position", $"Ln {caret.Line + 1}, Col {caret.Character + 1}", "Go to Line/Column", "workbench.action.gotoLine", StatusBarAlignment.Right, 100));
         // what the editor indents with: the file's .editorconfig over the document's language section (T30: "[csharp]": { "editor.tabSize": 2 })
         var (tab, spaces) = _config is null ? (4, true) : EditorSettings.IndentationFor(_config, doc);
-        Put(new StatusBarItemModel("editor.indent", $"{(spaces ? "Spaces" : "Tab Size")}: {tab}", "Select Indentation", null, StatusBarAlignment.Right, 90));
-        Put(new StatusBarItemModel("editor.encoding", doc.EncodingName.ToUpperInvariant(), "Select Encoding", null, StatusBarAlignment.Right, 80));
-        Put(new StatusBarItemModel("editor.eol", doc.EndOfLine switch { "\r\n" => "CRLF", "\r" => "CR", _ => "LF" }, "Select End of Line Sequence", null, StatusBarAlignment.Right, 70));
+        // clickable as in VS Code: the indentation picker, Reopen / Save with Encoding, LF / CRLF (the editor's commands, docs/EDITOR.md §7)
+        Put(new StatusBarItemModel("editor.indent", $"{(spaces ? "Spaces" : "Tab Size")}: {tab}", "Select Indentation", "changeEditorIndentation", StatusBarAlignment.Right, 90));
+        Put(new StatusBarItemModel("editor.encoding", CsCode.Editor.Documents.FileEncoding.ShortLabel(doc.EncodingName), "Select Encoding", "workbench.action.editor.changeEncoding", StatusBarAlignment.Right, 80));
+        Put(new StatusBarItemModel("editor.eol", doc.EndOfLine switch { "\r\n" => "CRLF", "\r" => "CR", _ => "LF" }, "Select End of Line Sequence", "workbench.action.editor.changeEOL", StatusBarAlignment.Right, 70));
         var language = _languages?.Get(doc.LanguageId)?.DisplayName ?? doc.LanguageId;
         Put(new StatusBarItemModel("editor.language", language, "Select Language Mode", Commands.ShellCommands.ChangeLanguageMode, StatusBarAlignment.Right, 60));
     }

@@ -344,8 +344,50 @@ the peek's `editor.action.peekDefinition`, `peekDeclaration`, `peekTypeDefinitio
 and `editor.action.linkedEditing` (Start Linked Editing, §7d),
 and `editor.action.toggleMinimap` (View: Toggle Minimap, §7f),
 and the bookmarks' `bookmarks.toggle`, `toggleEnabled`, `toggleAllEnabled`, `jumpToNext`, `jumpToPrevious`, `jumpToNextInDocument`,
-`jumpToPreviousInDocument`, `clear`, `clearFromAllFiles`, `list`, `showWindow` (§7g).
-and `editor.action.showOrFocusStandaloneColorPicker` (Show or Focus Standalone Color Picker, §7i).
+`jumpToPreviousInDocument`, `clear`, `clearFromAllFiles`, `list`, `showWindow` (§7g),
+and `editor.action.showOrFocusStandaloneColorPicker` (Show or Focus Standalone Color Picker, §7i),
+and the everyday commands below (`View/EditorTextCommands.cs`, `View/DocumentOptionCommands.cs`; VS Code's ids and palette titles): `editor.action.toggleWordWrap`,
+`fontZoomIn`, `fontZoomOut`, `fontZoomReset`, `transformToUppercase`, `transformToLowercase`, `transformToTitlecase`, `transformToSnakecase`, `transformToCamelcase`,
+`transformToKebabcase`, `transformToPascalcase`, `duplicateSelection`, `workbench.action.editor.changeEncoding`, `workbench.action.editor.changeEOL`,
+`changeEditorIndentation` (the status bar's indentation picker, not in the palette), `editor.action.indentUsingSpaces`, `indentUsingTabs`, `changeTabDisplaySize`,
+`detectIndentation`, `indentationToSpaces`, `indentationToTabs`.
+
+**Word wrap and font zoom.** View: Toggle Word Wrap (Alt+Z / ⌥Z in both presets, View > Word Wrap, checked through VS Code's `editorWordWrap`
+context key) flips wrapping for the active view only and never writes `editor.wordWrap`; the choice is kept in the view state
+(`EditorViewState.WordWrap`, additive), so a view the shell recreates keeps it, and a change of `editor.wordWrap` ends it (a restored choice the
+setting now agrees with is dropped). Editor Font Zoom In / Out / Reset (Ctrl/⌘+=, Ctrl/⌘+Shift+=, Ctrl/⌘+NumPad+; Ctrl/⌘+- and NumPad-; Ctrl/⌘+0
+and NumPad0; the Visual Studio preset keeps Ctrl+- for Navigate Backward off the Mac) share the Ctrl+wheel zoom (`editor.mouseWheelZoom`): one
+`CodeEditorControl.ZoomFont`, per view, ±1 px between 6 and 72, not persisted, kept across settings changes as an offset from `editor.fontSize`
+(a settings change used to drop the wheel's zoom).
+
+**Case and duplicate** (`Editing/TextTransforms.cs`, pure): Transform to Uppercase / Lowercase / Title Case / Snake Case / Camel Case / Kebab Case /
+Pascal Case use VS Code's own rules (its regular expressions ported, so `parseHTMLString` becomes `parse_html_string` and `foo.bar_baz` becomes
+`Foo.BarBaz`; upper / lower case follow the current culture as VS Code's locale case does). They change every selection and, at an empty caret, the
+word it touches (`editor.wordSeparators`, VS Code's default); carets in one word change it once. Duplicate Selection puts each selection's text again
+right after it and selects the copy, and an empty caret's line below it (several carets on one line duplicate it once), the caret moving to the copy.
+Every caret of multi-cursor (§7b), ONE undo step, read-only documents untouched; selections over 150K characters are computed on the editor worker
+from a snapshot and dropped if the text changed meanwhile. Keys only where a preset has one: Visual Studio's Make Uppercase, Ctrl+Shift+U (⌘⇧U);
+its Make Lowercase (Ctrl+U) is Cursor Undo and its Duplicate (Ctrl+D) is Copy Line Down in that preset, and VS Code binds none of them.
+
+**Encoding, line endings and indentation** (the status bar's items, docs/SHELL.md): Change File Encoding offers Reopen with Encoding and Save with
+Encoding (an untitled document: Save only), then VS Code's encoding list (`FileEncoding.Choices`: its ids and labels, 39 encodings, the code pages
+through `CodePagesEncodingProvider`; `files.encoding` accepts the same ids now). Reopen decodes the file again (a dirty document asks before its
+changes are discarded); Save sets the encoding and saves through the shell's save (its will-save participants) when the document is the active
+one. Change End of Line Sequence (LF / CRLF; `EditorDocument.ChangeEndOfLineAsync`) computes the new text on the IO lane and applies it as one change
+whose offset map moves each line ending on its own, so the caret, selections and folds stay where they were; ONE undo step that also gives back
+`EndOfLine` (an undo marker), and the document is dirty. The indentation picker offers Indent Using Spaces / Tabs and Change Tab Display Size (a tab
+size 1-8, VS Code's "Configured / Current Tab Size" hints), Detect Indentation from Content (VS Code's guesser ported: `Editing/IndentationOperations.cs`)
+and Convert Indentation to Spaces / Tabs (VS Code's: each tab of the leading whitespace to tab-size spaces, each run of tab-size spaces to a tab; one
+undo step). The choices are the document's own (`EditorDocument.IndentationOverride`, VS Code's per-model options): over the settings and its
+`.editorconfig`, followed by every view of the document, Tab and Enter, format on save and the status bar, for as long as the document is open.
+`EditorDocument.OptionsChanged` reports encoding, line-ending and indentation changes.
+
+**Saving for auto save** (the shell's `files.autoSave`, docs/SHELL.md): `IEditorDocument.SaveAsync(DocumentSaveReason, CancellationToken)` (additive,
+Core). After a delay (`AfterDelay`) the save skips `editor.formatOnSave` and leaves the lines that hold a caret alone, as VS Code's save
+participants do: no trailing whitespace trimmed there, no blank line removed up to the last caret, no final newline added under a caret at the very
+end (it would push the caret onto a line of its own while the user types); `editor.codeActionsOnSave`'s `always` kinds run on focus or window
+changes (`FocusOut`) but not after a delay, as in VS Code. An untitled document is never saved by an auto save (no Save As dialog).
+`EditorDocument.IsExternalChangePending` is true while its "changed on disk" question waits.
 
 ### 7a. Clipboard and the right-click menu
 
@@ -859,6 +901,14 @@ Not done, or done only in part — none of this is faked:
   keyboard when the shell destroys its view keeps the view reachable until focus moves; the shell moves it first. The remote server's
   dispatch of `colorPresentations` is covered by the codec and threading tests only, not end to end.
 * `editor.cursorStyle`, `editor.cursorBlinking` and `editor.smoothScrolling` are not applied (AvaloniaEdit offers no equivalent). Font ligatures are on by default (`editor.fontLigatures`; VS Code defaults to off, but the bundled Fira Code is chosen for them, and they keep one glyph per character): `false` turns them off. AvaloniaEdit 12 has no font-feature setting, so `EditorFontFeatures`, a line transformer, then gives each element's run properties `-liga, -calt` (reaching the private `VisualLineElement.TextRunProperties` setter by reflection; `CodeFontTests` fails if an upgrade removes it). `true` (the default) leaves the font's own ligatures (Fira Code's keep one glyph per character, so carets stay on columns) and a string is VS Code's CSS feature list (`"'ss01', 'zero'"`). The code panels follow the same setting through `ui:CodeFontFeatures`. `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
+* **Everyday commands** (§7): Toggle Word Wrap is per view (VS Code's is per document, across its editors) and, like the font zoom, is not kept
+  by saved sessions (only by the in-memory view state); the zoom steps are the wheel's 1 px (VS Code's editor zoom is global, in 10 % steps).
+  Change End of Line Sequence with several carets keeps only one (multi-cursor follows the whole-text change); on a document without line breaks
+  it changes only the line ending new lines get (nothing to mark dirty); undone inside a held undo group (macro playback) it does not give back
+  `EndOfLine`; a `.editorconfig` `end_of_line` still wins at save. Reopen with Encoding has no "Guessed from content" entry. The indentation chosen
+  for a document is not saved with it (closing the document forgets it) and `editor.detectIndentation` (guessing on open) is not read: only
+  the command guesses. There is no Edit > Advanced menu, so the case commands are in the Command Palette (and on Ctrl+Shift+U in Visual Studio's
+  preset).
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.
 * `UndoStackScrubber` is reflection against AvaloniaEdit 12.0.0's private layout; `PerfMemoryTests` will fail loudly if an upgrade changes it (use `RetentionPath` to find the new culprit).

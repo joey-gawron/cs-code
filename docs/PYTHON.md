@@ -51,12 +51,12 @@ Two pieces are language-neutral and reused by later stages: **formatter choice /
   providers cannot yet, and keep formatting as before. **Format Document With…** (Edit menu, editor context menu,
   `editor.action.formatDocument.multiple`) picks one for a single run, the default marked.
 * **`editor.codeActionsOnSave`**: the object form (`"explicit"`, `"always"`, `"never"`, and the legacy `true`/`false`) and the array form;
-  `explicit` runs on a save the user asked for, `always` also on auto-save. Kinds match hierarchically (`source.fixAll` runs
+  `explicit` runs on a save the user asked for, `always` also on the auto saves of a focus or window change (not on one after a delay, as in VS Code). Kinds match hierarchically (`source.fixAll` runs
   `source.fixAll.ruff`); a kind listed with a more specific one leaves that one to its own entry. In the object form the fix-all kinds run first.
   Each provider is asked in turn (the next sees the text the last left); deferred edits are resolved (`codeAction/resolve`); command-only actions
   are executed. Everything a save applies is one undo unit. Deadline: `editor.codeActionsOnSaveTimeout` (750 ms); a hung provider costs at most
   that. It is the first `IWillSaveParticipant`, ahead of the servers' `willSaveWaitUntil`, and runs before format on save (VS Code's order).
-  CsCode has no auto-save yet, so every save is "explicit".
+  Auto save (`files.autoSave`, docs/SHELL.md) saves with VS Code's reasons: after a delay neither the code actions nor format on save run.
 
 ## 3. Language servers
 
@@ -224,7 +224,7 @@ Two things about typing into the app that the measurement depends on:
 ## 10. Limits
 
 * Remote workspaces: interpreters are discovered on this machine only; bridged providers carry no server id for `editor.defaultFormatter`.
-* Attach by process id on macOS (§4). No auto-save in CsCode, so `"always"` code actions run only on explicit saves too.
+* Attach by process id on macOS (§4).
 * Changing the interpreter does not restart Ruff to pick a different environment's `ruff` (restart the server).
 * One interpreter per workspace folder: a monorepo opened at its root gets the root's (its venv or flake), not a sub-project's. Open the
   sub-project's folder (or add it to the workspace) to get its own; nested venvs and flakes are not searched for. Nix: flakes only (no
