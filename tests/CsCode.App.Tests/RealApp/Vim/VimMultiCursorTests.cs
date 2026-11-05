@@ -140,6 +140,10 @@ public class VimMultiCursorTests
         Assert.Equal([new TextPosition(0, 10), new TextPosition(1, 8)], CaretPositions(app)); // on each last character
         await app.KeysAsync("0l");
         Assert.Equal([new TextPosition(0, 1), new TextPosition(1, 1)], CaretPositions(app));
+        await app.KeysAsync("<Right>^");
+        Assert.Equal([new TextPosition(0, 0), new TextPosition(1, 0)], CaretPositions(app));
+        await app.KeysAsync("<End>");
+        Assert.Equal([new TextPosition(0, 10), new TextPosition(1, 8)], CaretPositions(app));
         Assert.Equal(2, Carets(app));
         Assert.Equal("foo.bar baz\nab cd, ef\n", app.Text);
     }

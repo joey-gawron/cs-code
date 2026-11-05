@@ -43,7 +43,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         if (reveal) Reveal(range, center: false);
     }
 
-    /// <summary>Several selections at once (multi-cursor): the first is the primary. Bounded by <c>editor.multiCursorLimit</c>; one only while Vim is on.</summary>
+    /// <summary>Several selections at once (multi-cursor): the first is the primary. Bounded by <c>editor.multiCursorLimit</c>; one only under a modal layer that does not handle several carets.</summary>
     public void SetSelections(IReadOnlyList<TextRange> selections, bool reveal = true)
     {
         if (_disposed || selections.Count == 0) return;

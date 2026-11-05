@@ -25,7 +25,8 @@ namespace CsCode.Editor.View;
 /// <para>
 /// Lifetime of the extra carets: they follow edits made elsewhere (another view, a language server's edit) through the buffer's change events;
 /// anything else that moves the primary caret (a click, Page Down, Go to Definition, a snippet) collapses them to the primary, as in VS Code.
-/// Escape collapses them too. While a modal layer (Vim) is attached the feature is off: the commands do nothing and no carets are added.
+/// Escape collapses them too. Under a modal layer the feature is off unless the layer handles several carets itself (the Vim adapter does:
+/// <see cref="EditorModalSurface.AllowMultipleCarets"/>, <see cref="HoldCarets"/>).
 /// </para>
 /// <para>
 /// Cost: nothing while there is one caret (each handler returns at once). With n carets a keystroke is O(n log document) plus each caret's own
