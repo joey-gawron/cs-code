@@ -127,13 +127,15 @@ fn exportAs(gpa: Allocator, text: []const u8, file_name: []const u8, fmt: Format
         try w.writeAll("</title>\n<style>body{font-family:sans-serif;max-width:46em;margin:2em auto;padding:0 1em;line-height:1.5}" ++
             "pre{background:#f4f4f4;padding:.8em;overflow:auto}code{background:#f4f4f4}table{border-collapse:collapse}" ++
             "td,th{border:1px solid #ccc;padding:.2em .6em}.todo{color:#c00;font-weight:bold}.done{color:#080;font-weight:bold}" ++
-            ".tag{font-size:.7em;color:#666;margin-left:.5em}</style>\n</head>\n<body>\n<h1 class=\"title\">");
+            ".tag{font-size:.7em;color:#666;margin-left:.5em}.priority{color:#a60;font-weight:bold}</style>\n</head>\n<body>\n<h1 class=\"title\">");
         try escape(w, title);
         try w.writeAll("</h1>\n");
     } else try w.print("# {s}\n\n", .{title});
 
     var block: ?struct { kind: enum { src, example, quote }, lang: []const u8, indent: usize = 0 } = null;
     var in_drawer = false;
+    // The level of a subtree that doesn't export (:noexport:, :ARCHIVE:, COMMENT).
+    var skip_level: ?usize = null;
     lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trimEnd(u8, raw, "\r");
@@ -169,6 +171,11 @@ fn exportAs(gpa: Allocator, text: []const u8, file_name: []const u8, fmt: Format
                 },
             }
             continue;
+        }
+        if (skip_level) |level| {
+            const h = parser.parseHeadingLine(line, s.keywords) orelse continue;
+            if (h.level > level) continue;
+            skip_level = null;
         }
         if (std.ascii.startsWithIgnoreCase(trimmed, "#+BEGIN_")) {
             try s.closeAll();
@@ -212,6 +219,10 @@ fn exportAs(gpa: Allocator, text: []const u8, file_name: []const u8, fmt: Format
 
         if (parser.parseHeadingLine(line, s.keywords)) |h| {
             try s.closeAll();
+            if (skipsExport(h)) {
+                skip_level = h.level;
+                continue;
+            }
             try heading(&s, h);
             continue;
         }
@@ -250,6 +261,14 @@ fn exportAs(gpa: Allocator, text: []const u8, file_name: []const u8, fmt: Format
     return out.toOwnedSlice();
 }
 
+/// A COMMENT heading, or one tagged :noexport: or :ARCHIVE:, and its subtree.
+fn skipsExport(h: parser.HeadingLine) bool {
+    if (std.mem.startsWith(u8, h.title, "COMMENT ") or std.mem.eql(u8, h.title, "COMMENT")) return true;
+    var it = std.mem.tokenizeScalar(u8, h.tags, ':');
+    while (it.next()) |tag| if (std.ascii.eqlIgnoreCase(tag, "noexport") or std.mem.eql(u8, tag, "ARCHIVE")) return true;
+    return false;
+}
+
 fn heading(s: *State, h: parser.HeadingLine) !void {
     const w = s.w;
     // Level 1 is the document title's <h1>: headings start at <h2> / "##".
@@ -261,6 +280,7 @@ fn heading(s: *State, h: parser.HeadingLine) !void {
             try escape(w, kw);
             try w.writeAll("</span> ");
         }
+        if (h.priority) |pr| try w.print("<span class=\"priority\">[#{c}]</span> ", .{pr});
         try inline_(w, h.title, .html);
         var it = std.mem.tokenizeScalar(u8, h.tags, ':');
         while (it.next()) |tag| {
@@ -273,6 +293,7 @@ fn heading(s: *State, h: parser.HeadingLine) !void {
         try w.splatByteAll('#', level);
         try w.writeByte(' ');
         if (h.todo) |kw| try w.print("{s} ", .{kw});
+        if (h.priority) |pr| try w.print("[#{c}] ", .{pr});
         try inline_(w, h.title, .markdown);
         try w.writeAll("\n\n");
     }
@@ -342,7 +363,10 @@ fn inline_(w: *Writer, text: []const u8, fmt: Format) Writer.Error!void {
                 const href = if (std.mem.startsWith(u8, target, "file:")) target[5..] else target;
                 if (fmt == .html) {
                     try w.writeAll("<a href=\"");
-                    try escape(w, href);
+                    // A link to another org file goes to its HTML export.
+                    const to_org = std.mem.startsWith(u8, target, "file:") and std.mem.endsWith(u8, href, ".org");
+                    try escape(w, if (to_org) href[0 .. href.len - ".org".len] else href);
+                    if (to_org) try w.writeAll(".html");
                     try w.writeAll("\">");
                     try inline_(w, desc, .html);
                     try w.writeAll("</a>");
@@ -462,4 +486,61 @@ test "export markdown" {
         \\
         \\
     , md);
+}
+
+test "export keeps priorities, skips noexport subtrees and points org links at HTML" {
+    const gpa = std.testing.allocator;
+    const src =
+        \\#+TITLE: T
+        \\* TODO [#A] Visible :work:
+        \\See [[file:other.org][other]] and [[file:img.png][a picture]].
+        \\** Child
+        \\* Secret :noexport:
+        \\hidden text
+        \\** Inside secret
+        \\more hidden
+        \\* COMMENT Draft
+        \\hidden too
+        \\* Archived :ARCHIVE:
+        \\hidden three
+        \\* After
+        \\shown again
+        \\
+    ;
+    const html = try toHtml(gpa, src, "t.org");
+    defer gpa.free(html);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<span class=\"priority\">[#A]</span> Visible") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<a href=\"other.html\">other</a>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<a href=\"img.png\">a picture</a>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<h3>Child</h3>") != null);
+    for ([_][]const u8{ "hidden", "Secret", "Draft", "Archived", "Inside" }) |gone| {
+        try std.testing.expect(std.mem.indexOf(u8, html, gone) == null);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, html, "shown again") != null);
+
+    const md = try toMarkdown(gpa, src, "t.org");
+    defer gpa.free(md);
+    try std.testing.expect(std.mem.indexOf(u8, md, "## TODO [#A] Visible") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "hidden") == null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "shown again") != null);
+}
+
+test "export lists nest and numbered lists stay ordered" {
+    const gpa = std.testing.allocator;
+    const src =
+        \\* Lists
+        \\- one
+        \\  - nested
+        \\- two
+        \\
+        \\1. first
+        \\2. second
+        \\
+    ;
+    const html = try toHtml(gpa, src, "t.org");
+    defer gpa.free(html);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<ul>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "nested") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<ol>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<li>second</li>") != null);
 }

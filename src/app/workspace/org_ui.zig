@@ -67,6 +67,8 @@ pub fn runCommand(ws: *Workspace, cmd: org.Command) void {
         .agenda => openAgenda(ws, .week),
         .todo_list => openAgenda(ws, .todo),
         .set_tags => promptTags(ws),
+        .capture => startCapture(ws),
+        .export_html => perform(ws, .org_export_html),
         .refile, .archive, .edit_src, .clock_in, .clock_out, .clock_report => perform(ws, switch (cmd) {
             .refile => .org_refile,
             .archive => .org_archive,

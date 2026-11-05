@@ -1056,6 +1056,8 @@ pub const Command = enum {
     clock_in,
     clock_out,
     clock_report,
+    capture,
+    export_html,
 };
 
 const Binding = struct { []const u8, Command, bool }; // spec, command, needs heading
@@ -1076,6 +1078,7 @@ const single_bindings = [_]Binding{
     .{ "ctrl+enter", .insert_heading_after, false },
     .{ "alt+enter", .insert_heading, false },
     .{ "ctrl+shift+enter", .insert_todo_heading, false },
+    .{ "alt+shift+enter", .insert_todo_heading, false },
 };
 
 /// Second chord after ctrl+c.
@@ -1090,6 +1093,9 @@ const prefix_bindings = [_]struct { []const u8, Command }{
     .{ "ctrl+o", .open_link },
     .{ "a", .agenda },
     .{ "ctrl+a", .agenda },
+    .{ "c", .capture },
+    .{ "ctrl+e", .export_html },
+    .{ ",", .priority_up },
     .{ "ctrl+q", .set_tags },
     .{ "ctrl+w", .refile },
     .{ "$", .archive },
@@ -1226,7 +1232,7 @@ fn runCommand(state: *KeyState, ed: *Editor, cmd: Command) KeyResult {
         .insert_heading => insertHeading(ed, false, false),
         .insert_todo_heading => insertHeading(ed, true, true),
         .toggle_checkbox => toggleCheckbox(ed) or cycleTodo(ed, true),
-        .schedule, .deadline, .timestamp, .timestamp_inactive, .open_link, .agenda, .todo_list, .set_tags, .refile, .archive, .edit_src, .clock_in, .clock_out, .clock_report => return .{ .command = cmd },
+        .schedule, .deadline, .timestamp, .timestamp_inactive, .open_link, .agenda, .todo_list, .set_tags, .refile, .archive, .edit_src, .clock_in, .clock_out, .clock_report, .capture, .export_html => return .{ .command = cmd },
     };
     return if (handled) .done else .pass;
 }
