@@ -304,6 +304,7 @@ pub const Action = enum {
     new_terminal,
     new_terminal_at_project_root,
     toggle_terminal,
+    rename_terminal,
 
     // Preferences.
     select_color_scheme,
