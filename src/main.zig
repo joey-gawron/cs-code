@@ -432,6 +432,7 @@ test {
     _ = @import("model/project/templates.zig");
     _ = @import("app/settings/recent.zig");
     _ = @import("app/workspace/page_ui.zig");
+    _ = @import("model/markdown/tests.zig");
     _ = @import("app/settings/keymap.zig");
     _ = @import("app/settings/catalog.zig");
     _ = @import("app/settings/bindings_file.zig");
