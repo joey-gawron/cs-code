@@ -362,19 +362,15 @@ public class BuiltinServerTests
     }
 
     [Fact]
-    public void The_crates_of_a_cargo_workspace_share_one_rust_analyzer()
+    public void One_rust_analyzer_serves_every_crate_and_workspace_folder_as_in_vs_code()
     {
-        using var dir = new TempDirectory("cscode-cargo-");
-        dir.WriteFile("ws/Cargo.toml", "[workspace]");
-        dir.WriteFile("ws/libball/Cargo.toml", "");
-        dir.WriteFile("ws/assetman/Cargo.toml", "");
-        var a = new Uri(dir.WriteFile("ws/libball/src/lib.rs", ""));
-        var b = new Uri(dir.WriteFile("ws/assetman/src/lib.rs", ""));
-        var ws = new Uri(dir.Combine("ws") + "/");
         var ra = Get("rust-analyzer").Definition;
+        var ws = new Uri("file:///w/");
         var detector = new RootDetector();
-        Assert.Equal(ws, detector.Resolve(ra, a, [ws]).Uri);
-        Assert.Equal(detector.Resolve(ra, a, [ws]).Key, detector.Resolve(ra, b, [ws]).Key);
+        var a = detector.Resolve(ra, new Uri("file:///w/libball/src/lib.rs"), [ws]);
+        var b = detector.Resolve(ra, new Uri("file:///w/assetman/src/lib.rs"), [ws]);
+        Assert.True(a.FollowsWorkspaceFolders);
+        Assert.Equal(a.Key, b.Key); // the server finds the Cargo.toml files itself: no server per crate
     }
 
     // ---- options that reach the server -------------------------------------------------------------------------------------------------

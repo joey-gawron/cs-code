@@ -278,7 +278,7 @@ public class ManagerTests
 
         Assert.Contains("tsconfig.json", all["typescript"].RootMarkers!);
         Assert.Contains("*.sln", all["csharp"].RootMarkers!);
-        Assert.Contains("Cargo.toml", all["rust-analyzer"].RootMarkers!);
+        Assert.Empty(all["rust-analyzer"].RootMarkers!); // as in VS Code: one server for every workspace folder, which finds the Cargo.toml files itself
         Assert.Contains("go.mod", all["gopls"].RootMarkers!);
         Assert.Contains("compile_commands.json", all["clangd"].RootMarkers!);
         Assert.Contains("pyproject.toml", all["python"].RootMarkers!);

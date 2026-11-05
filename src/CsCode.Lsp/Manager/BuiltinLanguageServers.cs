@@ -149,9 +149,9 @@ public static class BuiltinLanguageServers
                 "Install it with: brew install llvm (clangd is in $(brew --prefix llvm)/bin), or xcode-select --install for Apple's clangd.",
                 "Install it with: winget install LLVM.LLVM"),
             "clangd (clang-format rules)"),
-        S(Def("rust-analyzer", "Rust (rust-analyzer)", ["rust"], "rust-analyzer", [], ["Cargo.toml"]),
+        S(Def("rust-analyzer", "Rust (rust-analyzer)", ["rust"], "rust-analyzer", [], []),
             All3("Install it with: rustup component add rust-analyzer"),
-            "rust-analyzer (rustfmt)", RootStrategy.Outermost), // a Cargo workspace's members share the root manifest: one server, not one per crate
+            "rust-analyzer (rustfmt)"), // no root markers, as in VS Code: one server for every workspace folder, which finds the Cargo.toml / rust-project.json files itself
         S(Def("gopls", "Go (gopls)", ["go"], "gopls", [], ["go.work", "go.mod"]),
             All3("Install it with: go install golang.org/x/tools/gopls@latest"),
             "gopls (gofmt)"),
