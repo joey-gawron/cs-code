@@ -18,8 +18,8 @@ Contents: [1 Using it](#1-using-it) · [2 Design](#2-design) · [3 Dictionaries 
 * **Quick fixes** (lightbulb, Ctrl+., right-click > Quick Actions and Refactorings...): up to 5 replacements in the word's own case
   (`Recieve` → `Receive`, `RECIEVE` → `RECEIVE`; the first is preferred), **Add "word" to user dictionary** (`cSpell.words` in the user
   settings.json), **Add "word" to workspace dictionary** (with a folder open: the project's `cspell.json` when it has a JSON one, else
-  `cSpell.words` in `.cscode/settings.json`), **Ignore "word" in this file** (a `cspell:ignore word` comment on the first line, or the word
-  appended to the file's existing `cspell:ignore`; offered only where the language has comments, never in JSON). Adding a word checks every
+  `cSpell.words` in `.cscode/settings.json`), **Ignore "word" in this file** (a `cspell:ignore word` comment on the first line — after a `#!` line,
+  an XML declaration or Markdown front matter — or the word appended to the file's existing `cspell:ignore`; offered only where the language has comments, never in JSON). Adding a word checks every
   open document again at once, before the settings write lands.
 * **Status bar** (right, beside the language): `$(check) Spell` when the active file is checked and clean, `$(book) Spell: 3` with three
   unknown words (`3+` when the file hit `cSpell.maxNumberOfProblems`), `$(circle-slash) Spell` when it is not checked (spell checking off, a
@@ -181,7 +181,7 @@ process, three runs):
 | A check of 5,000 comment lines, 45,000 words, 10,000 issues | 24–41 ms on the lane in 6–8 slices; 1 MB allocated (the issues) |
 | The comments of this repository's `src/` (878 files, 185 K words; §8) | 0.2 s of checking, i.e. about 1 µs per word |
 | Suggestions for one word (`recieve`) | 40 ms the first time |
-| The UI thread's share of a keystroke (test: 200 edits while the lane is blocked in a check) | a lock and a timer change; slowest edit of a 700 KB in-memory document < 50 ms asserted, the edit itself dominates |
+| The caller's share of a keystroke, while the lane is held inside a check (`Typing_does_not_wait_for_the_checker`) | a lock and a timer change: p99 < 0.5 ms asserted over 2,000 calls; 200 real edits of a 700 KB document meanwhile, median < 10 ms asserted (the document's own copy of its text dominates) |
 
 ## 8. False positives on this repository
 

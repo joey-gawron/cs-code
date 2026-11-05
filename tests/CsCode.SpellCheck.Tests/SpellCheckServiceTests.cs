@@ -206,17 +206,27 @@ public class SpellCheckServiceTests
         using var registration = documents.Register(doc);
         Assert.True(classifier.Entered.Wait(TimeSpan.FromSeconds(10)));
 
-        var times = new List<double>();
+        // what a keystroke costs the caller: the document's Changed handlers run synchronously inside the edit (an InMemoryTextDocument
+        // edit also copies the 700 KB text, on the large-object heap: the checker's own share is measured alone below)
+        var edits = new List<double>();
         for (var i = 0; i < 200; i++)
         {
             var sw = Stopwatch.StartNew();
-            doc.ApplyEdits([TextEdit.Insert(new TextPosition(0, 2), "x")]); // the Changed handlers run synchronously, here
-            times.Add(sw.Elapsed.TotalMilliseconds);
+            doc.ApplyEdits([TextEdit.Insert(new TextPosition(0, 2), "x")]);
+            edits.Add(sw.Elapsed.TotalMilliseconds);
+        }
+        var schedules = new List<double>();
+        for (var i = 0; i < 2000; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            service.Schedule(doc.Uri, 0); // exactly what the Changed handler does
+            schedules.Add(sw.Elapsed.TotalMilliseconds);
         }
         classifier.Gate.Set();
-        times.Sort();
-        // an InMemoryTextDocument edit of a 700 KB text costs a copy of it; the checker's share is a timer change
-        Assert.True(times[^1] < 50, $"slowest keystroke {times[^1]:F2} ms");
+        edits.Sort();
+        schedules.Sort();
+        Assert.True(schedules[(int)(schedules.Count * 0.99)] < 0.5, $"the checker's share of a keystroke, p99 {schedules[(int)(schedules.Count * 0.99)]:F3} ms");
+        Assert.True(edits[edits.Count / 2] < 10, $"median keystroke {edits[edits.Count / 2]:F2} ms (slowest {edits[^1]:F2} ms)");
         await WaitAsync(() => service.ResultFor(doc.Uri) is { } r && r.Version == doc.Version, 30_000);
         Assert.Equal(SpellLane.ThreadName, classifier.Thread);
     }
@@ -350,6 +360,18 @@ public class SpellCheckServiceTests
         var txt = h.Open("Thsi line\n", "plaintext", "a.txt", classify: false);
         await h.ResultAsync(txt, r => r.Issues.Count == 1);
         Assert.DoesNotContain(await ActionsAsync(h, txt, new TextPosition(0, 1)), a => a.Title.StartsWith("Ignore", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void An_ignore_directive_goes_after_front_matter_and_a_shebang_that_ends_the_file()
+    {
+        using var h = new SpellHarness();
+        var md = new InMemoryTextDocument(new Uri("file:///work/fm.md"), "markdown", "---\ntitle: Thsi\n---\nThsi text\n");
+        Assert.Equal(TextEdit.Insert(new TextPosition(3, 0), "<!-- cspell:ignore Thsi -->\n"), h.Host.CodeActions.IgnoreInFile(md, "Thsi"));
+        var script = new InMemoryTextDocument(new Uri("file:///work/run.py"), "python", "#!/usr/bin/env python3");
+        Assert.Equal(TextEdit.Insert(new TextPosition(0, 22), "\n# cspell:ignore wierd"), h.Host.CodeActions.IgnoreInFile(script, "wierd"));
+        var json = new InMemoryTextDocument(new Uri("file:///work/a.json"), "json", "{ \"wierd\": 1 }");
+        Assert.Null(h.Host.CodeActions.IgnoreInFile(json, "wierd"));
     }
 
     [Fact]

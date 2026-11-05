@@ -97,7 +97,14 @@ public sealed partial class SpellCodeActionProvider(SpellCheckService service, I
         else if (config.BlockComment is { } block) directive = $"{block.Open} cspell:ignore {word} {block.Close}";
         else return null;
         var eol = document is IEditorDocument { EndOfLine: { Length: > 0 } e } ? e : "\n";
-        return TextEdit.Insert(new TextPosition(FirstLineForDirective(document), 0), directive + eol);
+        var target = FirstLineForDirective(document);
+        if (target >= document.LineCount)
+        {
+            // the line after a shebang or front matter that ends the file: a new last line
+            var last = Math.Max(0, document.LineCount - 1);
+            return TextEdit.Insert(new TextPosition(last, document.GetLineText(last).Length), eol + directive);
+        }
+        return TextEdit.Insert(new TextPosition(target, 0), directive + eol);
     }
 
     private WorkspaceEdit? IgnoreInFileEdit(ITextDocument document, string word) =>
@@ -107,12 +114,12 @@ public sealed partial class SpellCodeActionProvider(SpellCheckService service, I
     {
         if (document.LineCount == 0) return 0;
         var first = document.GetLineText(0);
-        if (first.StartsWith("#!", StringComparison.Ordinal) || first.StartsWith("<?xml", StringComparison.Ordinal)) return Math.Min(1, document.LineCount);
+        if (first.StartsWith("#!", StringComparison.Ordinal) || first.StartsWith("<?xml", StringComparison.Ordinal)) return 1;
         if (first.TrimEnd() == "---")
         {
             var limit = Math.Min(document.LineCount, 500);
             for (var i = 1; i < limit; i++)
-                if (document.GetLineText(i).TrimEnd() is "---" or "...") return i + 1 < document.LineCount ? i + 1 : i;
+                if (document.GetLineText(i).TrimEnd() is "---" or "...") return i + 1;
         }
         return 0;
     }

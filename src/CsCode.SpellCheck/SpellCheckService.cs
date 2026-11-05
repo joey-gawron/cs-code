@@ -224,7 +224,18 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
             if (state.Disposed) return;
             generation = state.Generation;
         }
-        _lane.Run(() => Begin(state, generation));
+        _lane.Run(() =>
+        {
+            try
+            {
+                Begin(state, generation);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // a document or token source that failed under us: this check is lost, the next change checks again
+                _log.LogWarning(ex, "Spell check of {Uri} failed", state.Document.Uri);
+            }
+        });
     }
 
     private static bool Current(DocState state, int generation)
