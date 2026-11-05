@@ -148,6 +148,7 @@ pub fn handleEvent(ws: *Workspace, ev: platform.Event) bool {
                 context_menu.open(ws, .terminal, m.pos, null);
                 return true;
             }
+            if (openLink(ws, tv, m)) return true;
             tv.mouseDown(m);
             return true;
         },
@@ -183,6 +184,21 @@ pub fn handleEvent(ws: *Workspace, ev: platform.Event) bool {
         },
         else => return false,
     }
+}
+
+/// A cmd-click (ctrl-click off macOS) on a "file:line:col" in the output opens
+/// the file there. False when the click isn't one.
+pub fn openLink(ws: *Workspace, tv: *TerminalView, m: platform.MouseEvent) bool {
+    if (m.button != .left or !m.mods.command() or tv.reportsMouse(m.mods)) return false;
+    const link = tv.fileLinkAt(ws.gpa, m.pos) orelse return false;
+    defer ws.gpa.free(link);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = tv.term.currentDir(&buf) orelse tv.start_dir;
+    _ = ws.openArgument(cwd, link) catch |err| {
+        ws.setStatus("Unable to open {s}: {t}", .{ link, err });
+        return true;
+    };
+    return true;
 }
 
 fn trackMotion(tv: *TerminalView, m: platform.MouseMoveEvent) void {
@@ -338,6 +354,7 @@ pub fn perform(ws: *Workspace, action: Action) bool {
         .toggle_terminal => toggle(ws),
         .toggle_panel_terminal => panel_ui.toggleTerminal(ws),
         .new_panel_terminal => panel_ui.addTerminal(ws),
+        .rename_terminal => panel_ui.promptRename(ws),
         .run_command => panel_ui.promptRunCommand(ws),
         .run_last_command => panel_ui.rerunCommand(ws),
         else => {

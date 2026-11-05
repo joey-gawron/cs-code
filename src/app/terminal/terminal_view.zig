@@ -42,6 +42,8 @@ pub const TerminalView = struct {
     title_buf: [160]u8 = undefined,
     title_len: usize = 0,
     title_changed: bool = false,
+    /// The user named the tab: the program's titles no longer replace it.
+    custom_title: bool = false,
     /// Where the program started.
     start_dir: []u8,
     /// Area of the last layout, in window coordinates.
@@ -120,6 +122,19 @@ pub const TerminalView = struct {
         self.title_changed = true;
     }
 
+    /// Names the tab; an empty name goes back to the program's own titles.
+    pub fn rename(self: *TerminalView, name: []const u8) void {
+        self.custom_title = name.len > 0;
+        if (name.len > 0) {
+            self.setTitle(name);
+        } else if (self.term.screen.title.items.len > 0) {
+            self.setTitle(self.term.screen.title.items);
+        } else {
+            const program = std.fs.path.basename(terminal_mod.defaultShell());
+            self.setTitle(program);
+        }
+    }
+
     // ---- Event loop -----------------------------------------------------------
 
     /// Reads output and flushes input; true when the view needs a redraw.
@@ -133,7 +148,7 @@ pub const TerminalView = struct {
         self.seen_pushed = screen.pushed_total;
         if (screen.title_changed) {
             screen.title_changed = false;
-            if (screen.title.items.len > 0) self.setTitle(screen.title.items);
+            if (screen.title.items.len > 0 and !self.custom_title) self.setTitle(screen.title.items);
         }
         return changed;
     }
@@ -604,6 +619,22 @@ pub const TerminalView = struct {
         }
     }
 
+    /// The file reference ("src/main.zig:12:5") under `pos`, if there is one:
+    /// what a cmd-click (ctrl-click elsewhere) opens. Caller frees.
+    pub fn fileLinkAt(self: *TerminalView, gpa: Allocator, pos: platform.Vec2) ?[]u8 {
+        const p = self.pointAt(pos);
+        const screen = self.term.screen;
+        const first = screen.firstLineId();
+        if (p.cell.line < first) return null;
+        const w = self.wordAt(p.cell);
+        if (w[1].col <= w[0].col) return null;
+        const row: usize = @intCast(p.cell.line - first);
+        const text = screen.textRange(gpa, row, w[0].col, row, w[1].col) catch return null;
+        defer gpa.free(text);
+        const link = fileLinkIn(text) orelse return null;
+        return gpa.dupe(u8, link) catch null;
+    }
+
     /// The word around `p` (a run of non-blank, non-bracket characters).
     fn wordAt(self: *TerminalView, p: Point) [2]Point {
         const screen = self.term.screen;
@@ -627,6 +658,40 @@ pub const TerminalView = struct {
         return .{ .{ .line = p.line, .col = @intCast(a) }, .{ .line = p.line, .col = @intCast(b) } };
     }
 };
+
+/// `word` as a file reference: trailing punctuation dropped, and it must look
+/// like a path (a slash or an extension). "main.zig:12:5" qualifies, "12:5"
+/// and "hello" do not.
+pub fn fileLinkIn(word: []const u8) ?[]const u8 {
+    var w = std.mem.trim(u8, word, " \t\r\n");
+    while (w.len > 0 and std.mem.indexOfScalar(u8, ".,;:)]}'\"", w[w.len - 1]) != null) w = w[0 .. w.len - 1];
+    if (w.len == 0) return null;
+    // The path part, without ":line:col".
+    var path = w;
+    var peeled: usize = 0;
+    while (peeled < 2) : (peeled += 1) {
+        const colon = std.mem.lastIndexOfScalar(u8, path, ':') orelse break;
+        _ = std.fmt.parseInt(u32, path[colon + 1 ..], 10) catch break;
+        path = path[0..colon];
+    }
+    if (path.len == 0 or std.mem.indexOf(u8, path, "://") != null) return null;
+    const base = std.fs.path.basename(path);
+    const dot = std.mem.lastIndexOfScalar(u8, base, '.');
+    const has_ext = dot != null and dot.? > 0 and dot.? + 1 < base.len;
+    if (std.mem.indexOfScalar(u8, path, '/') == null and !has_ext) return null;
+    return w;
+}
+
+test "fileLinkIn recognises file references" {
+    try std.testing.expectEqualStrings("src/main.zig:12:5", fileLinkIn("src/main.zig:12:5").?);
+    try std.testing.expectEqualStrings("main.zig:3", fileLinkIn("main.zig:3:").?);
+    try std.testing.expectEqualStrings("/usr/bin/env", fileLinkIn("/usr/bin/env.").?);
+    try std.testing.expectEqualStrings("./build.zig", fileLinkIn("./build.zig)").?);
+    try std.testing.expect(fileLinkIn("hello") == null);
+    try std.testing.expect(fileLinkIn("12:5") == null);
+    try std.testing.expect(fileLinkIn("https://example.com/a.html") == null);
+    try std.testing.expect(fileLinkIn("...") == null);
+}
 
 fn sameColor(a: Color, b: Color) bool {
     return a.r == b.r and a.g == b.g and a.b == b.b and a.a == b.a;

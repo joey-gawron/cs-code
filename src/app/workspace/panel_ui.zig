@@ -260,6 +260,7 @@ fn activeServer(ws: *Workspace) ?[]const u8 {
 // ---- Terminals ---------------------------------------------------------------------
 
 pub const run_command_tag: u32 = 400;
+pub const rename_terminal_tag: u32 = 401;
 
 fn freeTerm(gpa: Allocator, t: Term) void {
     t.view.destroy();
@@ -330,8 +331,22 @@ pub fn promptRunCommand(ws: *Workspace) void {
     if (ws.overlay) |o| o.input.selectAll();
 }
 
-/// The Run Command prompt's answer. Returns false for other prompts.
+/// Terminal: Rename Terminal asks for the focused terminal's tab name.
+pub fn promptRename(ws: *Workspace) void {
+    const tv = terminal_ui.focused(ws) orelse activeTerminal(ws) orelse return ws.setStatus("No terminal to rename", .{});
+    ws.openPrompt("Terminal name:", rename_terminal_tag, tv.title());
+    if (ws.overlay) |o| o.input.selectAll();
+}
+
+/// The prompts' answers. Returns false for other prompts.
 pub fn confirmPrompt(ws: *Workspace, tag: u32, input: []const u8) bool {
+    if (tag == rename_terminal_tag) {
+        const tv = terminal_ui.focused(ws) orelse activeTerminal(ws) orelse return true;
+        tv.rename(std.mem.trim(u8, input, " \t"));
+        touch(ws);
+        if (ws.panel.visible and ws.panel.view == .terminal) focusPanel(ws);
+        return true;
+    }
     if (tag != run_command_tag) return false;
     const cmd = std.mem.trim(u8, input, " \t");
     if (cmd.len > 0) runCommand(ws, cmd);
@@ -927,6 +942,7 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
     if (st.term_rect.contains(pos.x, pos.y)) if (activeTerminal(ws)) |tv| {
         focusPanel(ws);
         if (m.button == .right and !tv.reportsMouse(m.mods)) return openMenu(ws, .terminal, pos);
+        if (terminal_ui.openLink(ws, tv, m)) return true;
         tv.mouseDown(m);
     };
     return true;

@@ -194,6 +194,7 @@ const base = [_]Command{
     .{ .caption = "Terminal: Toggle Terminal Tab", .action = .toggle_terminal },
     .{ .caption = "Terminal: Toggle Terminal Panel", .action = .toggle_panel_terminal },
     .{ .caption = "Terminal: New Terminal in Panel", .action = .new_panel_terminal },
+    .{ .caption = "Terminal: Rename Terminal", .action = .rename_terminal },
     .{ .caption = "Terminal: Run Command…", .action = .run_command },
     .{ .caption = "Terminal: Run Last Command", .action = .run_last_command },
     .{ .caption = "UI: Select Color Scheme", .action = .select_color_scheme },

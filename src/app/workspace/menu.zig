@@ -185,6 +185,7 @@ pub const menus = [_]Menu{
         a("New Terminal in Panel", .new_panel_terminal),
         a("New Terminal Tab", .new_terminal),
         a("New Terminal Tab at Project Root", .new_terminal_at_project_root),
+        a("Rename Terminal…", .rename_terminal),
         a("Toggle Terminal Tab", .toggle_terminal),
     } },
     .{ .title = "Preferences", .items = &.{
