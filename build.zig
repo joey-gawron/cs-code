@@ -109,6 +109,18 @@ pub fn build(b: *std.Build) void {
     }) });
     test_step.dependOn(&b.addRunArtifact(core_tests).step);
     test_step.dependOn(&layers_run.step);
+
+    // Sessions end to end: the installed binary with its own HOME and data folder.
+    const e2e_options = b.addOptions();
+    e2e_options.addOptionPath("exe_path", exe.getEmittedBin());
+    const session_e2e = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/app/session/e2e_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "e2e_options", .module = e2e_options.createModule() }},
+    }) });
+    test_step.dependOn(&b.addRunArtifact(session_e2e).step);
 }
 
 /// What every build of the editor's code shares: the generated Wayland
