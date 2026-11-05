@@ -335,6 +335,11 @@ pub const Action = enum {
     open_settings_json,
     open_keyboard_shortcuts,
     open_keymap,
+
+    // Markdown preview.
+    markdown_open_preview,
+    markdown_open_preview_side,
+    markdown_show_source,
     reload_config,
 
     // Session.
@@ -565,6 +570,7 @@ const defaults = [_]DefaultBinding{
     .{ "ctrl+v", .paste, .editor },
     .{ "shift+insert", .paste, .editor },
     .{ "ctrl+shift+v", .paste_and_indent, .editor },
+    .{ "ctrl+k v", .markdown_open_preview_side, .editor },
 
     .{ "ctrl+f", .show_find, .global },
     .{ "ctrl+h", .show_replace, .global },

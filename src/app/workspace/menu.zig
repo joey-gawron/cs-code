@@ -154,6 +154,9 @@ pub const menus = [_]Menu{
         a("Font: Larger", .increase_font),
         a("Font: Smaller", .decrease_font),
         a("Font: Reset", .reset_font),
+        sep,
+        a("Markdown Preview", .markdown_open_preview),
+        a("Markdown Preview to the Side", .markdown_open_preview_side),
     } },
     .{ .title = "Goto", .items = &.{
         a("Goto Anything…", .goto_anything),

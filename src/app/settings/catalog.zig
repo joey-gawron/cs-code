@@ -98,6 +98,7 @@ pub const defs = [_]Def{
     .{ .key = "syntax_max_file_size_mb", .category = .application, .title = "Syntax Highlighting Size Limit (MB)", .description = "Files bigger than this aren't syntax highlighted; 0 means no limit.", .kind = .{ .integer = .{ .min = 0, .max = 1 << 20 } }, .default = "8" },
     .{ .key = "which_key_delay_ms", .category = .application, .title = "Leader Key Popup Delay (ms)", .description = "How long a leader key sequence waits before the popup lists the keys that can follow; 0 shows it at once.", .kind = .{ .integer = .{ .min = 0, .max = 10000 } }, .default = "400" },
 
+    .{ .key = "markdown_open_readme", .category = .workbench, .title = "Markdown: Open README Preview", .description = "Opening a folder that has a README.md also shows its rendered preview.", .kind = .boolean, .default = "false" },
     .{ .key = "git_blame_inline", .category = .git, .title = "Blame: Inline", .description = "Shows who last changed the caret line, dimmed after its end.", .kind = .boolean, .default = "true" },
 
     .{ .key = "org_agenda_on_startup", .category = .org, .title = "Agenda: Show On Startup", .description = "Shows the agenda when cs-zig starts without files.", .kind = .boolean, .default = "false" },

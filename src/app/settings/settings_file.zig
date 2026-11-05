@@ -71,6 +71,10 @@ pub const default_contents =
     \\    // Org: show the agenda when cs-zig starts without files, and where
     \\    // "Org: Capture…" (SPC o c or SPC X) files a TODO: under this heading
     \\    // ("" for top level) of this file, both created if missing.
+    \\    // Opening a folder that has a README.md also shows its rendered preview
+    \\    // (Markdown: Open Preview, cmd+shift+v, does it for any Markdown file).
+    \\    "markdown_open_readme": false,
+    \\
     \\    "org_agenda_on_startup": false,
     \\    "org_capture_file": "~/org/inbox.org",
     \\    "org_capture_heading": "Tasks",
@@ -335,6 +339,7 @@ pub fn loadText(gpa: Allocator, raw: []const u8, string_arena: Allocator, editor
     if (num(obj, "syntax_max_file_size_mb")) |n| editor_settings.syntax_max_file_size_mb = @intFromFloat(std.math.clamp(n, 0, 1 << 20));
     if (boolean(obj, "git_blame_inline")) |b| editor_settings.git_blame_inline = b;
     if (boolean(obj, "org_agenda_on_startup")) |b| editor_settings.org_agenda_on_startup = b;
+    if (boolean(obj, "markdown_open_readme")) |b| editor_settings.markdown_open_readme = b;
     if (boolean(obj, "org_log_done")) |b| editor_settings.org_log_done = b;
     inline for (.{ .{ "org_capture_templates", "org_capture_templates_json" }, .{ "org_agenda_custom_commands", "org_agenda_custom_commands_json" }, .{ "org_agenda_files", "org_agenda_files_json" } }) |kv| {
         @field(editor_settings, kv[1]) = if (obj.get(kv[0])) |v| (if (v == .array) std.json.Stringify.valueAlloc(string_arena, v, .{}) catch "" else "") else "";
