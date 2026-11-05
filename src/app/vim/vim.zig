@@ -124,6 +124,11 @@ pub const Vim = struct {
 
     target_list: std.ArrayList(usize) = .empty,
 
+    // Counted insert (`3ix<Esc>`): the text typed so far, repeated on Escape.
+    insert_repeat: usize = 1,
+    insert_open_line: bool = false,
+    insert_typed: std.ArrayList(u8) = .empty,
+
     pub fn init(gpa: Allocator) Vim {
         return .{ .gpa = gpa, .arena = .init(gpa) };
     }
@@ -136,6 +141,7 @@ pub const Vim = struct {
         self.visual_anchors.deinit(self.gpa);
         self.visual_cursors.deinit(self.gpa);
         self.target_list.deinit(self.gpa);
+        self.insert_typed.deinit(self.gpa);
         if (self.last_search) |s| self.gpa.free(s);
         if (self.last_ex) |s| self.gpa.free(s);
         if (self.cmdline) |c| c.destroy();
@@ -298,6 +304,9 @@ pub const Vim = struct {
     }
 
     fn enterInsert(self: *Vim, ed: *Editor) void {
+        self.insert_repeat = 1;
+        self.insert_open_line = false;
+        self.insert_typed.clearRetainingCapacity();
         self.mode = .insert;
         ed.block_caret = false;
         ed.caret_override.clearRetainingCapacity();
@@ -309,6 +318,7 @@ pub const Vim = struct {
     fn insertKey(self: *Vim, ws: *Workspace, ed: *Editor, k: KeyEvent) bool {
         if (self.recording_change) self.cmd_keys.append(self.gpa, self.copyKey(k)) catch {};
         const vk = toVKey(k);
+        if (self.insert_repeat > 1) self.trackTyped(vk, k);
         switch (vk) {
             .named => |n| if (n == .escape) {
                 self.leaveInsert(ed);
@@ -347,7 +357,38 @@ pub const Vim = struct {
         return false;
     }
 
+    /// Keeps the text of a counted insert, to type it again on Escape.
+    fn trackTyped(self: *Vim, vk: VKey, k: KeyEvent) void {
+        switch (vk) {
+            .char => if (k.text.len > 0) self.insert_typed.appendSlice(self.gpa, k.text) catch {},
+            .named => |n| switch (n) {
+                .enter => self.insert_typed.append(self.gpa, '\n') catch {},
+                .backspace => {
+                    var i = self.insert_typed.items.len;
+                    while (i > 0) {
+                        i -= 1;
+                        if (self.insert_typed.items[i] & 0xC0 != 0x80) break;
+                    }
+                    self.insert_typed.shrinkRetainingCapacity(i);
+                },
+                else => {},
+            },
+            .ctrl => {},
+        }
+    }
+
     fn leaveInsert(self: *Vim, ed: *Editor) void {
+        if (self.insert_repeat > 1 and self.insert_typed.items.len > 0 and self.mode == .insert) {
+            const typed = self.gpa.dupe(u8, self.insert_typed.items) catch null;
+            if (typed) |text| {
+                defer self.gpa.free(text);
+                for (1..self.insert_repeat) |_| {
+                    if (self.insert_open_line) ed.insertText("\n");
+                    ed.insertText(text);
+                }
+            }
+        }
+        self.insert_repeat = 1;
         // The cursor steps back onto the last inserted char.
         var c = Ctx.init(ed.buffer);
         for (ed.selections.items) |*sel| {
@@ -555,7 +596,9 @@ pub const Vim = struct {
                 ']' => self.prefix = .bracket_close,
                 'i' => {
                     ed.buffer.beginGroup();
+                    const times = self.totalCount();
                     self.enterInsert(ed);
+                    self.insert_repeat = times;
                     return true;
                 },
                 'a' => {
@@ -565,28 +608,37 @@ pub const Vim = struct {
                         const h = sel.head;
                         sel.* = .caret(if (h < c.lineEnd(h)) c.s.nextBoundary(h) else h);
                     }
+                    const times = self.totalCount();
                     self.enterInsert(ed);
+                    self.insert_repeat = times;
                     return true;
                 },
                 'I' => {
                     ed.buffer.beginGroup();
                     var c = Ctx.init(ed.buffer);
                     for (ed.selections.items) |*sel| sel.* = .caret(c.firstNonBlank(c.row(sel.head)));
+                    const times = self.totalCount();
                     self.enterInsert(ed);
+                    self.insert_repeat = times;
                     return true;
                 },
                 'A' => {
                     ed.buffer.beginGroup();
                     var c = Ctx.init(ed.buffer);
                     for (ed.selections.items) |*sel| sel.* = .caret(c.lineEnd(sel.head));
+                    const times = self.totalCount();
                     self.enterInsert(ed);
+                    self.insert_repeat = times;
                     return true;
                 },
                 'o', 'O' => {
                     ed.buffer.beginGroup();
                     // On a closed fold: below its last line / above its first.
                     if (ch == 'o') folds.openLineBelow(ed) else ed.insertLine(false);
+                    const times = self.totalCount();
                     self.enterInsert(ed);
+                    self.insert_repeat = times;
+                    self.insert_open_line = true;
                     return true;
                 },
                 'R' => {
@@ -946,6 +998,18 @@ pub const Vim = struct {
     /// cursors move; with an operator the targets are left for the caller.
     /// Returns null if `vk` isn't a motion (or awaits more keys).
     fn motionTargets(self: *Vim, ws: *Workspace, ed: *Editor, vk: VKey) !?motions.Kind {
+        if (!self.isVisual() or self.operator != null) return self.motionTargetsFrom(ws, ed, vk);
+        // A motion starts at the visual cursor, not at the head of the
+        // selection shown (a forward selection's head is one past its cursor,
+        // and a block has a selection per row).
+        ed.selections.clearRetainingCapacity();
+        for (self.visual_cursors.items) |cur| ed.selections.append(ed.gpa, .caret(cur)) catch {};
+        const kind = self.motionTargetsFrom(ws, ed, vk);
+        if (self.isVisual()) self.syncVisual(ed);
+        return kind;
+    }
+
+    fn motionTargetsFrom(self: *Vim, ws: *Workspace, ed: *Editor, vk: VKey) !?motions.Kind {
         _ = ws;
         var c = Ctx.init(ed.buffer);
         const n = self.totalCount();
@@ -1334,8 +1398,8 @@ pub const Vim = struct {
                             const indent_end = c.firstNonBlank(first_row);
                             text = ed.buffer.textRange(alloc, start, indent_end) catch "";
                             if (end > start and c.s.byte(end - 1) == '\n') end -= 1;
-                        } else if (end == ed.buffer.len() and start > 0) {
-                            // Deleting the last lines also removes the newline before them.
+                        } else if (end == ed.buffer.len() and end > start and start > 0 and c.s.byte(end - 1) != '\n') {
+                            // Last lines with no newline of their own take the one before them.
                             start -= 1;
                         }
                     }
