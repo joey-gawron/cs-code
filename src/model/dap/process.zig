@@ -85,6 +85,18 @@ pub const ProcessTransport = struct {
         }
     }
 
+    /// `close` and wait for the reader's last message to go through the
+    /// executor, which frees the transport: for the end of the program,
+    /// when nothing drains the executor afterwards.
+    pub fn shutdown(self: *ProcessTransport) void {
+        const executor = self.executor;
+        self.close();
+        if (self.reader_done) return;
+        if (self.reader) |t| t.join();
+        self.reader = null;
+        executor.drain();
+    }
+
     fn finish(self: *ProcessTransport, out: ?std.Io.File) void {
         if (self.reader) |t| t.join();
         self.reader = null;
