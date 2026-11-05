@@ -300,10 +300,17 @@ Editor" that the git module adds after the editor's own lenses above a conflicte
   conflicts (↑ ↓, wrapping; the caret of the Result and the three panes go there).
 * **Complete Merge** (header button, `mergeEditor.acceptMerge`): with unhandled conflicts it asks first ("Complete with Conflicts" / Cancel);
   then the Result is saved and the request's completion runs (git: `git add` the file, which marks it resolved) and the tab closes.
-* **Lifetime**: the tab holds the file's document open (`DocumentWell.HoldDocument`) also when no editor tab shows it. Closing the merge editor
-  without touching the Result undoes the reset (the file keeps its markers, the document is clean and is let go); closing it with unsaved
-  changes that no editor tab shows opens the file in one, so they are never lost. Commands for the active merge editor: `mergeEditor.acceptMerge`
-  (Complete Merge), `cscode.mergeEditor.nextConflict` / `previousConflict`, all with the context key `isMergeEditor`.
+* **Lifetime**: the tab is attached to the file's document (`DocumentWell.AttachDocument`), which keeps it open also when no editor tab shows
+  it, and the Result's unsaved changes count like an editor tab's while no editor tab shows the file (`DocumentWell.HasUnsavedChanges`,
+  `UnsavedAttachedDocuments`): the editor's own starting edit does not count (`MergeEditorControl.HasUnsavedChanges`), any change of the user's
+  does. Closing the merge editor (its close button, Close All, the Save prompts of a quit or of closing the window) then asks *Do you want to
+  save the changes you made to c.txt?* (Save / Don't Save / Cancel; an editor tab of the same file does not ask while the merge editor still
+  shows it). Closing it untouched undoes the reset (the file keeps its markers, the document is clean and is let go); a close nobody was asked
+  about (a programmatic one) keeps unsaved changes in an editor tab of the file. Session autosave and hot exit back the Result up like any
+  dirty document (under the file's URI, docs/SESSIONS.md), and the next start brings it back as **the file in an editor tab with its unsaved
+  changes**: the merge editor tab itself is not restored, and Resolve in Merge Editor on the file reads each conflict's state back from that
+  text. Commands for the active merge editor: `mergeEditor.acceptMerge` (Complete Merge), `cscode.mergeEditor.nextConflict` /
+  `previousConflict`, all with the context key `isMergeEditor`.
 
 ## Commands, keys, settings, context keys
 
@@ -342,7 +349,7 @@ Caches are bounded: quick-diff originals 64 entries, inline blame 256 entries pe
 immutable and replaced wholesale.
 The conflict tracker keeps one scan per open document (the latest version; the text only when it has conflicts) in a weak table, so it goes
 with the document; the per-view conflict feature drops its blocks, timer and subscriptions with the view. The merge editor disposes its three
-views, releases its two snapshot documents, withdraws its lens provider and leaves the Result's document to the tab's hold (tests:
+views, releases its two snapshot documents, withdraws its lens provider and leaves the Result's document to the well (tests:
 `A_closed_view_with_conflicts_is_not_retained`, `A_closed_merge_editor_releases_its_panes_and_documents`).
 
 ## Tests
@@ -383,7 +390,11 @@ views, releases its two snapshot documents, withdraws its lens provider and leav
   its labels, resolving through the merge model leaving the file and index resolved and committable, the model against `git merge-file`
   `--ours` / `--theirs` / `--union` / `--diff3`, the git lens, the menu items); `tests/CsCode.App.Tests/RealApp/MergeConflictTests.cs` (the
   real composition: Resolve in Merge Editor's tab, Complete Merge saving, staging, closing and letting the document go, closing untouched, the
-  editor's accept command on a conflicted file, a merge editor over a document an editor tab shows).
+  editor's accept command on a conflicted file, a merge editor over a document an editor tab shows; an unsaved Result no editor tab shows: the
+  window's unsaved changes, Close All asking (Cancel keeps it, Save writes it), the tab's close button asking and Don't Save discarding, a
+  programmatic close keeping it in an editor tab); `tests/CsCode.App.Tests/Background/MergeEditorSessionTests.cs` (a real session process: a
+  quit with `files.hotExit` off asks to save that Result and Save writes it; a hot-exit quit backs it up without asking, leaves the file alone,
+  and the next start of the session restores it as the file's editor tab, dirty, with the Result's text).
 
 ## What is left
 
@@ -400,9 +411,8 @@ views, releases its two snapshot documents, withdraws its lens provider and leav
   Combination" lens (taking both is two checkboxes, or Accept Both), no minimap, and its conflicts are diff3's, not the joined and refined
   conflicts of git's default style; a conflict starting on an empty line has no checkbox lens (§7e of docs/EDITOR.md: the header buttons
   still act on it). Complete Merge saves the Result directly (`IEditorDocument.SaveAsync`): the shell's will-save participants (format on
-  save, code actions on save) do not run. A merge editor tab is not restored with a session (sessions keep editor tabs only), and the shell's
-  unsaved-changes checks look at editor tabs: unsaved Result changes are backed up by hot exit, and asked about on quit, only while an editor
-  tab shows the file (the file on disk keeps its markers until Complete Merge or a save). Rebases and cherry-picks work (their stages are the
-  same) but the sides keep the merge's names ("Current" is the branch being rebased onto).
+  save, code actions on save) do not run. A merge editor tab is not restored with a session: its unsaved Result comes back as the file in an
+  editor tab (see Lifetime above), and Resolve in Merge Editor reopens it. Rebases and cherry-picks work (their stages are the same) but the
+  sides keep the merge's names ("Current" is the branch being rebased onto).
 * A dedicated `git-branch` icon (the Codicon set in `CsCode.Ui/Icons` has `source-control` only; adding icons regenerates a shared file).
 * View zones (VS Code's blank filler lines) to align the side-by-side panes exactly; the scroll map interpolates instead.

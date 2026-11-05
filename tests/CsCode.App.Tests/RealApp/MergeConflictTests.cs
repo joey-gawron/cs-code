@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Avalonia.Headless.XUnit;
+using CsCode.App.Docking;
+using CsCode.App.Notifications;
 using CsCode.App.Services;
 using CsCode.App.Tests.Infrastructure;
 using CsCode.Core.Platform;
@@ -8,6 +10,8 @@ using CsCode.Core.Text;
 using CsCode.Editor.Diff;
 using CsCode.Panels.Git;
 using CsCode.Panels.Git.Engine;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 namespace CsCode.App.Tests.RealApp;
@@ -95,6 +99,85 @@ public class MergeConflictTests
         Assert.True(await RealAppHost.WaitFor(() => host.Get<IDocumentManager>().Get(d) is null), "closed");
         Assert.Contains("<<<<<<< HEAD", File.ReadAllText(host.Files.Combine("d.txt")), StringComparison.Ordinal);
         Assert.DoesNotContain(host.Shell.Well.EditorTabs, t => t.Uri == d);
+    }
+
+    internal const string Markers = "one\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> topic\ntwo\n";
+    internal static MergeEditorRequest Request(Uri file) => new(file, "one\nbase\ntwo\n", "one\nours\ntwo\n", "one\ntheirs\ntwo\n", "Merging: c.txt");
+
+    /// <summary>The real app with save prompts answered by a fake, and a merge editor over c.txt (markers) that no editor tab shows.</summary>
+    private static async Task<(RealAppHost Host, FakeModalDialogs Dialogs, Uri File, ShellDocument Tab, MergeEditorControl Editor)> OpenUnsavedMergeAsync()
+    {
+        var dialogs = new FakeModalDialogs();
+        var host = await RealAppHost.Create(h => h.Files.WriteFile("c.txt", Markers)).StartAsync([], s =>
+        {
+            s.RemoveAll<IModalDialogs>();
+            s.AddSingleton<IModalDialogs>(dialogs);
+        });
+        var file = host.Files.FileUri("c.txt");
+        await host.Get<IMergeEditorService>().OpenMergeEditorAsync(Request(file));
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.Active?.LiveView is MergeEditorControl { Merge: not null }, 20_000), "merge editor");
+        var tab = host.Shell.Well.Active!;
+        var editor = (MergeEditorControl)tab.LiveView!;
+        // the editor's own starting edit (the base in the conflict) is no change of the user's: nothing to ask about yet
+        Assert.False(host.Shell.Well.HasUnsavedChanges);
+        Assert.False(host.Window.HasUnsavedChanges);
+        editor.Set(0, MergeSides.Incoming);
+        Assert.True(host.Shell.Well.HasUnsavedChanges);
+        Assert.True(host.Window.HasUnsavedChanges);
+        Assert.Equal(file, Assert.Single(host.Shell.Well.UnsavedAttachedDocuments).Document.Uri);
+        Assert.Empty(host.Shell.Well.EditorTabs);
+        return (host, dialogs, file, tab, editor);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_merge_editors_unsaved_result_no_editor_tab_shows_is_asked_about_at_close_all_like_an_editor_tab()
+    {
+        var (host, dialogs, file, tab, _) = await OpenUnsavedMergeAsync();
+        await using var _ = host;
+        var well = host.Shell.Well;
+        // Close All (what a quit's save prompts run): Cancel keeps everything
+        dialogs.Answers.Enqueue("Cancel");
+        Assert.False(await well.CloseAllAsync());
+        var prompt = Assert.Single(dialogs.Shown);
+        Assert.Contains("c.txt", prompt.Message, StringComparison.Ordinal);
+        Assert.Equal(["Save", "Don't Save", "Cancel"], prompt.Buttons);
+        Assert.Contains(tab, well.Tabs);
+        // Save: the result is written and the document let go with the tab
+        dialogs.Answers.Enqueue("Save");
+        Assert.True(await well.CloseAllAsync());
+        Assert.Equal("one\ntheirs\ntwo\n", File.ReadAllText(host.Files.Combine("c.txt")));
+        Assert.True(await RealAppHost.WaitFor(() => host.Get<IDocumentManager>().Get(file) is null), "document closed");
+        Assert.Empty(well.EditorTabs);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task Closing_a_merge_editors_tab_asks_too_and_dont_save_discards_its_result()
+    {
+        var (host, dialogs, file, tab, _) = await OpenUnsavedMergeAsync();
+        await using var _ = host;
+        // the tab's close button (Dock's own close): the well cancels it and asks
+        dialogs.Answers.Enqueue("Don't Save");
+        host.Get<ShellDockFactory>().CloseDockable(tab);
+        Assert.True(await RealAppHost.WaitFor(() => !host.Shell.Well.Tabs.Contains(tab), 20_000), "closed after the prompt");
+        Assert.Single(dialogs.Shown);
+        Assert.True(await RealAppHost.WaitFor(() => host.Get<IDocumentManager>().Get(file) is null), "document closed");
+        Assert.Equal(Markers, File.ReadAllText(host.Files.Combine("c.txt")));
+        Assert.Empty(host.Shell.Well.EditorTabs);
+        Assert.False(host.Shell.Well.HasUnsavedChanges);
+    }
+
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task A_close_nobody_was_asked_about_keeps_the_unsaved_result_in_an_editor_tab()
+    {
+        var (host, dialogs, file, tab, _) = await OpenUnsavedMergeAsync();
+        await using var _ = host;
+        await host.Shell.Well.CloseAsync(tab, prompt: false);
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Well.Find(file) is not null, 20_000), "kept in an editor tab");
+        var editorTab = host.Shell.Well.Find(file)!;
+        Assert.True(editorTab.IsDirty);
+        Assert.Equal("one\ntheirs\ntwo\n", editorTab.Doc.GetText());
+        Assert.Empty(dialogs.Shown);
+        Assert.True(host.Shell.Well.HasUnsavedChanges);
     }
 
     [AvaloniaFact(Timeout = 120_000)]

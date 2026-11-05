@@ -67,7 +67,9 @@ public sealed partial class SessionWindowController
     private void TrackTabs()
     {
         var live = _shell.Well.EditorTabs.ToHashSet();
-        foreach (var gone in _tabSubs.Keys.Where(t => !live.Contains(t)).ToArray())
+        // the documents view tabs edit (a merge editor's result): their unsaved changes are the session's like an editor tab's
+        var attached = _shell.Well.AttachedDocuments;
+        foreach (var gone in _tabSubs.Keys.Where(t => !(t is EditorTab e ? live.Contains(e) : attached.Any(a => ReferenceEquals(a.Tab, t)))).ToArray())
         {
             _tabSubs[gone].Dispose();
             _tabSubs.Remove(gone);
@@ -84,6 +86,23 @@ public sealed partial class SessionWindowController
             }));
             // Typing into a dirty document: one volatile write per keystroke (the saver arms its timer once per save).
             store.Add(doc.Changed.Subscribe(_ => { if (doc.IsDirty) OnSessionChanged(); }));
+            _tabSubs[tab] = store;
+        }
+        foreach (var (tab, doc) in attached)
+        {
+            if (_tabSubs.ContainsKey(tab) || tab.IsDisposed) continue;
+            var store = new DisposableStore();
+            store.Add(doc.DirtyChanged.Subscribe(_ =>
+            {
+                OnSessionChanged();
+                UpdateNeedsPrompt();
+            }));
+            store.Add(doc.Changed.Subscribe(_ =>
+            {
+                if (!doc.IsDirty) return;
+                OnSessionChanged();
+                UpdateNeedsPrompt(); // the first change of the user's after a merge editor's own starting edit
+            }));
             _tabSubs[tab] = store;
         }
     }
@@ -132,6 +151,27 @@ public sealed partial class SessionWindowController
                 LanguageId = doc.IsUntitled ? doc.LanguageId : null, ViewState = view is null ? null : ToSession(view), BackupId = backupId,
             });
         }
+        // A view tab's unsaved document no editor tab shows (a merge editor's result): an editor of the file with its backup, so it comes back as the
+        // file in an editor tab with its unsaved changes (the merge editor itself is not restored: Resolve in Merge Editor reads them back).
+        foreach (var (tab, doc) in well.UnsavedAttachedDocuments)
+        {
+            var uri = doc.Uri.ToString();
+            if (editors.Any(e => e.Uri == uri)) continue;
+            string? backupId = null;
+            if (includeBackups)
+            {
+                backupId = HotExitBackupStore.IdFor(uri);
+                if (_backedUp.TryGetValue(backupId, out var version) && version == doc.Version) keep.Add(backupId);
+                else
+                {
+                    var snapshot = doc is EditorDocument editor ? editor.Snapshot() : null;
+                    changed.Add(new ChangedText(backupId, uri, snapshot, snapshot is null ? doc.GetText() : null, doc.EncodingName, doc.EndOfLine, doc.LanguageId,
+                        snapshot?.Version ?? doc.Version));
+                }
+            }
+            var group = factory.GroupOf(tab) is { } g ? groups.IndexOf(g) : 0;
+            editors.Add(new SessionEditor { Uri = uri, Group = Math.Max(0, group), Order = order++, BackupId = backupId });
+        }
         // Backups of remote documents that wait for their connection are kept as they are (written again only under a new name).
         var remote = PendingRemoteBackups(_host.SessionName ?? "");
         keep.AddRange(remote.Keep.Where(id => !keep.Contains(id) && !changed.Any(c => c.Id == id)));
@@ -166,7 +206,7 @@ public sealed partial class SessionWindowController
     private void UpdateNeedsPrompt()
     {
         if (_disposed) return;
-        var dirty = _shell.Well.EditorTabs.Any(t => t.IsDirty);
+        var dirty = _shell.Well.HasUnsavedChanges; // editor tabs, and a merge editor's unsaved result no editor tab shows
         var hotExitOff = _config?.Get(BackgroundSettings.HotExit, BackgroundSettings.HotExitOnExitAndWindowClose) == BackgroundSettings.HotExitOff;
         _host.NeedsPrompt = _closeAsks || (dirty && (hotExitOff || _readOnly || Volatile.Read(ref _skippedBackups) > 0));
     }

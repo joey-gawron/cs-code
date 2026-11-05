@@ -121,6 +121,12 @@ public sealed class MergeEditorControl : UserControl, IDisposable
     public IEventSource<object?> Completed => _completed;
 
     internal int Id => _id;
+    /// <summary>
+    /// The Result has unsaved changes of the user's: dirty, and not only by the editor's own starting edit (the reset of a file with markers,
+    /// which closing undoes). What the shell's save prompts and hot exit go by. UI thread.
+    /// </summary>
+    public bool HasUnsavedChanges => _result.IsDirty && !(_resetVersion is { } v && _result.Version == v);
+
     /// <summary>The merge (null until computed) and the choices made so far.</summary>
     public ThreeWayMerge? Merge => _merge;
     public MergeResolution? Resolution => _resolution;

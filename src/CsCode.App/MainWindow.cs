@@ -642,7 +642,7 @@ public sealed class MainWindow : Window, IWindowChrome
     public bool IsExiting { get; private set; }
 
     /// <summary>An editor has changes not saved yet (what the Save prompts of a close would ask about).</summary>
-    public bool HasUnsavedChanges => _shell.Well.EditorTabs.Any(t => t.IsDirty);
+    public bool HasUnsavedChanges => _shell.Well.HasUnsavedChanges; // also a merge editor's unsaved result no editor tab shows
 
     /// <summary>
     /// The desktop session ends (macOS log out with nothing unsaved): the layout is saved, as for any close, so the next start restores the tabs,
