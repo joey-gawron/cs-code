@@ -111,9 +111,25 @@ pub const Sprite = extern struct {
     clip: [4]f32,
 };
 
+/// A full-colour image drawn stretched over `bounds` (device px), clipped.
+pub const ImageDraw = struct {
+    id: u32,
+    bounds: [4]f32,
+    clip: [4]f32,
+};
+
+/// Pixels of an image the scene keeps (RGBA8, straight alpha) until it is
+/// removed; the renderer makes a texture of each.
+pub const ImageData = struct {
+    width: u32,
+    height: u32,
+    pixels: []u8,
+};
+
 pub const Layer = struct {
     quads: std.ArrayList(Quad) = .empty,
     sprites: std.ArrayList(Sprite) = .empty,
+    images: std.ArrayList(ImageDraw) = .empty,
 };
 
 pub const QuadStyle = struct {
@@ -138,6 +154,9 @@ pub const Scene = struct {
     /// Device-pixel viewport.
     width: f32 = 0,
     height: f32 = 0,
+    /// Images by id (see `addImage`).
+    images: std.AutoHashMapUnmanaged(u32, ImageData) = .empty,
+    next_image: u32 = 1,
 
     pub fn init(gpa: Allocator) Scene {
         return .{ .gpa = gpa };
@@ -147,7 +166,11 @@ pub const Scene = struct {
         for (self.layers.items) |*layer| {
             layer.quads.deinit(self.gpa);
             layer.sprites.deinit(self.gpa);
+            layer.images.deinit(self.gpa);
         }
+        var it = self.images.valueIterator();
+        while (it.next()) |img| self.gpa.free(img.pixels);
+        self.images.deinit(self.gpa);
         self.layers.deinit(self.gpa);
         self.layer_stack.deinit(self.gpa);
         self.clip_stack.deinit(self.gpa);
@@ -157,6 +180,7 @@ pub const Scene = struct {
         for (self.layers.items) |*layer| {
             layer.quads.clearRetainingCapacity();
             layer.sprites.clearRetainingCapacity();
+            layer.images.clearRetainingCapacity();
         }
         if (self.layers.items.len == 0) try self.layers.append(self.gpa, .{});
         self.layer_count = 1;
@@ -250,6 +274,35 @@ pub const Scene = struct {
             .bounds = .{ bounds.x, bounds.y, bounds.w, bounds.h },
             .uv = .{ uv.x, uv.y, uv.w, uv.h },
             .color = color.arr(),
+            .clip = .{ clip.x, clip.y, clip.w, clip.h },
+        }) catch {};
+    }
+
+    /// Keeps a copy of RGBA8 pixels and returns the id to draw them with.
+    pub fn addImage(self: *Scene, width: u32, height: u32, rgba: []const u8) !u32 {
+        std.debug.assert(rgba.len == @as(usize, width) * height * 4);
+        const copy = try self.gpa.dupe(u8, rgba);
+        errdefer self.gpa.free(copy);
+        const id = self.next_image;
+        try self.images.put(self.gpa, id, .{ .width = width, .height = height, .pixels = copy });
+        self.next_image += 1;
+        return id;
+    }
+
+    pub fn removeImage(self: *Scene, id: u32) void {
+        if (self.images.fetchRemove(id)) |kv| self.gpa.free(kv.value.pixels);
+    }
+
+    /// Draws image `id` stretched over `rect` (logical px).
+    pub fn image(self: *Scene, rect: Rect, id: u32) void {
+        if (rect.w <= 0 or rect.h <= 0) return;
+        const clip = self.currentClip();
+        const dev = self.snap(rect);
+        const visible = dev.intersect(clip);
+        if (visible.w <= 0 or visible.h <= 0) return;
+        self.currentLayer().images.append(self.gpa, .{
+            .id = id,
+            .bounds = .{ dev.x, dev.y, dev.w, dev.h },
             .clip = .{ clip.x, clip.y, clip.w, clip.h },
         }) catch {};
     }

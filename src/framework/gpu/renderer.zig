@@ -128,6 +128,35 @@ const sprite_fs =
     \\}
 ;
 
+const image_vs =
+    \\#version 330 core
+    \\uniform vec2 u_viewport;
+    \\uniform vec4 u_bounds;
+    \\out vec2 v_pos;
+    \\out vec2 v_uv;
+    \\void main() {
+    \\    vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+    \\    vec2 pos = u_bounds.xy + corner * u_bounds.zw;
+    \\    v_pos = pos;
+    \\    v_uv = corner;
+    \\    gl_Position = vec4(pos / u_viewport * vec2(2.0, -2.0) + vec2(-1.0, 1.0), 0.0, 1.0);
+    \\}
+;
+
+const image_fs =
+    \\#version 330 core
+    \\in vec2 v_pos;
+    \\in vec2 v_uv;
+    \\uniform vec4 u_clip;
+    \\uniform sampler2D u_tex;
+    \\out vec4 frag;
+    \\void main() {
+    \\    vec2 inside = step(u_clip.xy, v_pos) * step(v_pos, u_clip.xy + u_clip.zw);
+    \\    vec4 c = texture(u_tex, v_uv);
+    \\    frag = vec4(c.rgb * c.a, c.a) * inside.x * inside.y;
+    \\}
+;
+
 const Pipeline = struct {
     program: gl.GLuint,
     vao: gl.GLuint,
@@ -178,9 +207,91 @@ const Pipeline = struct {
     }
 };
 
+/// Colour images: one textured quad per draw, textures made from the scene's
+/// image pixels when first needed and dropped when the scene forgets them.
+const ImagePipeline = struct {
+    program: gl.GLuint,
+    vao: gl.GLuint,
+    u_viewport: gl.GLint,
+    u_bounds: gl.GLint,
+    u_clip: gl.GLint,
+    u_tex: gl.GLint,
+    textures: std.AutoHashMapUnmanaged(u32, gl.GLuint) = .empty,
+
+    fn init() !ImagePipeline {
+        const program = try linkProgram(image_vs, image_fs);
+        var vao: gl.GLuint = 0;
+        gl.p.GenVertexArrays(1, @ptrCast(&vao));
+        return .{
+            .program = program,
+            .vao = vao,
+            .u_viewport = gl.p.GetUniformLocation(program, "u_viewport"),
+            .u_bounds = gl.p.GetUniformLocation(program, "u_bounds"),
+            .u_clip = gl.p.GetUniformLocation(program, "u_clip"),
+            .u_tex = gl.p.GetUniformLocation(program, "u_tex"),
+        };
+    }
+
+    fn deinit(self: *ImagePipeline) void {
+        var it = self.textures.valueIterator();
+        while (it.next()) |t| gl.p.DeleteTextures(1, @ptrCast(t));
+        self.textures.deinit(std.heap.page_allocator);
+        gl.p.DeleteProgram(self.program);
+        gl.p.DeleteVertexArrays(1, @ptrCast(&self.vao));
+    }
+
+    /// Textures for the scene's images; those it dropped are deleted.
+    fn sync(self: *ImagePipeline, scene: *const Scene) void {
+        var gone: [16]u32 = undefined;
+        var n: usize = 0;
+        var it = self.textures.keyIterator();
+        while (it.next()) |id| {
+            if (!scene.images.contains(id.*) and n < gone.len) {
+                gone[n] = id.*;
+                n += 1;
+            }
+        }
+        for (gone[0..n]) |id| {
+            if (self.textures.fetchRemove(id)) |kv| gl.p.DeleteTextures(1, @ptrCast(&kv.value));
+        }
+        var images = scene.images.iterator();
+        while (images.next()) |e| {
+            if (self.textures.contains(e.key_ptr.*)) continue;
+            var tex: gl.GLuint = 0;
+            gl.p.GenTextures(1, @ptrCast(&tex));
+            gl.p.BindTexture(gl.TEXTURE_2D, tex);
+            gl.p.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.p.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.p.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.p.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.p.PixelStorei(gl.UNPACK_ALIGNMENT, 1);
+            const img = e.value_ptr.*;
+            gl.p.TexImage2D(gl.TEXTURE_2D, 0, @intCast(gl.RGBA8), @intCast(img.width), @intCast(img.height), 0, gl.RGBA, gl.UNSIGNED_BYTE, img.pixels.ptr);
+            self.textures.put(std.heap.page_allocator, e.key_ptr.*, tex) catch gl.p.DeleteTextures(1, @ptrCast(&tex));
+        }
+    }
+
+    fn draw(self: *ImagePipeline, draws: []const scene_mod.ImageDraw, w: f32, h: f32) void {
+        if (draws.len == 0) return;
+        gl.p.UseProgram(self.program);
+        gl.p.Uniform2f(self.u_viewport, w, h);
+        gl.p.Uniform1i(self.u_tex, 0);
+        gl.p.ActiveTexture(gl.TEXTURE0);
+        gl.p.BindVertexArray(self.vao);
+        for (draws) |d| {
+            const tex = self.textures.get(d.id) orelse continue;
+            gl.p.BindTexture(gl.TEXTURE_2D, tex);
+            gl.p.Uniform4f(self.u_bounds, d.bounds[0], d.bounds[1], d.bounds[2], d.bounds[3]);
+            gl.p.Uniform4f(self.u_clip, d.clip[0], d.clip[1], d.clip[2], d.clip[3]);
+            gl.p.DrawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 1);
+        }
+    }
+};
+
 pub const Renderer = struct {
     quads: Pipeline,
     sprites: Pipeline,
+    images: ImagePipeline,
     u_atlas_size: gl.GLint,
     u_atlas: gl.GLint,
     u_contrast: gl.GLint,
@@ -192,6 +303,7 @@ pub const Renderer = struct {
         return .{
             .quads = quads,
             .sprites = sprites,
+            .images = try ImagePipeline.init(),
             .u_atlas_size = gl.p.GetUniformLocation(sprites.program, "u_atlas_size"),
             .u_atlas = gl.p.GetUniformLocation(sprites.program, "u_atlas"),
             .u_contrast = gl.p.GetUniformLocation(sprites.program, "u_contrast"),
@@ -201,9 +313,11 @@ pub const Renderer = struct {
     pub fn deinit(self: *Renderer) void {
         self.quads.deinit();
         self.sprites.deinit();
+        self.images.deinit();
     }
 
     pub fn draw(self: *Renderer, scene: *const Scene, atlas: *const Atlas, clear: scene_mod.Color) void {
+        self.images.sync(scene);
         const w = scene.width;
         const h = scene.height;
         gl.p.Viewport(0, 0, @intFromFloat(w), @intFromFloat(h));
@@ -230,8 +344,11 @@ pub const Renderer = struct {
             }
             if (layer.sprites.items.len > 0) {
                 gl.p.UseProgram(self.sprites.program);
+                gl.p.ActiveTexture(gl.TEXTURE0);
+                gl.p.BindTexture(gl.TEXTURE_2D, atlas.texture);
                 self.sprites.draw(Sprite, layer.sprites.items);
             }
+            self.images.draw(layer.images.items, w, h);
         }
         gl.p.BindVertexArray(0);
     }
