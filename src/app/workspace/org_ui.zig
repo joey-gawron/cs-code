@@ -269,10 +269,16 @@ pub fn startCapture(ws: *Workspace) void {
     const settings = ws.env.settings;
     var templates = capture_mod.parseTemplates(alloc, settings.org_capture_templates_json);
     if (templates.len == 0) {
-        // The one target org_capture_file / org_capture_heading name.
-        const one = alloc.alloc(capture_mod.Template, 1) catch return arena.deinit();
-        one[0] = .{ .file = settings.org_capture_file, .heading = settings.org_capture_heading };
-        templates = one;
+        // cs-code's four: tasks, notes and events go where org_capture_file /
+        // org_capture_heading say, the journal into journal.org's date tree.
+        const file = settings.org_capture_file;
+        const heading = settings.org_capture_heading;
+        const four = alloc.alloc(capture_mod.Template, 4) catch return arena.deinit();
+        four[0] = .{ .key = "t", .description = "Task", .file = file, .heading = heading, .template = "* TODO %^{Task}\n  %U" };
+        four[1] = .{ .key = "n", .description = "Note", .file = file, .heading = heading, .template = "* %^{Title}\n  %U" };
+        four[2] = .{ .key = "e", .description = "Event", .file = file, .heading = heading, .template = "* %^{What}\n  %^T" };
+        four[3] = .{ .key = "j", .description = "Journal", .file = "~/org/journal.org", .template = "* %<%H:%M> %^{Title}", .datetree = true };
+        templates = four;
     }
     var c: Capture = .{ .arena = arena, .templates = templates };
     // %a, %i and %f: where capture started.
@@ -314,6 +320,7 @@ fn capture(ws: *Workspace, input: []const u8) void {
         .link = c.link,
         .selection = c.selection,
         .file_name = c.file_name,
+        .user = if (std.c.getenv("USER")) |u| std.mem.span(u) else "",
     }) catch return;
     defer ws.gpa.free(entry);
     const Ctx = struct {

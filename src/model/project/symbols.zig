@@ -6,6 +6,7 @@ const std = @import("std");
 const c = @import("c");
 const buffer_mod = @import("../text/buffer.zig");
 const Regex = @import("../../framework/util/regex.zig").Regex;
+const org_parser = @import("../org/parser.zig");
 
 const Allocator = std.mem.Allocator;
 const Buffer = buffer_mod.Buffer;
@@ -34,6 +35,10 @@ pub fn extract(gpa: Allocator, buffer: *Buffer) !std.ArrayList(Symbol) {
     errdefer {
         for (out.items) |s| gpa.free(s.name);
         out.deinit(gpa);
+    }
+    if (std.mem.eql(u8, buffer.language.name, "Org")) {
+        try orgHeadings(gpa, buffer, &out);
+        return out;
     }
     buffer.updateSyntax();
     if (buffer.syntax) |*syntax| if (syntax.tree) |tree| {
@@ -88,6 +93,33 @@ fn isZigContainer(buffer: *Buffer, node: c.TSNode, kind: []const u8) bool {
     return false;
 }
 
+/// An org file's outline: every heading, indented by its level, with its
+/// TODO state ("  TODO Write the report" for a second-level heading).
+fn orgHeadings(gpa: Allocator, buffer: *Buffer, out: *std.ArrayList(Symbol)) !void {
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(gpa);
+    const keywords: org_parser.Keywords = .{};
+    var in_block = false;
+    var row: u32 = 0;
+    while (row < buffer.lineCount()) : (row += 1) {
+        const text = try buffer.lineText(row, &line);
+        const trimmed = std.mem.trimStart(u8, text, " \t");
+        if (std.ascii.startsWithIgnoreCase(trimmed, "#+BEGIN_")) in_block = true;
+        if (std.ascii.startsWithIgnoreCase(trimmed, "#+END_")) in_block = false;
+        if (in_block) continue;
+        const h = org_parser.parseHeadingLine(text, keywords) orelse continue;
+        var name: std.ArrayList(u8) = .empty;
+        errdefer name.deinit(gpa);
+        try name.appendNTimes(gpa, ' ', (h.level - 1) * 2);
+        if (h.todo) |kw| {
+            try name.appendSlice(gpa, kw);
+            try name.append(gpa, ' ');
+        }
+        try name.appendSlice(gpa, h.title);
+        try out.append(gpa, .{ .name = try name.toOwnedSlice(gpa), .offset = buffer.lineStart(row) });
+    }
+}
+
 fn regexFallback(gpa: Allocator, buffer: *Buffer, out: *std.ArrayList(Symbol)) !void {
     var re = try Regex.compile(gpa, "^\\s*(?:pub\\s+|export\\s+|async\\s+|static\\s+)*(?:fn|def|class|function|func|struct|enum|impl|trait|interface|type|\\*+)\\s+([A-Za-z_][\\w.]*)", .{});
     defer re.deinit();
@@ -100,4 +132,22 @@ fn regexFallback(gpa: Allocator, buffer: *Buffer, out: *std.ArrayList(Symbol)) !
         const g = m.groups[0] orelse continue;
         try out.append(gpa, .{ .name = try gpa.dupe(u8, text[g[0]..g[1]]), .offset = buffer.lineStart(row) + g[0] });
     }
+}
+
+test "an org file's symbols are its headings, indented by level" {
+    const gpa = std.testing.allocator;
+    var buffer = try Buffer.initText(gpa, 0, "#+TITLE: x\n* Top\n** TODO [#A] Second :tag:\n#+BEGIN_SRC sh\n* not a heading\n#+END_SRC\n*** Third\n* Next top\n");
+    defer buffer.deinit();
+    buffer.language = @import("../syntax/languages.zig").byName("Org").?;
+    var list = try extract(gpa, &buffer);
+    defer {
+        for (list.items) |sym| gpa.free(sym.name);
+        list.deinit(gpa);
+    }
+    try std.testing.expectEqual(@as(usize, 4), list.items.len);
+    try std.testing.expectEqualStrings("Top", list.items[0].name);
+    try std.testing.expectEqualStrings("  TODO Second", list.items[1].name);
+    try std.testing.expectEqualStrings("    Third", list.items[2].name);
+    try std.testing.expectEqualStrings("Next top", list.items[3].name);
+    try std.testing.expectEqual(buffer.lineStart(2), list.items[1].offset);
 }

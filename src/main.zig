@@ -392,6 +392,7 @@ test {
     _ = @import("model/org/refile.zig");
     _ = @import("model/org/export.zig");
     _ = @import("app/org/org.zig");
+    _ = @import("model/project/symbols.zig");
     _ = @import("framework/ui/theme.zig");
     _ = @import("framework/ui/scheme_loader.zig");
     _ = @import("app/settings/sun.zig");
