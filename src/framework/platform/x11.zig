@@ -107,7 +107,7 @@ pub const Window = struct {
     pressed_button: ?platform.MouseButton = null,
     pointer_outside: bool = false,
     cursor_shape: platform.CursorShape = .default,
-    cursors: [@typeInfo(platform.CursorShape).@"enum".fields.len]c.Cursor = @splat(0),
+    cursors: [@typeInfo(platform.CursorShape).@"enum".field_names.len]c.Cursor = @splat(0),
     last_click_time: i64 = 0,
     last_click_pos: platform.Vec2 = .{},
     last_click_button: platform.MouseButton = .left,
@@ -416,13 +416,13 @@ pub const Window = struct {
     }
 
     fn internAtoms(display: *c.Display) Atoms {
-        const fields = @typeInfo(Atoms).@"struct".fields;
-        var names: [fields.len][*c]u8 = undefined;
-        inline for (fields, 0..) |f, i| names[i] = @constCast(f.name.ptr);
-        var values: [fields.len]c.Atom = @splat(0);
-        _ = c.XInternAtoms(display, &names, fields.len, 0, &values);
+        const field_names = @typeInfo(Atoms).@"struct".field_names;
+        var names: [field_names.len][*c]u8 = undefined;
+        inline for (field_names, 0..) |name, i| names[i] = @constCast(name.ptr);
+        var values: [field_names.len]c.Atom = @splat(0);
+        _ = c.XInternAtoms(display, &names, field_names.len, 0, &values);
         var atoms: Atoms = .{};
-        inline for (fields, 0..) |f, i| @field(atoms, f.name) = values[i];
+        inline for (field_names, 0..) |name, i| @field(atoms, name) = values[i];
         return atoms;
     }
 

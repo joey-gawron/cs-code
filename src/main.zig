@@ -10,6 +10,7 @@
 //! included). `CS_DEMO_INTERVAL_MS` changes the 100 ms between demo steps.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 const gl = @import("framework/gpu/gl.zig");
 const Atlas = @import("framework/gpu/atlas.zig").Atlas;
@@ -387,8 +388,10 @@ fn printSummary(gpa: std.mem.Allocator, stats: *const stats_mod.Stats) void {
         const s = entry[1];
         log_to_stderr("  {s}: p50 {d:.2} ms, p95 {d:.2} ms, max {d:.2} ms\n", .{ entry[0], s.p50_ms, s.p95_ms, s.max_ms });
     }
-    var ru: c.struct_rusage = undefined;
-    if (c.getrusage(c.RUSAGE_SELF, &ru) == 0) log_to_stderr("peak RSS {d:.1} MB\n", .{@as(f64, @floatFromInt(ru.ru_maxrss)) / (1024 * 1024)});
+    var ru: std.c.rusage = undefined;
+    // ru_maxrss is bytes on macOS, kilobytes on Linux.
+    const maxrss_unit: f64 = if (builtin.os.tag.isDarwin()) 1024 * 1024 else 1024;
+    if (std.c.getrusage(std.c.rusage.SELF, &ru) == 0) log_to_stderr("peak RSS {d:.1} MB\n", .{@as(f64, @floatFromInt(ru.maxrss)) / maxrss_unit});
 }
 
 fn logDemo(editor: *Editor, label: []const u8, buf: []u8) void {
