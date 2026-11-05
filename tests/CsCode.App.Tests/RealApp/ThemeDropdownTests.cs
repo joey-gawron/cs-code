@@ -71,7 +71,7 @@ public class ThemeDropdownTests
         var items = ((IEnumerable<ThemeListItem>)picker.ItemsSource!).ToList();
         var choices = items.OfType<ThemeChoiceItem>().ToList();
         Assert.Equal(themes.Available.Count, choices.Count);
-        Assert.Equal(24, choices.Count); // 3 Visual Studio 2022 + the 21 embedded in TextMateSharp.Grammars
+        Assert.Equal(26, choices.Count); // 3 Visual Studio 2022 + the 21 embedded in TextMateSharp.Grammars + CsCode's Gruvbox Dark and Light
         Assert.Equal([ThemeSelection.DarkGroup, ThemeSelection.LightGroup, ThemeSelection.HighContrastGroup], items.OfType<ThemeGroupItem>().Select(g => g.Title));
         // Each group's members follow its header and match the group.
         string? group = null;

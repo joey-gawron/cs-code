@@ -20,7 +20,7 @@ public sealed record CommandLineOptions(
     bool ShowVersion,
     IReadOnlyList<string> UnknownSwitches)
 {
-    /// <summary><c>ssh://[user@]host[:port]/path</c> (also <c>docker://container/path</c>, <c>wsl://distro/path</c>) arguments: remote folders to open (connecting first).</summary>
+    /// <summary><c>ssh://[user@]host[:port]/path</c> (also <c>docker://container/path</c>, <c>wsl://distro/path</c>, <c>lima://instance/path</c>) arguments: remote folders to open (connecting first).</summary>
     public IReadOnlyList<string> RemoteTargets { get; init; } = [];
 
     public static CommandLineOptions Empty { get; } = new([], false, false, false, false, []);
@@ -103,7 +103,7 @@ public sealed record CommandLineOptions(
                 case "--headless-test": headless = true; break;
                 default:
                     if (arg.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase) || arg.StartsWith("docker://", StringComparison.OrdinalIgnoreCase)
-                        || arg.StartsWith("wsl://", StringComparison.OrdinalIgnoreCase)) remote.Add(arg);
+                        || arg.StartsWith("wsl://", StringComparison.OrdinalIgnoreCase) || arg.StartsWith("lima://", StringComparison.OrdinalIgnoreCase)) remote.Add(arg);
                     else if (arg.StartsWith('-') && arg.Length > 1) unknown.Add(arg);
                     else targets.Add(ParseTarget(arg, cwd));
                     break;
@@ -141,7 +141,7 @@ public sealed record CommandLineOptions(
 
           <path>                 A folder (opens as the workspace) or a file (opens in an editor). file:line[:col] jumps to a position.
           ssh://[user@]host[:port]/path   Connect to the host over ssh and open the remote folder
-                                          (docker://container/path and wsl://distro/path likewise).
+                                          (docker://container/path, wsl://distro/path and lima://instance/path likewise).
           -g, --goto <file:line[:col]>  Open a file at a position.
           -s, --session <name>   Open the named session (shown at once when it is already running; created when it does not exist).
           -n, --new-window       Open a new unnamed session (window-N).

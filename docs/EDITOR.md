@@ -145,7 +145,7 @@ Numbers refer to the brief's MUST list.
 5. **LanguageService** — detection order: `files.associations` → exact file name → name pattern → longest extension → first-line regex; ~40 built-in languages from embedded manifests plus a supplement table; `language-configuration.json` parser (JSONC; brackets,
    auto-closing pairs with `notIn`, surrounding pairs, word pattern as string or `{pattern,flags}`, folding markers, indentation rules, `onEnterRules`, `offSide`), live on contribution changes.
 6. **ColorThemeService + VS Code theme loader** — JSON/JSONC, `include` chains, `colors`, `tokenColors` (comma/array scopes), `semanticTokenColors`, light/dark/HC; ~200-key defaults table for dark/light/HC with fallback chains; selection persisted in `workbench.colorTheme`;
-   the 21 themes embedded in `TextMateSharp.Grammars` built in (`BuiltinColorThemes`: Dark+, Light+, Monokai, Solarized, Dracula, ... with VS Code's labels); `Register` for shell themes;
+   the 21 themes embedded in `TextMateSharp.Grammars` built in (`BuiltinColorThemes`: Dark+, Light+, Monokai, Solarized, Dracula, ... with VS Code's labels) and CsCode's own Gruvbox Dark and Light; `Register` for shell themes;
    user themes from `{UserDataDir}/themes` watched for changes; `IColorThemePreview` (a picker shows a theme without selecting or persisting it) and `SetCompletion`
    (the shell's VS 2022 chrome completion is applied to every theme the service hands out; docs/SHELL.md).
 7. **Editing behaviours** — all the listed commands (§7), auto-indent from the language configuration + `.editorconfig`, auto-close/over-type/surround honouring `notIn` and the TextMate token under the caret, typing bursts coalesced into one undo step, sort/join/transpose/trim, expand/shrink selection

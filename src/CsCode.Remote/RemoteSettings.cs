@@ -23,6 +23,8 @@ public static class RemoteSettings
     public const string DockerPath = "remote.docker.path";
     /// <summary>wsl.exe for <c>wsl://distro</c> remotes (Windows).</summary>
     public const string WslPath = "remote.wsl.path";
+    /// <summary>limactl for <c>lima://instance</c> remotes (Lima VMs).</summary>
+    public const string LimaPath = "remote.lima.path";
     /// <summary><c>inProcess</c> (default) or <c>process</c>: run the language client in a separate local cscode-server process (own heap/GC/CPU scheduling). Applies on restart.</summary>
     public const string LanguageHost = "cscode.languageHost";
 
@@ -44,6 +46,7 @@ public static class RemoteSettings
         M(Hosts, new Dictionary<string, object>(), "Per-host overrides of the remote.ssh.* settings, keyed by host as typed (e.g. {\"box\": {\"serverInstallPath\": \"/opt/cscode\"}})."),
         M(DockerPath, "docker", "The docker CLI used for docker://container remotes (Remote: Connect to Host… accepts docker://container)."),
         M(WslPath, "wsl.exe", "wsl.exe used for wsl://distro remotes (Windows; WSL distributions run the Linux server)."),
+        M(LimaPath, "limactl", "The limactl program used for lima://instance remotes (Remote: Connect to Lima VM… lists the instances 'limactl list' knows)."),
         P(LanguageHost, "inProcess", "Where language servers' clients run: 'inProcess' or 'process' (a separate local cscode-server: own heap, GC and CPU scheduling). Applies on restart.")
             with { Scope = ConfigurationScope.Application },
     ];

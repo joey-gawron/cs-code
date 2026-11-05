@@ -4,6 +4,7 @@ using CsCode.Core.Remote;
 using CsCode.Remote.Client;
 using CsCode.Remote.Protocol;
 using CsCode.Remote.Ssh;
+using CsCode.Remote.Transport;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,6 +19,7 @@ namespace CsCode.Remote.Shell;
 public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
 {
     public const string Connect = "remote.connect";
+    public const string ConnectLima = "remote.connectLima";
     public const string OpenFolder = "remote.openFolder";
     public const string Disconnect = "remote.disconnect";
     public const string Reconnect = "remote.reconnect";
@@ -39,6 +41,7 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         if (sp.GetService<ICommandService>() is { } commands)
         {
             _store.Add(commands.Register(Connect, inv => Run(ConnectToHostAsync(inv.Arg<string>(0))), new CommandMetadata(Connect, "Connect to Host...", "Remote", "remote")));
+            _store.Add(commands.Register(ConnectLima, inv => Run(ConnectToLimaAsync(inv.Arg<string>(0))), new CommandMetadata(ConnectLima, "Connect to Lima VM...", "Remote", "remote")));
             _store.Add(commands.Register(OpenFolder, inv => Run(OpenRemoteFolderAsync(inv.Arg<string>(0))), new CommandMetadata(OpenFolder, "Open Remote Folder...", "Remote", "remote")));
             _store.Add(commands.Register(Disconnect, _ => Run(DisconnectAsync()), new CommandMetadata(Disconnect, "Close Remote Connection", "Remote")));
             _store.Add(commands.Register(Reconnect, _ => Run(Manager.ReconnectAsync().AsTask()), new CommandMetadata(Reconnect, "Reconnect", "Remote")));
@@ -99,14 +102,16 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
     {
         RemoteSchemes.Docker => "attached-container",
         RemoteSchemes.Wsl => "wsl",
+        RemoteSchemes.Lima => "lima",
         _ => "ssh-remote",
     };
 
-    /// <summary>"SSH: host", "Docker: container", "WSL: distro" — by the connection's URI scheme.</summary>
+    /// <summary>"SSH: host", "Docker: container", "WSL: distro", "Lima: vm" — by the connection's URI scheme.</summary>
     internal static string Label(RemoteConnectionStatus s) => s.Authority?.Scheme switch
     {
         RemoteSchemes.Docker => "Docker: " + Bare(s.Host, RemoteSchemes.Docker),
         RemoteSchemes.Wsl => "WSL: " + Bare(s.Host, RemoteSchemes.Wsl),
+        RemoteSchemes.Lima => "Lima: " + Bare(s.Host, RemoteSchemes.Lima),
         _ => "SSH: " + s.Host,
     };
 
@@ -162,13 +167,53 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         }
     }
 
+    /// <summary>Lists the Lima VMs (<c>limactl list</c>), then connects to the picked one with a progress notification and offers to open a remote folder there.</summary>
+    public async Task ConnectToLimaAsync(string? instance = null)
+    {
+        await new PoolHop(); // listing runs limactl
+        string? target = null;
+        if (!string.IsNullOrWhiteSpace(instance)) target = instance.StartsWith(RemoteSchemes.Lima + "://", StringComparison.OrdinalIgnoreCase) ? instance : RemoteSchemes.Lima + "://" + instance;
+        else if (Window is { } w)
+        {
+            IReadOnlyList<LimaInstance> instances;
+            try { instances = await LimaInstances.ListAsync(LimactlPath, ProcessEnvironment()).ConfigureAwait(false); }
+            catch (IOException ex)
+            {
+                await w.ShowMessageAsync(MessageSeverity.Error, ex.Message).ConfigureAwait(false);
+                return;
+            }
+            if (instances.Count == 0)
+            {
+                await w.ShowMessageAsync(MessageSeverity.Info, "Lima has no VMs (create one with limactl create, then limactl start).").ConfigureAwait(false);
+                return;
+            }
+            var picked = await w.ShowQuickPickAsync(LimaItems(instances), new QuickPickOptions("Connect to Lima VM", "Select a Lima VM (a stopped one is started)")).ConfigureAwait(false);
+            target = picked?.Tag as string;
+        }
+        if (string.IsNullOrWhiteSpace(target)) return;
+        if (!await ConnectWithProgressAsync(target).ConfigureAwait(false)) return;
+        await OpenRemoteFolderAsync(null).ConfigureAwait(false);
+    }
+
+    private static QuickPickItem[] LimaItems(IReadOnlyList<LimaInstance> instances) =>
+        [.. instances.Select(i => new QuickPickItem(i.Name, "Lima VM · " + i.Status.ToLowerInvariant(), string.Join(" · ", new[] { i.Arch, i.VmType }.Where(x => x is not null)), Tag: i.Target))];
+
+    private string LimactlPath => sp.GetService<IConfigurationService>()?.Get(RemoteSettings.LimaPath, "limactl") ?? "limactl";
+
+    private IReadOnlyDictionary<string, string?>? ProcessEnvironment() => sp.GetService<RemoteOptions>()?.SshEnvironment;
+
     private async Task<string?> PickHostAsync()
     {
         if (Window is not { } w) return null;
         var hosts = ListConfiguredHosts();
-        var items = hosts.Select(h => new QuickPickItem(h, "ssh_config")).Append(new QuickPickItem(AddHostLabel)).ToArray();
-        var picked = await w.ShowQuickPickAsync(items, new QuickPickOptions("Connect to Host", "Select a configured SSH host or enter user@host")).ConfigureAwait(false);
+        var items = hosts.Select(h => new QuickPickItem(h, "ssh_config")).ToList();
+        // Lima VMs beside the ssh hosts, when limactl is installed (a failure just leaves them out: Connect to Lima VM… reports it).
+        try { items.AddRange(LimaItems(await LimaInstances.ListAsync(LimactlPath, ProcessEnvironment()).ConfigureAwait(false))); }
+        catch (IOException) { }
+        items.Add(new QuickPickItem(AddHostLabel));
+        var picked = await w.ShowQuickPickAsync(items, new QuickPickOptions("Connect to Host", "Select a configured SSH host or Lima VM, or enter user@host")).ConfigureAwait(false);
         if (picked is null) return null;
+        if (picked.Tag is string target) return target;
         if (picked.Label != AddHostLabel) return picked.Label;
         return await w.ShowInputBoxAsync(new InputBoxOptions("Add New SSH Host", "user@host[:port]", "me@example.com",
             Validate: v => { try { RemoteAuthority.Parse(v); return null; } catch (FormatException ex) { return ex.Message; } catch (ArgumentException ex) { return ex.Message; } })).ConfigureAwait(false);

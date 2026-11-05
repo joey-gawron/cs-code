@@ -2,7 +2,7 @@ using CsCode.Core.Platform;
 
 namespace CsCode.Remote.Client;
 
-// The ssh: providers serve docker:// and wsl:// workspaces too (one connection manager, one host at a time): these put them under the other schemes
+// The ssh: providers serve docker://, wsl:// and lima:// workspaces too (one connection manager, one host at a time): these put them under the other schemes
 // for Platform's routing file system, watcher and searches, which dispatch by URI scheme. Every call goes to the same instance.
 
 internal sealed class SchemeFileSystem(string scheme, IFileSystemProvider inner) : IFileSystemProvider

@@ -32,7 +32,7 @@ public class ThemeCatalogTests : IDisposable
     [Fact]
     public void All_21_embedded_themes_are_registered_with_their_catalogue_ids_labels_and_kinds()
     {
-        Assert.Equal(21, BuiltinColorThemes.All.Count);
+        Assert.Equal(23, BuiltinColorThemes.All.Count); // the 21 of TextMateSharp.Grammars and CsCode's Gruvbox Dark and Light
         foreach (var d in BuiltinColorThemes.All)
         {
             var t = Assert.Single(_svc.Available, x => x.Id == d.Id);

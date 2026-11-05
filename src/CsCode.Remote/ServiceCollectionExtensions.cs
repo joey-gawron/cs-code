@@ -56,8 +56,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFileWatcherProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Watcher);
         services.AddSingleton<IFileSearchProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Search);
         services.AddSingleton<ITextSearchProvider>(sp => sp.GetRequiredService<RemoteConnectionManager>().Search); // server-side Find in Files
-        // docker://container and wsl://distro workspaces: the same providers under their schemes (the connection manager serves one host at a time).
-        foreach (var scheme in new[] { RemoteSchemes.Docker, RemoteSchemes.Wsl })
+        // docker://container, wsl://distro and lima://instance workspaces: the same providers under their schemes (the connection manager serves one host at a time).
+        foreach (var scheme in new[] { RemoteSchemes.Docker, RemoteSchemes.Wsl, RemoteSchemes.Lima })
         {
             services.AddSingleton<IFileSystemProvider>(sp => new SchemeFileSystem(scheme, sp.GetRequiredService<RemoteConnectionManager>().FileSystem));
             services.AddSingleton<IFileWatcherProvider>(sp => new SchemeWatcher(scheme, sp.GetRequiredService<RemoteConnectionManager>().Watcher));

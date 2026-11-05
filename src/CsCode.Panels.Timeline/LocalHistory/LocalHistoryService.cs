@@ -28,7 +28,7 @@ public sealed class LocalHistoryService : ILocalHistoryService, IFileOperationPa
     internal const int QueueCapacity = 4096;
     private const int MaxCachedModels = 256;
     private static readonly TimeSpan PendingSourceLifetime = TimeSpan.FromSeconds(30);
-    private static readonly HashSet<string> TrackedSchemes = new(StringComparer.OrdinalIgnoreCase) { "file", "ssh", "docker", "wsl" };
+    private static readonly HashSet<string> TrackedSchemes = new(StringComparer.OrdinalIgnoreCase) { "file", "ssh", "docker", "wsl", "lima" };
 
     private readonly IFileSystem _fs;
     private readonly IConfigurationService? _config;

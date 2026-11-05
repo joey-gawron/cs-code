@@ -10,16 +10,18 @@ public enum ThemeOrigin
     VsCode,
     /// <summary>A theme that TextMateSharp.Grammars ships beside VS Code's (not one of VS Code's built-in extensions; the package is MIT).</summary>
     TextMateSharp,
+    /// <summary>A theme CsCode ships itself, embedded in CsCode.Editor (<c>Theming/Builtin/</c>), not read from TextMateSharp.Grammars.</summary>
+    CsCode,
 }
 
-/// <param name="File">Resource file name inside TextMateSharp.Grammars (<c>Resources/Themes/</c>).</param>
+/// <param name="File">Resource file name inside TextMateSharp.Grammars (<c>Resources/Themes/</c>), or in CsCode.Editor's <c>Theming/Builtin/</c> for <see cref="ThemeOrigin.CsCode"/>.</param>
 /// <param name="Id">Theme id (stable; <c>workbench.colorTheme</c> stores the label, ids are accepted too).</param>
 /// <param name="Label">Display name: VS Code's label for its themes (the files' own <c>name</c> differs for some, e.g. "Solarized (dark)").</param>
 /// <param name="UiTheme">The contribution's <c>uiTheme</c> (<c>vs</c>, <c>vs-dark</c>, <c>hc-black</c>, <c>hc-light</c>): several files carry no <c>type</c>.</param>
 public sealed record BuiltinThemeDescriptor(string File, string Id, string Label, string UiTheme, ThemeOrigin Origin);
 
 /// <summary>
-/// The 21 colour themes embedded in <c>TextMateSharp.Grammars</c> 2.0.3, all of which CsCode offers. Loading is synchronous and in-memory (the
+/// The 21 colour themes embedded in <c>TextMateSharp.Grammars</c> 2.0.3, all of which CsCode offers, and the themes CsCode embeds itself. Loading is synchronous and in-memory (the
 /// files and their <c>include</c>s are manifest resources), but it parses JSON, so it belongs off the UI thread; the theme service does it once,
 /// when it is constructed (the shell resolves it on the start-up pool thread).
 /// </summary>
@@ -27,6 +29,7 @@ public static class BuiltinColorThemes
 {
     public const string PathPrefix = "builtin-theme:";
     private const string ResourcePrefix = "TextMateSharp.Grammars.Resources.Themes.";
+    private const string OwnResourcePrefix = "CsCode.Editor.Theming.Builtin.";
 
     public static IReadOnlyList<BuiltinThemeDescriptor> All { get; } =
     [
@@ -52,6 +55,8 @@ public static class BuiltinColorThemes
         // Named "Visual Studio Dark/Light" in their files: renamed so they cannot be confused with the shell's own Visual Studio 2022 themes.
         new("visual-studio-dark-theme.json", "textmatesharp.visual-studio-dark", "Visual Studio Dark (TextMateSharp)", "vs-dark", ThemeOrigin.TextMateSharp),
         new("visual-studio-light-theme.json", "textmatesharp.visual-studio-light", "Visual Studio Light (TextMateSharp)", "vs", ThemeOrigin.TextMateSharp),
+        new("gruvbox-dark-color-theme.json", "cscode.gruvbox-dark", "Gruvbox Dark", "vs-dark", ThemeOrigin.CsCode),
+        new("gruvbox-light-color-theme.json", "cscode.gruvbox-light", "Gruvbox Light", "vs", ThemeOrigin.CsCode),
     ];
 
     /// <summary>Whether <paramref name="themeId"/> is one of <see cref="All"/>.</summary>
@@ -60,7 +65,7 @@ public static class BuiltinColorThemes
     /// <summary>Loads one embedded theme with its <c>include</c> chain resolved (the including theme overrides key by key).</summary>
     public static ColorTheme Load(BuiltinThemeDescriptor d)
     {
-        var text = ReadResource(d.File) ?? throw new InvalidOperationException($"Built-in theme {d.File} is missing from TextMateSharp.Grammars");
+        var text = ReadResource(d.File) ?? throw new InvalidOperationException($"Built-in theme {d.File} is missing from the embedded themes");
         // Built-ins only include other built-ins, all embedded: a fully synchronous, in-memory load (no I/O, nothing to await).
         return VsCodeThemeLoader.LoadSync(d.Id, d.Label, d.UiTheme, text, PathPrefix + d.File, (_, rel) =>
         {
@@ -72,10 +77,10 @@ public static class BuiltinColorThemes
     /// <summary>Every embedded theme, in catalogue order.</summary>
     public static IReadOnlyList<ColorTheme> LoadAll() => All.Select(Load).ToArray();
 
-    /// <summary>The text of an embedded theme file (<c>dark_plus.json</c>), or null when the package has no such file.</summary>
+    /// <summary>The text of an embedded theme file (<c>dark_plus.json</c>): TextMateSharp's, else CsCode's own; null when there is no such file.</summary>
     public static string? ReadResource(string file)
     {
-        using var s = BuiltinLanguages.Open(ResourcePrefix + file);
+        using var s = BuiltinLanguages.Open(ResourcePrefix + file) ?? typeof(BuiltinColorThemes).Assembly.GetManifestResourceStream(OwnResourcePrefix + file);
         if (s is null) return null;
         using var r = new StreamReader(s);
         return r.ReadToEnd();
