@@ -97,6 +97,22 @@ pub const Syntax = struct {
     attribute: Color,
     escape: Color,
     label: Color,
+    // Roles the Visual Studio and VS Code schemes tell apart (cs-code colours
+    // them through TextMate scopes). Null keeps the scheme's single colour
+    // for keywords, constants and headings, as the Sublime-style schemes have.
+    /// if, for, return, try: control flow (purple in Dark+ and VS).
+    keyword_control: ?Color = null,
+    /// import, use, include.
+    keyword_import: ?Color = null,
+    /// true, false, null, nil.
+    constant_language: ?Color = null,
+    /// Constants by name (ALL_CAPS, enum members).
+    constant_other: ?Color = null,
+    /// Markdown and org headings.
+    heading: ?Color = null,
+    /// string, number, i32 in the languages whose TextMate grammars colour
+    /// primitive types as types (TypeScript, JavaScript, Rust).
+    type_primitive: ?Color = null,
 };
 
 pub const Theme = struct {
@@ -299,6 +315,11 @@ pub const vs_dark: Theme = .{
         .attribute = Color.hex(0x9cdcfe),
         .escape = Color.hex(0xd7ba7d),
         .label = Color.hex(0xc8c8c8),
+        .keyword_control = Color.hex(0xd8a0df),
+        .constant_language = Color.hex(0x569cd6),
+        .constant_other = Color.hex(0x4fc1ff),
+        .heading = Color.hex(0x569cd6),
+        .type_primitive = Color.hex(0x4ec9b0),
     },
 
     .window_background = Color.hex(0x2d2d30),
@@ -346,10 +367,43 @@ pub const vs_dark: Theme = .{
 /// Maps a tree-sitter highlight capture name ("keyword.function", "string",
 /// ...) to a color, using the most specific prefix we know.
 pub fn colorForCapture(syntax: *const Syntax, name: []const u8) ?Color {
+    return colorForCaptureIn(syntax, "", name);
+}
+
+fn hasCapturePrefix(name: []const u8, prefix: []const u8) bool {
+    return std.mem.startsWith(u8, name, prefix) and (name.len == prefix.len or name[prefix.len] == '.');
+}
+
+/// Languages whose TextMate grammars (and so cs-code) colour primitive types
+/// like `number` and `i32` as types, not as keywords.
+fn primitivesAreTypes(grammar: []const u8) bool {
+    const names = [_][]const u8{ "rust", "javascript", "typescript", "tsx" };
+    for (names) |n| if (std.mem.eql(u8, grammar, n)) return true;
+    return false;
+}
+
+/// `colorForCapture` for the highlights of `grammar`, with the per-language
+/// deviations cs-code's CaptureScopes keeps.
+pub fn colorForCaptureIn(syntax: *const Syntax, grammar: []const u8, name: []const u8) ?Color {
+    // The ternary is an operator, not control flow.
+    if (hasCapturePrefix(name, "keyword.conditional.ternary")) return syntax.operator;
+    const control = [_][]const u8{ "keyword.conditional", "keyword.repeat", "keyword.return", "keyword.exception", "keyword.coroutine", "keyword.control", "conditional", "repeat", "exception" };
+    for (control) |prefix| if (hasCapturePrefix(name, prefix)) return syntax.keyword_control orelse syntax.keyword;
+    const imports = [_][]const u8{ "keyword.import", "include" };
+    for (imports) |prefix| if (hasCapturePrefix(name, prefix)) return syntax.keyword_import orelse syntax.keyword;
+    if (hasCapturePrefix(name, "boolean") or hasCapturePrefix(name, "constant.builtin")) return syntax.constant_language orelse syntax.constant;
+    if (hasCapturePrefix(name, "constant") and !hasCapturePrefix(name, "constant.numeric")) {
+        if (syntax.constant_other) |color| return color;
+    }
+    if (hasCapturePrefix(name, "markup.heading") or hasCapturePrefix(name, "text.title")) return syntax.heading orelse syntax.function;
+    if (hasCapturePrefix(name, "type.builtin")) {
+        if (syntax.type_primitive) |color| if (primitivesAreTypes(grammar)) return color;
+    }
     const Entry = struct { []const u8, std.meta.FieldEnum(Syntax) };
     const table = [_]Entry{
         .{ "comment", .comment },
         .{ "string.escape", .escape },
+        .{ "string.special.key", .property },
         .{ "string.special", .escape },
         .{ "string.regexp", .escape },
         .{ "string", .string },
@@ -712,6 +766,12 @@ pub const schemes = [_]Scheme{
             .attribute = hx(0x9cdcfe),
             .escape = hx(0xd7ba7d),
             .label = hx(0xc8c8c8),
+            .keyword_control = hx(0xc586c0),
+            .keyword_import = hx(0xc586c0),
+            .constant_language = hx(0x569cd6),
+            .constant_other = hx(0x4fc1ff),
+            .heading = hx(0x569cd6),
+            .type_primitive = hx(0x4ec9b0),
         },
     },
     // VS Code Light+ (default light).
@@ -741,6 +801,12 @@ pub const schemes = [_]Scheme{
             .attribute = hx(0xe50000),
             .escape = hx(0xee0000),
             .label = hx(0x000000),
+            .keyword_control = hx(0xaf00db),
+            .keyword_import = hx(0xaf00db),
+            .constant_language = hx(0x0000ff),
+            .constant_other = hx(0x0070c1),
+            .heading = hx(0x800000),
+            .type_primitive = hx(0x267f99),
         },
     },
     // Visual Studio Light.
@@ -770,6 +836,12 @@ pub const schemes = [_]Scheme{
             .attribute = hx(0xff0000),
             .escape = hx(0xff8000),
             .label = hx(0x000000),
+            .keyword_control = hx(0x8f08c4),
+            .keyword_import = hx(0x0000ff),
+            .constant_language = hx(0x0000ff),
+            .constant_other = hx(0x2b91af),
+            .heading = hx(0x800000),
+            .type_primitive = hx(0x2b91af),
         },
     },
     // VS Code Quiet Light.
@@ -828,6 +900,12 @@ pub const schemes = [_]Scheme{
             .attribute = hx(0x9cdcfe),
             .escape = hx(0xd7ba7d),
             .label = hx(0xffffff),
+            .keyword_control = hx(0xc586c0),
+            .keyword_import = hx(0xc586c0),
+            .constant_language = hx(0x569cd6),
+            .constant_other = hx(0x4fc1ff),
+            .heading = hx(0x569cd6),
+            .type_primitive = hx(0x4ec9b0),
         },
     },
     // VS Code Light High Contrast.
