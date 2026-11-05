@@ -196,6 +196,8 @@ pub const menus = [_]Menu{
         a("Run Command…", .run_command),
         a("Run Last Command", .run_last_command),
         sep,
+        a("Show Memory", .show_memory),
+        sep,
         a("Terminal Panel", .toggle_panel_terminal),
         a("New Terminal in Panel", .new_panel_terminal),
         a("New Terminal Tab", .new_terminal),

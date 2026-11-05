@@ -217,6 +217,7 @@ const base = [_]Command{
     .{ .caption = "Debug: Add Watch…", .action = .debug_add_watch },
     .{ .caption = "Debug: Evaluate Expression…", .action = .debug_evaluate },
     .{ .caption = "Debug: Show Debug Panel", .action = .debug_show_panel },
+    .{ .caption = "Developer: Show Memory", .action = .show_memory },
     .{ .caption = "UI: Select Color Scheme", .action = .select_color_scheme },
     .{ .caption = "Preferences: Settings", .action = .open_settings },
     .{ .caption = "Preferences: Key Bindings", .action = .open_keymap },

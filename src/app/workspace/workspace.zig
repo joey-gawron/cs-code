@@ -36,6 +36,7 @@ const terminal_ui = @import("terminal_ui.zig");
 const settings_ui = @import("settings_ui.zig");
 const panel_ui = @import("panel_ui.zig");
 const search_ui = @import("search_ui.zig");
+const memory_ui = @import("memory_ui.zig");
 const debug_ui = @import("debug_ui.zig");
 const leader_ui = @import("leader_ui.zig");
 const file_cmd = @import("file_cmd.zig");
@@ -2289,6 +2290,7 @@ pub const Workspace = struct {
             .lsp_next_diagnostic, .lsp_prev_diagnostic => lsp_ui.gotoDiagnostic(self, action == .lsp_next_diagnostic, false),
             .lsp_next_error, .lsp_prev_error => lsp_ui.gotoDiagnostic(self, action == .lsp_next_error, true),
             .lsp_list_diagnostics => lsp_ui.listDiagnostics(self),
+            .show_memory => memory_ui.show(self),
             .git_toggle_blame, .git_toggle_inline_blame, .git_show_commit, .git_copy_commit_hash => git_ui.perform(self, action),
             .git_status => git_status_ui.open(self),
             .lsp_restart => if (self.lsp) |l| {
@@ -3505,6 +3507,7 @@ pub const Workspace = struct {
         var soonest = if (local_soonest) |l| (if (remote_ms) |r| @min(l, r) else l) else remote_ms;
         // A running org clock's minutes in the status bar.
         if (org_ui.nextTimer(self)) |t| soonest = if (soonest) |s| @min(s, t) else t;
+        if (memory_ui.nextTimer(self)) |t| soonest = if (soonest) |s| @min(s, t) else t;
         if (lsp_ui.nextTimer(self)) |t| return if (soonest) |s| @min(s, t) else t;
         return soonest;
     }

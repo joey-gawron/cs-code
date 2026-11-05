@@ -10,6 +10,7 @@ const session_store = @import("app/session/store.zig");
 const persist = @import("app/session/persist.zig");
 const askpass = @import("model/remote/askpass.zig");
 const login_path = @import("framework/platform/login_path.zig");
+const mem_stats = @import("framework/util/mem_stats.zig");
 
 const usage =
     \\Usage: cs-zig [options] [path[:line[:col]]...]
@@ -63,7 +64,7 @@ const Step = union(enum) {
 };
 
 pub fn main(init: std.process.Init) !void {
-    const gpa = init.gpa;
+    const gpa = mem_stats.install(init.gpa);
     const io = init.io;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
@@ -426,6 +427,9 @@ test {
     _ = @import("framework/util/regex.zig");
     _ = @import("framework/util/png.zig");
     _ = @import("framework/platform/login_path.zig");
+    _ = @import("framework/util/mem_stats.zig");
+    _ = @import("framework/platform/proc_stats.zig");
+    _ = @import("app/workspace/memory_ui.zig");
     _ = @import("model/org/table.zig");
     _ = @import("framework/util/executor.zig");
     _ = @import("model/project/fuzzy.zig");
