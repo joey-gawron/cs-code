@@ -160,7 +160,7 @@ public static class MergeConflictParser
     private static string NameOf(ReadOnlySpan<char> markerLine) => markerLine.Length > 8 ? markerLine[8..].ToString() : "";
 
     /// <summary>
-    /// Whether <paramref name="text"/> still has a conflict marker line, as VS Code's git extension checks before staging a conflicted file: a line
+    /// Whether <paramref name="text"/> still has a conflict marker line, as VS Code's git support checks before staging a conflicted file: a line
     /// beginning with <c>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</c> or <c>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</c> followed by whitespace, or a line that is exactly
     /// <c>=======</c>.
     /// </summary>

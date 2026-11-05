@@ -3,7 +3,7 @@ using CsCode.Core.Lifecycle;
 namespace CsCode.Core.Text;
 
 /// <summary>
-/// A line the user marked to come back to (Visual Studio's bookmarks; VS Code users know them from the Bookmarks extension). <see cref="Line"/>
+/// A line the user marked to come back to (Visual Studio's bookmarks; VS Code users know them from the popular Bookmarks add-on). <see cref="Line"/>
 /// is 0-based. A disabled bookmark stays in the list and in the margin (hollow) but navigation skips it, as in Visual Studio.
 /// </summary>
 public sealed record Bookmark(string Id, Uri Uri, int Line, string? Label = null, bool Enabled = true);
@@ -48,7 +48,7 @@ public interface IBookmarkService
     IEventSource<BookmarksChangedEventArgs> Changed { get; }
 }
 
-/// <summary>Command ids of the bookmarks (VS Code's Bookmarks extension's where it has one; Visual Studio's wording in the titles).</summary>
+/// <summary>Command ids of the bookmarks (the VS Code Bookmarks add-on's where it has one; Visual Studio's wording in the titles).</summary>
 public static class BookmarkCommandIds
 {
     public const string Toggle = "bookmarks.toggle";
