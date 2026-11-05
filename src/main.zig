@@ -369,6 +369,8 @@ test {
     _ = @import("framework/util/executor.zig");
     _ = @import("model/project/fuzzy.zig");
     _ = @import("app/settings/keymap.zig");
+    _ = @import("app/settings/catalog.zig");
+    _ = @import("app/settings/bindings_file.zig");
     _ = @import("app/settings/leader.zig");
     _ = @import("app/workspace/groups.zig");
     _ = @import("app/workspace/context_menu.zig");
