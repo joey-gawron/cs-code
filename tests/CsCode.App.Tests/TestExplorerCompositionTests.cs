@@ -36,7 +36,8 @@ public class TestExplorerCompositionTests
             Assert.Single(features.GetProviders<ITestGutterProvider>(new InMemoryTextDocument(new Uri("file:///w/T.cs"), "csharp")));
             Assert.Single(features.GetProviders<ITestGutterProvider>(new InMemoryTextDocument(new Uri("file:///w/lib.rs"), "rust")));
             // "Run Test | Debug Test" code lenses through the editor's code lens, with their commands
-            Assert.Single(features.GetProviders<ICodeLensProvider>(new InMemoryTextDocument(new Uri("file:///w/T.cs"), "csharp")));
+            // (beside the merge-conflict lenses, which every document has)
+            Assert.Single(features.GetProviders<ICodeLensProvider>(new InMemoryTextDocument(new Uri("file:///w/T.cs"), "csharp")), p => p.GetType().Name == "TestCodeLensProvider");
             Assert.True(commands.Has("testing.codeLens.run") && commands.Has("testing.codeLens.debug"));
             var config = sp.GetRequiredService<IConfigurationService>();
             foreach (var key in new[] { "testing.codeLens", "editor.codeLens", "editor.codeLensFontSize", "editor.codeLensFontFamily", "editor.semanticHighlighting.enabled" })
