@@ -304,7 +304,7 @@ fn formatEntry(alloc: Allocator, category: []const u8, extra: []const u8, h: par
     var w: std.Io.Writer.Allocating = .init(alloc);
     var cat_buf: [16]u8 = undefined;
     const cat = std.fmt.bufPrint(&cat_buf, "{s}:", .{category[0..@min(category.len, 10)]}) catch "";
-    try w.writer.print("  {s: <12}{s: <12}", .{ cat, extra });
+    try w.writer.print("  {s: <12}{s: <20}", .{ cat, extra });
     if (h.todo) |kw| try w.writer.print("{s} ", .{kw});
     if (h.priority) |p| try w.writer.print("[#{c}] ", .{p});
     // Titles show without their timestamps (the time is in the extra column).
@@ -341,38 +341,45 @@ fn collectDay(alloc: Allocator, out: *std.ArrayList(Entry), doc: parser.Document
     const prio = h.priority orelse 'B';
     var buf: [32]u8 = undefined;
 
+    // The order within a day, as cs-code lists it: timed entries by time,
+    // then overdue deadlines, deadlines due, scheduled entries not done since
+    // an earlier day, scheduled entries, deadlines coming up, appointments.
     if (h.deadline) |dl| {
         const delta = dl.date.toDays() - day.toDays();
+        const warn: i64 = dl.warn_days orelse deadline_warning_days;
         if (dl.occursOn(day)) {
-            try out.append(alloc, .{ .sort_time = timeKey(dl), .priority = prio, .kind_rank = 0, .text = try formatEntry(alloc, h.category, "Deadline:", h), .target = target });
-        } else if (is_today and !done and delta > 0 and delta <= deadline_warning_days) {
-            const label = std.fmt.bufPrint(&buf, "In {d: >3} d.:", .{@as(u64, @intCast(delta))}) catch "";
-            try out.append(alloc, .{ .sort_time = 10_000, .priority = prio, .kind_rank = 1, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            try out.append(alloc, .{ .sort_time = timeKey(dl), .priority = prio, .kind_rank = 1, .text = try formatEntry(alloc, h.category, "Deadline:", h), .target = target });
+        } else if (is_today and !done and delta > 0 and delta <= warn) {
+            const label = std.fmt.bufPrint(&buf, "Due in {d} d.", .{@as(u64, @intCast(delta))}) catch "";
+            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 4, .text = try formatEntry(alloc, h.category, label, h), .target = target });
         } else if (is_today and !done and delta < 0 and dl.repeat == null) {
-            const label = std.fmt.bufPrint(&buf, "{d: >2} d. ago:", .{@as(u64, @intCast(-delta))}) catch "";
-            try out.append(alloc, .{ .sort_time = 10_000, .priority = prio, .kind_rank = 0, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            const label = std.fmt.bufPrint(&buf, "Overdue {d} d.", .{@as(u64, @intCast(-delta))}) catch "";
+            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 0, .text = try formatEntry(alloc, h.category, label, h), .target = target });
         }
     }
     if (h.scheduled) |sc| {
         const overdue = today.toDays() - sc.date.toDays();
         if (sc.occursOn(day)) {
             const label = if (sc.time != null) timeLabel(&buf, sc) else "Scheduled:";
-            try out.append(alloc, .{ .sort_time = timeKey(sc), .priority = prio, .kind_rank = 2, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            try out.append(alloc, .{ .sort_time = timeKey(sc), .priority = prio, .kind_rank = 3, .text = try formatEntry(alloc, h.category, label, h), .target = target });
         } else if (is_today and !done and overdue > 0 and sc.repeat == null) {
-            const label = std.fmt.bufPrint(&buf, "Sched.{d: >2}x:", .{@as(u64, @intCast(overdue))}) catch "";
-            try out.append(alloc, .{ .sort_time = 10_000, .priority = prio, .kind_rank = 3, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            const label = std.fmt.bufPrint(&buf, "Scheduled {d} d. ago", .{@as(u64, @intCast(overdue))}) catch "";
+            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 2, .text = try formatEntry(alloc, h.category, label, h), .target = target });
         }
     }
     for (h.timestamps.items) |ts| {
         if (!ts.occursOn(day)) continue;
         const label = timeLabel(&buf, ts);
-        try out.append(alloc, .{ .sort_time = timeKey(ts), .priority = prio, .kind_rank = 4, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+        try out.append(alloc, .{ .sort_time = timeKey(ts), .priority = prio, .kind_rank = 5, .text = try formatEntry(alloc, h.category, label, h), .target = target });
     }
 }
 
-/// Timed entries sort by time; untimed after them.
+/// Timed entries sort by time; untimed (and the rows that are on a day for
+/// being overdue or coming up) after them, in kind order.
+const untimed: i32 = 5_000;
+
 fn timeKey(ts: date.Timestamp) i32 {
-    const t = ts.time orelse return 5_000;
+    const t = ts.time orelse return untimed;
     return @as(i32, t.hour) * 60 + t.minute;
 }
 
@@ -406,28 +413,31 @@ pub fn highlight(gpa: Allocator, rope: *const rope_mod.Rope, start: usize, end: 
         }
         // "  category:   extra       TODO [#A] title   :tags:"
         const cat_end = @min(line.len, 14);
+        const rest_at: usize = 34;
         add(out, gpa, base, base + cat_end, s.comment);
-        const extra = line[cat_end..@min(line.len, 26)];
-        const extra_color = if (std.mem.startsWith(u8, extra, "Deadline") or std.mem.indexOf(u8, extra, "ago") != null)
+        const extra = line[cat_end..@min(line.len, rest_at)];
+        // Overdue and due deadlines in the error colour, coming ones and
+        // earlier schedules in the warning colour.
+        const extra_color = if (std.mem.startsWith(u8, extra, "Deadline") or std.mem.startsWith(u8, extra, "Overdue"))
             s.constant
-        else if (std.mem.startsWith(u8, extra, "In ") or std.mem.startsWith(u8, extra, "Sched."))
-            s.label
+        else if (std.mem.startsWith(u8, extra, "Due in") or std.mem.indexOf(u8, extra, "ago") != null)
+            s.escape
         else if (std.mem.startsWith(u8, extra, "Scheduled"))
             s.string
         else
             s.number;
-        add(out, gpa, base + cat_end, base + @min(line.len, 26), extra_color);
-        if (line.len > 26) {
-            const rest = line[26..];
+        add(out, gpa, base + cat_end, base + @min(line.len, rest_at), extra_color);
+        if (line.len > rest_at) {
+            const rest = line[rest_at..];
             const word_end = std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
             const word = rest[0..word_end];
             const kw: parser.Keywords = .{};
             if (kw.isDone(word)) {
-                add(out, gpa, base + 26, base + line.len, s.comment);
+                add(out, gpa, base + rest_at, base + line.len, s.comment);
             } else if (kw.isTodo(word)) {
-                add(out, gpa, base + 26, base + 26 + word_end, if (std.mem.eql(u8, word, "TODO")) s.constant else s.label);
+                add(out, gpa, base + rest_at, base + rest_at + word_end, if (std.mem.eql(u8, word, "TODO")) s.constant else s.label);
             }
-            if (std.mem.indexOf(u8, rest, "[#")) |p| add(out, gpa, base + 26 + p, base + 26 + p + 4, s.number);
+            if (std.mem.indexOf(u8, rest, "[#")) |p| add(out, gpa, base + rest_at + p, base + rest_at + p + 4, s.number);
             if (std.mem.lastIndexOf(u8, line, "   :")) |p| add(out, gpa, base + p, base + line.len, s.comment);
         }
     }
@@ -487,11 +497,94 @@ test "agenda week" {
     , .{today.format(&dbuf)});
     defer gpa.free(text);
     try agenda.build(&.{.{ .path = "/tmp/x.org", .text = text }});
-    try std.testing.expect(std.mem.indexOf(u8, agenda.text.items, "Scheduled:  TODO Write tests") != null);
+    try std.testing.expect(std.mem.indexOf(u8, agenda.text.items, "Scheduled:          TODO Write tests") != null);
     try std.testing.expect(std.mem.indexOf(u8, agenda.text.items, "Old thing") == null);
     var lines: usize = 0;
     for (agenda.text.items) |ch| if (ch == '\n') {
         lines += 1;
     };
     try std.testing.expectEqual(lines, agenda.targets.items.len);
+}
+
+fn indexOfText(agenda: *const Agenda, needle: []const u8) usize {
+    return std.mem.indexOf(u8, agenda.text.items, needle) orelse std.math.maxInt(usize);
+}
+
+test "agenda day: order, labels and warning periods" {
+    const gpa = std.testing.allocator;
+    var agenda = Agenda.init(gpa, .day);
+    defer agenda.deinit();
+    const today = Date.today();
+    var b: [9][32]u8 = undefined;
+    const text = try std.fmt.allocPrint(gpa,
+        \\* TODO Overdue thing
+        \\  DEADLINE: <{s}>
+        \\* TODO [#A] Due today
+        \\  DEADLINE: <{s}>
+        \\* TODO Old schedule
+        \\  SCHEDULED: <{s}>
+        \\* TODO [#B] Plain schedule
+        \\  SCHEDULED: <{s}>
+        \\* TODO [#A] Urgent schedule
+        \\  SCHEDULED: <{s}>
+        \\* TODO Soon
+        \\  DEADLINE: <{s} -2d>
+        \\* TODO Far away
+        \\  DEADLINE: <{s} -2d>
+        \\* DONE Finished today
+        \\  SCHEDULED: <{s}>
+        \\* TODO Meeting
+        \\  <{s} 09:30>
+        \\
+    , .{
+        today.addDays(-2).format(&b[0]),
+        today.format(&b[1]),
+        today.addDays(-3).format(&b[2]),
+        today.format(&b[3]),
+        today.format(&b[4]),
+        today.addDays(2).format(&b[5]),
+        today.addDays(3).format(&b[6]),
+        today.format(&b[7]),
+        today.format(&b[8]),
+    });
+    defer gpa.free(text);
+    try agenda.build(&.{.{ .path = "/tmp/x.org", .text = text }});
+
+    // Wording.
+    try std.testing.expect(indexOfText(&agenda, "Overdue 2 d.") != std.math.maxInt(usize));
+    try std.testing.expect(indexOfText(&agenda, "Scheduled 3 d. ago") != std.math.maxInt(usize));
+    try std.testing.expect(indexOfText(&agenda, "Due in 2 d.") != std.math.maxInt(usize));
+    // A deadline's own -2d warning: three days away is not shown.
+    try std.testing.expect(indexOfText(&agenda, "Far away") == std.math.maxInt(usize));
+    // Done entries stay on their day.
+    try std.testing.expect(indexOfText(&agenda, "DONE Finished today") != std.math.maxInt(usize));
+
+    // Timed first, then overdue, deadlines, earlier schedules, schedules, coming deadlines.
+    const meeting = indexOfText(&agenda, "Meeting");
+    const overdue = indexOfText(&agenda, "Overdue thing");
+    const due = indexOfText(&agenda, "Due today");
+    const old = indexOfText(&agenda, "Old schedule");
+    const urgent = indexOfText(&agenda, "Urgent schedule");
+    const plain = indexOfText(&agenda, "Plain schedule");
+    const soon = indexOfText(&agenda, "Soon");
+    try std.testing.expect(meeting < overdue);
+    try std.testing.expect(overdue < due);
+    try std.testing.expect(due < old);
+    try std.testing.expect(old < urgent);
+    // [#A] before [#B] within the scheduled rows.
+    try std.testing.expect(urgent < plain);
+    try std.testing.expect(plain < soon);
+}
+
+test "agenda leaves overdue rows to today" {
+    const gpa = std.testing.allocator;
+    var agenda = Agenda.init(gpa, .day);
+    defer agenda.deinit();
+    const today = Date.today();
+    var b: [32]u8 = undefined;
+    const text = try std.fmt.allocPrint(gpa, "* TODO Late\n  DEADLINE: <{s}>\n", .{today.addDays(-1).format(&b)});
+    defer gpa.free(text);
+    agenda.start = today.addDays(1);
+    try agenda.build(&.{.{ .path = "/tmp/x.org", .text = text }});
+    try std.testing.expect(indexOfText(&agenda, "Late") == std.math.maxInt(usize));
 }

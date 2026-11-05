@@ -184,6 +184,9 @@ pub const Timestamp = struct {
     repeat: ?Repeat = null,
     /// The last day of a range, `<2026-10-21 Wed>--<2026-10-23 Fri>`.
     range_end: ?Date = null,
+    /// A deadline's own warning period in days (`-3d`), which wins over the
+    /// agenda's default.
+    warn_days: ?u16 = null,
     /// Byte range of the whole timestamp (both ends of a range) in the
     /// parsed text.
     start: usize = 0,
@@ -260,6 +263,18 @@ fn parseSingle(text: []const u8, at: usize) ?Timestamp {
                 },
                 .kind = if (std.mem.startsWith(u8, tok, "++")) .catch_up else if (std.mem.startsWith(u8, tok, ".+")) .restart else .cumulate,
             };
+        } else if (tok[0] == '-' and tok.len >= 3) {
+            // Warning period: -3d, -2w, -1m, -1y (in days).
+            const unit = tok[tok.len - 1];
+            const n = std.fmt.parseInt(u16, tok[1 .. tok.len - 1], 10) catch continue;
+            const per_unit: u16 = switch (unit) {
+                'd' => 1,
+                'w' => 7,
+                'm' => 30,
+                'y' => 365,
+                else => continue,
+            };
+            ts.warn_days = n *| per_unit;
         } else if (std.ascii.isDigit(tok[0])) {
             if (std.mem.indexOfScalar(u8, tok, '-')) |dash| {
                 ts.time = parseTime(tok[0..dash]);
@@ -313,4 +328,12 @@ test "ranges" {
     try std.testing.expect(t.occursOn(.{ .year = 2026, .month = 10, .day = 23 }));
     try std.testing.expect(!t.occursOn(.{ .year = 2026, .month = 10, .day = 24 }));
     try std.testing.expect(!t.occursOn(.{ .year = 2026, .month = 10, .day = 20 }));
+}
+
+test "warning periods" {
+    const t = parseTimestamp("<2026-10-21 Wed 10:00 -3d>", 0).?;
+    try std.testing.expectEqual(@as(?u16, 3), t.warn_days);
+    try std.testing.expectEqual(@as(u8, 10), t.time.?.hour);
+    try std.testing.expectEqual(@as(?u16, 14), parseTimestamp("<2026-10-21 Wed +1w -2w>", 0).?.warn_days);
+    try std.testing.expect(parseTimestamp("<2026-10-21 Wed>", 0).?.warn_days == null);
 }
