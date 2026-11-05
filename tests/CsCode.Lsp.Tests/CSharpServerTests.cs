@@ -60,6 +60,22 @@ public class CSharpServerTests
     }
 
     [Fact]
+    public async Task The_fallback_roslyn_command_gets_the_expanded_arguments_too()
+    {
+        // roslyn-language-server missing, Microsoft.CodeAnalysis.LanguageServer (Nix's roslyn-ls) found: it was started with a literal
+        // ${cscodePid}, printed its usage on stdout and exited
+        await using var env = new LspTestEnv(builtins: true);
+        env.Open("a.cs", "class A { }", language: "csharp");
+        await env.Connections.WaitForServerAsync();
+        var request = env.Connections.Requests.Single(r => r.Definition.Id == CSharpServers.RoslynId);
+        var args = Assert.Single(request.Alternatives!).Args;
+        Assert.DoesNotContain(args, a => a.Contains("${", StringComparison.Ordinal));
+        Assert.Contains(Path.Combine(env.Paths.LogsDir, "roslyn"), args);
+        Assert.Contains(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture), args);
+        Assert.Equal(request.Definition.Args, args);
+    }
+
+    [Fact]
     public void Library_and_generated_locations_are_recognised_per_server_and_named_after_the_type()
     {
         var csharpLs = new CSharpLsMetadataSource();
