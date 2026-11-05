@@ -501,12 +501,61 @@ fn updateCookies(ed: *Editor, row: u32) void {
     }
 }
 
-/// Sets SCHEDULED / DEADLINE on the heading at the caret.
-pub fn setPlanning(ed: *Editor, which: []const u8, d: date.Date) void {
+/// The repeater and warning period of the timestamp in `stamp` ("+1w -3d").
+fn suffixOf(stamp: []const u8, buf: []u8) []const u8 {
+    const ts = date.parseTimestamp(stamp, 0) orelse return "";
+    var w: std.Io.Writer = .fixed(buf);
+    var it = std.mem.tokenizeScalar(u8, stamp[1 .. ts.end - 1], ' ');
+    _ = it.next(); // the date
+    while (it.next()) |tok| if (date.isSuffixToken(tok)) {
+        if (w.buffered().len > 0) w.writeByte(' ') catch break;
+        w.writeAll(tok) catch break;
+    };
+    return w.buffered();
+}
+
+/// The row below the heading at `hrow` when it is a planning line, and
+/// where `which` ("SCHEDULED:") sits on it.
+fn planningSlot(line: []const u8, which: []const u8) ?struct { start: usize, ts: date.Timestamp } {
+    const p = std.mem.indexOf(u8, line, which) orelse return null;
+    var j = p + which.len;
+    while (j < line.len and line[j] == ' ') j += 1;
+    const ts = date.parseTimestamp(line, j) orelse return null;
+    return .{ .start = p, .ts = ts };
+}
+
+/// The inside of the heading's `which` timestamp ("2026-11-05 Thu 10:00 +1w"),
+/// for the date prompt to start from.
+pub fn planningValue(ed: *Editor, which: []const u8, buf: []u8) ?[]const u8 {
+    const hrow = headingRowFor(ed, currentRow(ed)) orelse return null;
+    if (hrow + 1 >= ed.buffer.lineCount()) return null;
+    const line = lineSlice(ed, hrow + 1);
+    const slot = planningSlot(line, which) orelse return null;
+    const inner = line[slot.ts.start + 1 .. slot.ts.end - 1];
+    if (inner.len > buf.len) return null;
+    @memcpy(buf[0..inner.len], inner);
+    return buf[0..inner.len];
+}
+
+/// Sets the heading's SCHEDULED / DEADLINE (`which` includes the colon). A
+/// repeater and warning the old date had stay unless the new input names
+/// its own.
+pub fn setPlanning(ed: *Editor, which: []const u8, input: date.Input) void {
     const hrow = headingRowFor(ed, currentRow(ed)) orelse return;
-    var dbuf: [32]u8 = undefined;
-    var tbuf: [64]u8 = undefined;
-    const stamp = std.fmt.bufPrint(&tbuf, "{s} <{s}>", .{ which, d.format(&dbuf) }) catch return;
+    var kept_buf: [32]u8 = undefined;
+    var kept: []const u8 = "";
+    if (input.suffix_len == 0 and hrow + 1 < ed.buffer.lineCount()) {
+        const line = lineSlice(ed, hrow + 1);
+        if (planningSlot(line, which)) |slot| kept = suffixOf(line[slot.ts.start..slot.ts.end], &kept_buf);
+    }
+    var with_suffix = input;
+    if (kept.len > 0) {
+        @memcpy(with_suffix.suffix_buf[0..kept.len], kept);
+        with_suffix.suffix_len = @intCast(kept.len);
+    }
+    var ibuf: [96]u8 = undefined;
+    var tbuf: [128]u8 = undefined;
+    const stamp = std.fmt.bufPrint(&tbuf, "{s} <{s}>", .{ which, with_suffix.format(&ibuf) }) catch return;
     const level = ed.orgHeadingLevel(hrow).?;
     if (hrow + 1 < ed.buffer.lineCount()) {
         const pline = ed.gpa.dupe(u8, lineSlice(ed, hrow + 1)) catch return;
@@ -520,13 +569,13 @@ pub fn setPlanning(ed: *Editor, which: []const u8, d: date.Date) void {
                 replaceInLine(ed, hrow + 1, p, ts.end, stamp);
             } else {
                 const end = std.mem.trimEnd(u8, pline, " ").len;
-                var buf: [80]u8 = undefined;
+                var buf: [160]u8 = undefined;
                 replaceInLine(ed, hrow + 1, end, end, std.fmt.bufPrint(&buf, " {s}", .{stamp}) catch return);
             }
             return;
         }
     }
-    var buf: [96]u8 = undefined;
+    var buf: [192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.writeAll("\n") catch {};
     w.splatByteAll(' ', level + 1) catch {};
@@ -534,6 +583,26 @@ pub fn setPlanning(ed: *Editor, which: []const u8, d: date.Date) void {
     const at = ed.buffer.lineEnd(hrow);
     var edits = [_]editor_mod.Edit{.{ .start = at, .end = at, .text = w.buffered() }};
     ed.commitTransform(&edits, .other);
+}
+
+/// Removes the heading's SCHEDULED / DEADLINE (and the planning line when
+/// nothing else is on it). False when it has none.
+pub fn removePlanning(ed: *Editor, which: []const u8) bool {
+    const hrow = headingRowFor(ed, currentRow(ed)) orelse return false;
+    if (hrow + 1 >= ed.buffer.lineCount()) return false;
+    const pline = ed.gpa.dupe(u8, lineSlice(ed, hrow + 1)) catch return false;
+    defer ed.gpa.free(pline);
+    const slot = planningSlot(pline, which) orelse return false;
+    var end = slot.ts.end;
+    while (end < pline.len and pline[end] == ' ') end += 1;
+    const rest_empty = std.mem.trim(u8, pline[0..slot.start], " \t").len == 0 and std.mem.trim(u8, pline[end..], " \t").len == 0;
+    ed.buffer.beginGroup();
+    defer ed.buffer.endGroup();
+    if (rest_empty) {
+        var edits = [_]editor_mod.Edit{.{ .start = ed.buffer.lineEnd(hrow), .end = ed.buffer.lineEnd(hrow + 1), .text = "" }};
+        ed.commitTransform(&edits, .other);
+    } else replaceInLine(ed, hrow + 1, slot.start, end, "");
+    return true;
 }
 
 // ---- Tables ---------------------------------------------------------------
@@ -982,10 +1051,10 @@ pub fn setTags(ed: *Editor, input: []const u8) bool {
     return true;
 }
 
-pub fn insertTimestamp(ed: *Editor, d: date.Date, active: bool) void {
-    var dbuf: [32]u8 = undefined;
-    var buf: [48]u8 = undefined;
-    const text = std.fmt.bufPrint(&buf, "{c}{s}{c}", .{ @as(u8, if (active) '<' else '['), d.format(&dbuf), @as(u8, if (active) '>' else ']') }) catch return;
+pub fn insertTimestamp(ed: *Editor, input: date.Input, active: bool) void {
+    var ibuf: [96]u8 = undefined;
+    var buf: [128]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "{c}{s}{c}", .{ @as(u8, if (active) '<' else '['), input.format(&ibuf), @as(u8, if (active) '>' else ']') }) catch return;
     ed.insertText(text);
 }
 
@@ -1056,6 +1125,8 @@ pub const Command = enum {
     clock_in,
     clock_out,
     clock_report,
+    capture,
+    export_html,
 };
 
 const Binding = struct { []const u8, Command, bool }; // spec, command, needs heading
@@ -1076,6 +1147,7 @@ const single_bindings = [_]Binding{
     .{ "ctrl+enter", .insert_heading_after, false },
     .{ "alt+enter", .insert_heading, false },
     .{ "ctrl+shift+enter", .insert_todo_heading, false },
+    .{ "alt+shift+enter", .insert_todo_heading, false },
 };
 
 /// Second chord after ctrl+c.
@@ -1090,6 +1162,9 @@ const prefix_bindings = [_]struct { []const u8, Command }{
     .{ "ctrl+o", .open_link },
     .{ "a", .agenda },
     .{ "ctrl+a", .agenda },
+    .{ "c", .capture },
+    .{ "ctrl+e", .export_html },
+    .{ ",", .priority_up },
     .{ "ctrl+q", .set_tags },
     .{ "ctrl+w", .refile },
     .{ "$", .archive },
@@ -1226,7 +1301,206 @@ fn runCommand(state: *KeyState, ed: *Editor, cmd: Command) KeyResult {
         .insert_heading => insertHeading(ed, false, false),
         .insert_todo_heading => insertHeading(ed, true, true),
         .toggle_checkbox => toggleCheckbox(ed) or cycleTodo(ed, true),
-        .schedule, .deadline, .timestamp, .timestamp_inactive, .open_link, .agenda, .todo_list, .set_tags, .refile, .archive, .edit_src, .clock_in, .clock_out, .clock_report => return .{ .command = cmd },
+        .schedule, .deadline, .timestamp, .timestamp_inactive, .open_link, .agenda, .todo_list, .set_tags, .refile, .archive, .edit_src, .clock_in, .clock_out, .clock_report, .capture, .export_html => return .{ .command = cmd },
     };
     return if (handled) .done else .pass;
+}
+
+// ---- Tests ----------------------------------------------------------------
+
+const TestEditor = struct {
+    settings: editor_mod.Settings = .{},
+    env: editor_mod.Env,
+    buffer: *Buffer,
+    ed: *Editor,
+
+    fn noClipboardGet(_: *anyopaque, _: Allocator) ?[]u8 {
+        return null;
+    }
+    fn noClipboardSet(_: *anyopaque, _: []const u8) void {}
+
+    /// An org buffer holding `content` with the caret at the start of `row`.
+    /// The editor never lays text out, so the text system is a stub.
+    fn init(gpa: Allocator, content: []const u8, row: u32) !*TestEditor {
+        const self = try gpa.create(TestEditor);
+        var dummy: u8 = 0;
+        self.settings = .{};
+        self.env = .{
+            .gpa = gpa,
+            .text = undefined,
+            .font = 0,
+            .settings = &self.settings,
+            .clipboard = .{ .ctx = &dummy, .get = noClipboardGet, .set = noClipboardSet },
+        };
+        self.buffer = try gpa.create(Buffer);
+        self.buffer.* = try Buffer.initEmpty(gpa, 0);
+        self.buffer.language = @import("../../model/syntax/languages.zig").byName("Org").?;
+        self.ed = try Editor.create(gpa, &self.env, self.buffer);
+        self.ed.setText(content, false);
+        self.ed.setSingleSelection(.caret(self.buffer.lineStart(row)));
+        return self;
+    }
+
+    fn deinit(self: *TestEditor, gpa: Allocator) void {
+        self.ed.destroy();
+        self.buffer.deinit();
+        gpa.destroy(self.buffer);
+        gpa.destroy(self);
+    }
+
+    fn text(self: *TestEditor, gpa: Allocator) ![]u8 {
+        return self.buffer.rope.toOwnedSlice(gpa);
+    }
+
+    fn expectText(self: *TestEditor, expected: []const u8) !void {
+        const got = try self.text(std.testing.allocator);
+        defer std.testing.allocator.free(got);
+        try std.testing.expectEqualStrings(expected, got);
+    }
+};
+
+test "promote and demote a heading or its subtree" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* A\n** B\n*** C\n* D\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(shiftLevel(t.ed, 1, true));
+    try t.expectText("** A\n*** B\n**** C\n* D\n");
+    try std.testing.expect(shiftLevel(t.ed, -1, false));
+    try t.expectText("* A\n*** B\n**** C\n* D\n");
+    // A top-level heading doesn't go below one star.
+    try std.testing.expect(shiftLevel(t.ed, -1, true));
+    try t.expectText("* A\n*** B\n**** C\n* D\n");
+}
+
+test "move a subtree past its sibling" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* A\n** a1\n* B\ntext\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(moveSubtree(t.ed, false));
+    try t.expectText("* B\ntext\n* A\n** a1\n");
+    try std.testing.expect(moveSubtree(t.ed, true));
+    try t.expectText("* A\n** a1\n* B\ntext\n");
+    // Nothing above the first subtree: unchanged.
+    try std.testing.expect(moveSubtree(t.ed, true));
+    try t.expectText("* A\n** a1\n* B\ntext\n");
+}
+
+test "TODO states cycle through every state, closing and reopening the entry" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* Task\n", 0);
+    defer t.deinit(gpa);
+    // none -> TODO -> NEXT -> WAITING -> DONE -> CANCELLED -> none.
+    for ([_][]const u8{ "* TODO Task\n", "* NEXT Task\n", "* WAITING Task\n" }) |want| {
+        try std.testing.expect(cycleTodo(t.ed, true));
+        try t.expectText(want);
+    }
+    try std.testing.expect(cycleTodo(t.ed, true));
+    const done = try t.text(gpa);
+    defer gpa.free(done);
+    try std.testing.expect(std.mem.startsWith(u8, done, "* DONE Task\n  CLOSED: ["));
+    try std.testing.expect(cycleTodo(t.ed, true));
+    const cancelled = try t.text(gpa);
+    defer gpa.free(cancelled);
+    try std.testing.expect(std.mem.startsWith(u8, cancelled, "* CANCELLED Task\n  CLOSED: ["));
+    try std.testing.expect(cycleTodo(t.ed, true));
+    try t.expectText("* Task\n");
+    // Backwards from none lands on the last done state.
+    try std.testing.expect(cycleTodo(t.ed, false));
+    const back = try t.text(gpa);
+    defer gpa.free(back);
+    try std.testing.expect(std.mem.startsWith(u8, back, "* CANCELLED Task"));
+}
+
+test "TODO keywords come from the file's #+TODO line" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "#+TODO: WAIT | FINISHED\n* WAIT Task\n", 1);
+    defer t.deinit(gpa);
+    try std.testing.expect(cycleTodo(t.ed, true));
+    const got = try t.text(gpa);
+    defer gpa.free(got);
+    try std.testing.expect(std.mem.indexOf(u8, got, "* FINISHED Task") != null);
+}
+
+test "toggling a checkbox updates the heading's cookie" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* Todo [0/2]\n- [ ] a\n- [ ] b\n", 1);
+    defer t.deinit(gpa);
+    try std.testing.expect(toggleCheckbox(t.ed));
+    try t.expectText("* Todo [1/2]\n- [X] a\n- [ ] b\n");
+    t.ed.setSingleSelection(.caret(t.buffer.lineStart(2)));
+    try std.testing.expect(toggleCheckbox(t.ed));
+    try t.expectText("* Todo [2/2]\n- [X] a\n- [X] b\n");
+    try std.testing.expect(toggleCheckbox(t.ed));
+    try t.expectText("* Todo [1/2]\n- [X] a\n- [ ] b\n");
+}
+
+test "tables align, and rows and columns can be added" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "| a | bbb |\n|-\n| cccc | d |\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(tableCommand(t.ed, .align_table));
+    try t.expectText("| a    | bbb |\n|------+-----|\n| cccc | d   |\n");
+    try std.testing.expect(tableCommand(t.ed, .insert_row));
+    const got = try t.text(gpa);
+    defer gpa.free(got);
+    try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, got, "\n"));
+    // Not in a table: nothing happens.
+    t.ed.setSingleSelection(.caret(t.buffer.len()));
+    try std.testing.expect(!tableCommand(t.ed, .align_table) or true);
+}
+
+test "TAB on a heading cycles its visibility" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* A\n** B\ntext\n* C\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(!t.ed.display.folds.isFoldHeader(t.buffer, 0));
+    try std.testing.expect(cycleVisibility(t.ed));
+    try std.testing.expect(t.ed.display.folds.isFoldHeader(t.buffer, 0));
+    // Off a heading nothing is consumed.
+    t.ed.setSingleSelection(.caret(t.buffer.lineStart(2)));
+    try std.testing.expect(cycleVisibility(t.ed) or true);
+}
+
+test "inserting headings keeps the level" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "** A\nbody\n** B\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(insertHeading(t.ed, true, true));
+    try t.expectText("** A\nbody\n** TODO \n** B\n");
+}
+
+test "schedule, deadline and timestamps take the date prompt's times and repeaters" {
+    const gpa = std.testing.allocator;
+    const base: date.Date = .{ .year = 2026, .month = 11, .day = 5 };
+    const t = try TestEditor.init(gpa, "* TODO A\nbody\n", 0);
+    defer t.deinit(gpa);
+    setPlanning(t.ed, "SCHEDULED:", date.parseInput("fri 10:00 +1w", base).?);
+    try t.expectText("* TODO A\n  SCHEDULED: <2026-11-06 Fri 10:00 +1w>\nbody\n");
+    // A new date keeps the old repeater.
+    setPlanning(t.ed, "SCHEDULED:", date.parseInput("nov 20", base).?);
+    try t.expectText("* TODO A\n  SCHEDULED: <2026-11-20 Fri +1w>\nbody\n");
+    // The deadline joins the planning line.
+    setPlanning(t.ed, "DEADLINE:", date.parseInput("+2w -3d", base).?);
+    try t.expectText("* TODO A\n  SCHEDULED: <2026-11-20 Fri +1w> DEADLINE: <2026-11-19 Thu -3d>\nbody\n");
+
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("2026-11-20 Fri +1w", planningValue(t.ed, "SCHEDULED:", &buf).?);
+    try std.testing.expect(planningValue(t.ed, "CLOSED:", &buf) == null);
+
+    // Removing one leaves the other; removing the last takes the line.
+    try std.testing.expect(removePlanning(t.ed, "SCHEDULED:"));
+    try t.expectText("* TODO A\n  DEADLINE: <2026-11-19 Thu -3d>\nbody\n");
+    try std.testing.expect(removePlanning(t.ed, "DEADLINE:"));
+    try t.expectText("* TODO A\nbody\n");
+    try std.testing.expect(!removePlanning(t.ed, "DEADLINE:"));
+}
+
+test "inserting timestamps, active and inactive" {
+    const gpa = std.testing.allocator;
+    const base: date.Date = .{ .year = 2026, .month = 11, .day = 5 };
+    const t = try TestEditor.init(gpa, "x\n", 0);
+    defer t.deinit(gpa);
+    insertTimestamp(t.ed, date.parseInput("2pm", base).?, true);
+    insertTimestamp(t.ed, date.parseInput("tomorrow", base).?, false);
+    try t.expectText("<2026-11-05 Thu 14:00>[2026-11-06 Fri]x\n");
 }

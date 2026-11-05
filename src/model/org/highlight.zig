@@ -13,14 +13,20 @@ const Allocator = std.mem.Allocator;
 const Rope = rope_mod.Rope;
 const HighlightSpan = syntax_mod.HighlightSpan;
 
+/// cs-code's heading colours in turn: heading, type, function, variable,
+/// string, control keyword, number and tag, then round again.
 fn levelColor(s: *const theme_mod.Syntax, level: usize) Color {
-    const colors = [_]Color{ s.function, s.number, s.keyword, s.string, s.operator, s.comment, s.escape, s.label };
+    const colors = [_]Color{ s.keyword, s.type, s.function, s.property, s.string, s.escape, s.number, s.tag };
     return colors[(level - 1) % colors.len];
 }
 
 fn push(out: *std.ArrayList(HighlightSpan), gpa: Allocator, start: usize, end: usize, color: Color) void {
+    pushStyled(out, gpa, start, end, color, .normal);
+}
+
+fn pushStyled(out: *std.ArrayList(HighlightSpan), gpa: Allocator, start: usize, end: usize, color: Color, style: theme_mod.FontStyle) void {
     if (end <= start) return;
-    out.append(gpa, .{ .start = start, .end = end, .color = color }) catch {};
+    out.append(gpa, .{ .start = start, .end = end, .color = color, .style = style }) catch {};
 }
 
 /// Custom highlighter (see languages.zig), producing spans for [start, end).
@@ -66,10 +72,10 @@ pub fn highlight(gpa: Allocator, rope: *const Rope, start: usize, end: usize, s:
         if (parser.parseHeadingLine(line, keywords)) |h| {
             const done = h.todo != null and keywords.isDone(h.todo.?);
             const color = if (done) s.comment else levelColor(s, h.level);
-            push(out, gpa, base, base + line.len, color);
+            pushStyled(out, gpa, base, base + line.len, color, .bold);
             if (h.todo) |kw| push(out, gpa, base + h.todo_start, base + h.todo_start + kw.len, if (done) s.string else if (std.mem.eql(u8, kw, "TODO")) s.constant else s.label);
             if (h.priority != null) push(out, gpa, base + h.priority_start, base + h.priority_start + 4, s.number);
-            if (h.tags.len > 0) push(out, gpa, base + h.tags_start, base + h.tags_start + h.tags.len, s.comment);
+            if (h.tags.len > 0) pushStyled(out, gpa, base + h.tags_start, base + h.tags_start + h.tags.len, s.attribute, .normal);
             inlineMarkup(gpa, line, base, s, out, true);
             continue;
         }
@@ -89,7 +95,9 @@ pub fn highlight(gpa: Allocator, rope: *const Rope, start: usize, end: usize, s:
             std.mem.indexOfScalar(u8, trimmed[1..std.mem.indexOfScalarPos(u8, trimmed, 1, ':').?], ' ') == null)
         {
             const close = std.mem.indexOfScalarPos(u8, trimmed, 1, ':').?;
-            push(out, gpa, base + indent, base + indent + close + 1, s.comment);
+            const name = trimmed[1..close];
+            const structural = std.ascii.eqlIgnoreCase(name, "PROPERTIES") or std.ascii.eqlIgnoreCase(name, "END") or std.ascii.eqlIgnoreCase(name, "LOGBOOK");
+            push(out, gpa, base + indent, base + indent + close + 1, if (structural) s.comment else s.property);
             continue;
         }
         if (trimmed.len > 0 and trimmed[0] == '|') {
@@ -102,7 +110,7 @@ pub fn highlight(gpa: Allocator, rope: *const Rope, start: usize, end: usize, s:
         for ([_][]const u8{ "SCHEDULED:", "DEADLINE:", "CLOSED:" }) |kw| {
             var pos: usize = 0;
             while (std.mem.indexOfPos(u8, line, pos, kw)) |p| : (pos = p + kw.len) {
-                push(out, gpa, base + p, base + p + kw.len, if (kw[0] == 'D') s.constant else s.comment);
+                push(out, gpa, base + p, base + p + kw.len, s.keyword);
             }
         }
         // List bullets and checkboxes.
@@ -147,7 +155,7 @@ fn inlineMarkup(gpa: Allocator, line: []const u8, base: usize, s: *const theme_m
         const ch = line[i];
         if (ch == '<' or ch == '[') {
             if (date.parseTimestamp(line, i)) |ts| {
-                push(out, gpa, base + ts.start, base + ts.end, s.attribute);
+                push(out, gpa, base + ts.start, base + ts.end, if (ts.active) s.constant else s.comment);
                 i = ts.end;
                 continue;
             }
@@ -183,13 +191,17 @@ fn inlineMarkup(gpa: Allocator, line: []const u8, base: usize, s: *const theme_m
                     const after_ok = close + 1 >= line.len or std.mem.indexOfScalar(u8, " \t.,;:!?')\"}-", line[close + 1]) != null;
                     if (after_ok and line[close - 1] != ' ' and close > i + 1) {
                         const color = switch (ch) {
-                            '*' => s.number,
-                            '/' => s.keyword,
+                            '*', '/' => s.foreground,
                             '=', '~' => s.string,
                             '+' => s.comment,
                             else => s.function,
                         };
-                        push(out, gpa, base + i, base + close + 1, color);
+                        const style: theme_mod.FontStyle = switch (ch) {
+                            '*' => .bold,
+                            '/' => .italic,
+                            else => .normal,
+                        };
+                        pushStyled(out, gpa, base + i, base + close + 1, color, style);
                         i = close + 1;
                         continue;
                     }

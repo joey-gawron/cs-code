@@ -59,14 +59,16 @@ pub fn tick(ws: *Workspace) void {
 
 pub fn runCommand(ws: *Workspace, cmd: org.Command) void {
     switch (cmd) {
-        .schedule => ws.openPrompt("Schedule (2026-10-24, +3d, fri, tomorrow):", @intFromEnum(PromptKind.schedule), ""),
-        .deadline => ws.openPrompt("Deadline (2026-10-24, +3d, fri, tomorrow):", @intFromEnum(PromptKind.deadline), ""),
-        .timestamp => ws.openPrompt("Timestamp:", @intFromEnum(PromptKind.timestamp), "today"),
-        .timestamp_inactive => ws.openPrompt("Inactive timestamp:", @intFromEnum(PromptKind.timestamp_inactive), "today"),
+        .schedule => promptPlanning(ws, .schedule),
+        .deadline => promptPlanning(ws, .deadline),
+        .timestamp => ws.openPrompt("Timestamp (fri, +3d, nov 20 14:00, 2pm):", @intFromEnum(PromptKind.timestamp), "today"),
+        .timestamp_inactive => ws.openPrompt("Inactive timestamp (fri, +3d, nov 20 14:00, 2pm):", @intFromEnum(PromptKind.timestamp_inactive), "today"),
         .open_link => openLink(ws),
         .agenda => openAgenda(ws, .week),
         .todo_list => openAgenda(ws, .todo),
         .set_tags => promptTags(ws),
+        .capture => startCapture(ws),
+        .export_html => perform(ws, .org_export_html),
         .refile, .archive, .edit_src, .clock_in, .clock_out, .clock_report => perform(ws, switch (cmd) {
             .refile => .org_refile,
             .archive => .org_archive,
@@ -108,18 +110,37 @@ pub fn confirmPrompt(ws: *Workspace, tag: u32, input: []const u8) bool {
         if (org.setTags(ed, input)) ed.afterCommand(false);
         return true;
     }
-    const d = date.Date.parseHuman(input, date.Date.today()) orelse {
+    // An emptied Schedule / Deadline prompt removes the date it had.
+    if ((kind == .schedule or kind == .deadline) and std.mem.trim(u8, input, " ").len == 0) {
+        if (org.removePlanning(ed, planningKeyword(kind))) ed.afterCommand(false);
+        return true;
+    }
+    const d = date.parseInput(input, date.Date.today()) orelse {
         ws.setStatus("Can't understand date: {s}", .{input});
         return true;
     };
     switch (kind) {
-        .schedule => org.setPlanning(ed, "SCHEDULED:", d),
-        .deadline => org.setPlanning(ed, "DEADLINE:", d),
+        .schedule, .deadline => org.setPlanning(ed, planningKeyword(kind), d),
         .timestamp => org.insertTimestamp(ed, d, true),
         .timestamp_inactive => org.insertTimestamp(ed, d, false),
         else => unreachable,
     }
     return true;
+}
+
+fn planningKeyword(kind: PromptKind) []const u8 {
+    return if (kind == .schedule) "SCHEDULED:" else "DEADLINE:";
+}
+
+/// Schedule / Deadline: org's date prompt, starting from the date the entry has.
+fn promptPlanning(ws: *Workspace, kind: PromptKind) void {
+    const label = if (kind == .schedule)
+        "Schedule (fri, +3d, nov 20, 14:00, fri 10:00 +1w; empty removes):"
+    else
+        "Deadline (fri, +3d, nov 20, 14:00, fri -3d; empty removes):";
+    var buf: [96]u8 = undefined;
+    const current = if (ws.activeEditor()) |ed| org.planningValue(ed, planningKeyword(kind), &buf) orelse "" else "";
+    ws.openPrompt(label, @intFromEnum(kind), current);
 }
 
 /// C-c C-q: the heading's tags, edited in a prompt that lists the file's.
@@ -267,10 +288,16 @@ pub fn startCapture(ws: *Workspace) void {
     const settings = ws.env.settings;
     var templates = capture_mod.parseTemplates(alloc, settings.org_capture_templates_json);
     if (templates.len == 0) {
-        // The one target org_capture_file / org_capture_heading name.
-        const one = alloc.alloc(capture_mod.Template, 1) catch return arena.deinit();
-        one[0] = .{ .file = settings.org_capture_file, .heading = settings.org_capture_heading };
-        templates = one;
+        // cs-code's four: tasks, notes and events go where org_capture_file /
+        // org_capture_heading say, the journal into journal.org's date tree.
+        const file = settings.org_capture_file;
+        const heading = settings.org_capture_heading;
+        const four = alloc.alloc(capture_mod.Template, 4) catch return arena.deinit();
+        four[0] = .{ .key = "t", .description = "Task", .file = file, .heading = heading, .template = "* TODO %^{Task}\n  %U" };
+        four[1] = .{ .key = "n", .description = "Note", .file = file, .heading = heading, .template = "* %^{Title}\n  %U" };
+        four[2] = .{ .key = "e", .description = "Event", .file = file, .heading = heading, .template = "* %^{What}\n  %^T" };
+        four[3] = .{ .key = "j", .description = "Journal", .file = "~/org/journal.org", .template = "* %<%H:%M> %^{Title}", .datetree = true };
+        templates = four;
     }
     var c: Capture = .{ .arena = arena, .templates = templates };
     // %a, %i and %f: where capture started.
@@ -312,6 +339,7 @@ fn capture(ws: *Workspace, input: []const u8) void {
         .link = c.link,
         .selection = c.selection,
         .file_name = c.file_name,
+        .user = if (std.c.getenv("USER")) |u| std.mem.span(u) else "",
     }) catch return;
     defer ws.gpa.free(entry);
     const Ctx = struct {

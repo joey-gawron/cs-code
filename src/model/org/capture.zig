@@ -26,9 +26,10 @@ pub const Template = struct {
     file: []const u8 = "~/org/inbox.org",
     /// Where under the file (empty: the top level, or the date tree's root).
     heading: []const u8 = "",
-    /// %? the text typed, %U / %u inactive date with / without time, %T /
-    /// %t active ones, %a a link to where capture started, %i the
-    /// selection, %f that file's name, %% a percent sign.
+    /// %? and %^{Prompt} the text typed, %U / %u inactive date with / without
+    /// time, %T / %t active ones (%^T and the like too), %<%H:%M> the time in
+    /// a C format, %a a link to where capture started, %i the selection, %f
+    /// that file's name, %n the user name, %% a percent sign.
     template: []const u8 = "* TODO %?\n  %U",
     /// Files under year / month / day headings (org's file+olp+datetree).
     datetree: bool = false,
@@ -49,7 +50,52 @@ pub const Context = struct {
     link: []const u8 = "",
     selection: []const u8 = "",
     file_name: []const u8 = "",
+    /// %n.
+    user: []const u8 = "",
 };
+
+/// The text typed for `%?` and `%^{Prompt}` is `ctx.input`; `%^t`-style
+/// escapes, which org asks a date for, use today's here.
+fn writeStamp(w: *std.Io.Writer, kind: u8, d: []const u8, time: date.Time) !bool {
+    switch (kind) {
+        'U' => try w.print("[{s} {d:0>2}:{d:0>2}]", .{ d, time.hour, time.minute }),
+        'u' => try w.print("[{s}]", .{d}),
+        'T' => try w.print("<{s} {d:0>2}:{d:0>2}>", .{ d, time.hour, time.minute }),
+        't' => try w.print("<{s}>", .{d}),
+        else => return false,
+    }
+    return true;
+}
+
+/// `%<format>`: the time in a C format (%Y %y %m %d %e %H %M %S %a %A %b %B %%).
+fn writeFormatted(w: *std.Io.Writer, format: []const u8, now: anytype) !void {
+    const d = now.date;
+    const year: u32 = @intCast(d.year);
+    var i: usize = 0;
+    while (i < format.len) : (i += 1) {
+        if (format[i] != '%' or i + 1 >= format.len) {
+            try w.writeByte(format[i]);
+            continue;
+        }
+        i += 1;
+        switch (format[i]) {
+            'Y' => try w.print("{d}", .{year}),
+            'y' => try w.print("{d:0>2}", .{year % 100}),
+            'm' => try w.print("{d:0>2}", .{d.month}),
+            'd' => try w.print("{d:0>2}", .{d.day}),
+            'e' => try w.print("{d: >2}", .{d.day}),
+            'H' => try w.print("{d:0>2}", .{now.time.hour}),
+            'M' => try w.print("{d:0>2}", .{now.time.minute}),
+            'S' => try w.writeAll("00"),
+            'a' => try w.writeAll(date.day_names[d.weekday()][0..3]),
+            'A' => try w.writeAll(date.day_names[d.weekday()]),
+            'b' => try w.writeAll(date.month_names[d.month - 1][0..3]),
+            'B' => try w.writeAll(date.month_names[d.month - 1]),
+            '%' => try w.writeByte('%'),
+            else => |other| try w.print("%{c}", .{other}),
+        }
+    }
+}
 
 /// The template with its %-escapes filled in.
 pub fn expand(gpa: Allocator, template: []const u8, ctx: Context) ![]u8 {
@@ -68,10 +114,34 @@ pub fn expand(gpa: Allocator, template: []const u8, ctx: Context) ![]u8 {
         i += 1;
         switch (template[i]) {
             '?' => try w.writeAll(ctx.input),
-            'U' => try w.print("[{s} {d:0>2}:{d:0>2}]", .{ d, ctx.now.time.hour, ctx.now.time.minute }),
-            'u' => try w.print("[{s}]", .{d}),
-            'T' => try w.print("<{s} {d:0>2}:{d:0>2}>", .{ d, ctx.now.time.hour, ctx.now.time.minute }),
-            't' => try w.print("<{s}>", .{d}),
+            'U', 'u', 'T', 't' => |kind| _ = try writeStamp(w, kind, d, ctx.now.time),
+            '^' => {
+                if (i + 1 < template.len and template[i + 1] == '{') {
+                    // %^{Prompt|default|other}: the typed text, else the first choice.
+                    const close = std.mem.indexOfScalarPos(u8, template, i + 2, '}') orelse {
+                        try w.writeAll("%^");
+                        continue;
+                    };
+                    var parts = std.mem.splitScalar(u8, template[i + 2 .. close], '|');
+                    _ = parts.next();
+                    const default = parts.next() orelse "";
+                    try w.writeAll(if (ctx.input.len > 0) ctx.input else default);
+                    i = close;
+                } else if (i + 1 < template.len) {
+                    i += 1;
+                    // %^g asks for tags: none here.
+                    if (template[i] != 'g' and !try writeStamp(w, template[i], d, ctx.now.time)) try w.print("%^{c}", .{template[i]});
+                } else try w.writeAll("%^");
+            },
+            '<' => {
+                const close = std.mem.indexOfScalarPos(u8, template, i + 1, '>') orelse {
+                    try w.writeAll("%<");
+                    continue;
+                };
+                try writeFormatted(w, template[i + 1 .. close], ctx.now);
+                i = close;
+            },
+            'n' => try w.writeAll(ctx.user),
             'a' => if (ctx.link.len > 0) try w.print("[[{s}]]", .{ctx.link}),
             'i' => try w.writeAll(ctx.selection),
             'f' => try w.writeAll(ctx.file_name),
@@ -277,4 +347,26 @@ test "capture adds a missing heading" {
         \\  [2026-10-21 Wed 14:03]
         \\
     );
+}
+
+test "template escapes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const ctx: Context = .{
+        .input = "Report",
+        .now = .{ .date = .{ .year = 2026, .month = 11, .day = 5 }, .time = .{ .hour = 9, .minute = 7 } },
+        .user = "joey",
+        .file_name = "x.org",
+    };
+    try std.testing.expectEqualStrings("* TODO Report", try expand(a, "* TODO %^{Task}", ctx));
+    // Without typed text the first choice stands.
+    var empty = ctx;
+    empty.input = "";
+    try std.testing.expectEqualStrings("size: ebook", try expand(a, "size: %^{Size|ebook|audio}", empty));
+    try std.testing.expectEqualStrings("<2026-11-05 Thu 09:07> [2026-11-05 Thu]", try expand(a, "%^T %^u", ctx));
+    try std.testing.expectEqualStrings("09:07 Thursday  5 Nov 26 by joey in x.org", try expand(a, "%<%H:%M %A %e %b %y> by %n in %f", ctx));
+    try std.testing.expectEqualStrings("100% sure %z", try expand(a, "100%% sure %z", ctx));
+    // %^g (tags) leaves nothing behind.
+    try std.testing.expectEqualStrings("* A ", try expand(a, "* A %^g", ctx));
 }
