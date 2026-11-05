@@ -362,6 +362,7 @@ fn keyEvent(spec: []const u8) !platform.KeyEvent {
 
 test {
     _ = @import("model/text/selection.zig");
+    _ = @import("model/lsp/signature.zig");
     _ = @import("framework/util/regex.zig");
     _ = @import("framework/util/png.zig");
     _ = @import("framework/platform/login_path.zig");
