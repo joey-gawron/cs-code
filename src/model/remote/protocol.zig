@@ -1,6 +1,6 @@
-//! The wire protocol between the editor and jiffy-edit-server (Remote-SSH).
+//! The wire protocol between the editor and cs-zig-server (Remote-SSH).
 //!
-//! After a one-line text banner ("JIFFY-EDIT-SERVER <protocol> <arch>\n", so the
+//! After a one-line text banner ("CS-ZIG-SERVER <protocol> <arch>\n", so the
 //! client can skip anything a login shell prints first) both sides exchange
 //! frames: an 8-byte header (JSON length, payload length; little endian), a
 //! JSON object, then raw payload bytes. File contents, process output and
@@ -21,9 +21,9 @@ const Allocator = std.mem.Allocator;
 
 /// Bumped on any incompatible change; part of the remote install directory.
 pub const protocol_version: u32 = 1;
-pub const banner_magic = "JIFFY-EDIT-SERVER";
+pub const banner_magic = "CS-ZIG-SERVER";
 /// Printed by the launch script when the server binary isn't installed.
-pub const missing_magic = "JIFFY-EDIT-MISSING";
+pub const missing_magic = "CS-ZIG-MISSING";
 
 pub const header_len = 8;
 pub const max_json = 64 << 20;

@@ -1,4 +1,4 @@
-//! The system calls the remote code uses. jiffy-edit-server has no libc, so
+//! The system calls the remote code uses. cs-zig-server has no libc, so
 //! on Linux these are the raw syscalls of std.os.linux; on macOS (the
 //! editor only) they are libc calls with the same conventions: a usize
 //! result that `errno` decodes, and Linux-only flags emulated.

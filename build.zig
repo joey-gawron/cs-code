@@ -90,6 +90,28 @@ pub fn build(b: *std.Build) void {
     run_cmd.addPassthruArgs();
     b.step("run", "Run the editor").dependOn(&run_cmd.step);
 
+    // cs-zig-server, the remote side of Remote-SSH editing. No libc and no GUI
+    // libraries, so every build is a static binary that runs on any Linux
+    // host. `zig build server` cross-builds the architectures the editor
+    // uploads to share/cs-zig-server/<arch>/ (it also runs on a Mac's install).
+    const server_mod = b.createModule(.{ .root_source_file = b.path("src/server.zig"), .target = target, .optimize = optimize });
+    const server_exe = b.addExecutable(.{ .name = "cs-zig-server", .root_module = server_mod });
+    // The server is Linux-only (raw syscalls): a Mac install carries the
+    // Linux builds the editor deploys to remote hosts instead.
+    if (!macos) b.installArtifact(server_exe);
+    const server_step = b.step("server", "Build static cs-zig-server binaries for x86_64 and aarch64 Linux");
+    const server_optimize = b.option(std.builtin.OptimizeMode, "server-optimize", "Optimize mode of `zig build server` (default small)") orelse .small;
+    for ([_]std.Target.Cpu.Arch{ .x86_64, .aarch64 }) |arch| {
+        const cross = b.addExecutable(.{ .name = "cs-zig-server", .root_module = b.createModule(.{
+            .root_source_file = b.path("src/server.zig"),
+            .target = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = .linux }),
+            .optimize = server_optimize,
+        }) });
+        const dest = b.fmt("share/cs-zig-server/{t}", .{arch});
+        server_step.dependOn(&b.addInstallArtifact(cross, .{ .dest_dir = .{ .override = .{ .custom = dest } } }).step);
+    }
+    if (macos) b.getInstallStep().dependOn(server_step);
+
     // `zig build layers`: imports must point down framework <- model <- app.
     const layers_tool = b.addExecutable(.{ .name = "check_layers", .root_module = b.createModule(.{
         .root_source_file = b.path("tools/check_layers.zig"),
@@ -109,6 +131,22 @@ pub fn build(b: *std.Build) void {
     }) });
     test_step.dependOn(&b.addRunArtifact(core_tests).step);
     test_step.dependOn(&layers_run.step);
+
+    // Remote tests: protocol units plus client <-> cs-zig-server integration
+    // (the server runs as a local subprocess instead of over ssh). Linux only, like the server.
+    if (!macos) {
+        const server_test_options = b.addOptions();
+        server_test_options.addOptionPath("server_path", server_exe.getEmittedBin());
+        // The password test runs the editor as ssh's SSH_ASKPASS.
+        server_test_options.addOptionPath("editor_path", exe.getEmittedBin());
+        const server_tests = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("src/server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "server_test_options", .module = server_test_options.createModule() }},
+        }) });
+        test_step.dependOn(&b.addRunArtifact(server_tests).step);
+    }
 }
 
 /// What every build of the editor's code shares: the generated Wayland
