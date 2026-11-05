@@ -1,4 +1,4 @@
-//! A connection to jiffy-edit-server on another machine (VS Code's Remote-SSH
+//! A connection to cs-zig-server on another machine (VS Code's Remote-SSH
 //! client side). It starts `ssh host <launch script>` (or, for tests and
 //! CS_ZIG_REMOTE_TRANSPORT=local, the server binary directly), uploads the
 //! server through that same session if the host doesn't have this build
@@ -56,6 +56,9 @@ pub const Options = struct {
     binaries: []const ssh.Binary = &.{},
     /// The ssh executable (tests substitute one that runs commands locally).
     ssh_program: []const u8 = "ssh",
+    /// An ssh config file to use instead of ~/.ssh/config (`ssh -F`), like
+    /// cs-code's remote.ssh.configFile.
+    config_file: ?[]const u8 = null,
     /// What ssh runs to ask for passwords and host key confirmations
     /// (SSH_ASKPASS: the editor binary, see askpass.zig). Without it, or
     /// when `connect` blocks its caller, ssh runs in BatchMode.
@@ -235,7 +238,7 @@ pub const Connection = struct {
         return self.arch_buf[0..self.arch_len];
     }
 
-    /// "Uploading jiffy-edit-server… 40%", "Permission denied (publickey)".
+    /// "Uploading cs-zig-server… 40%", "Permission denied (publickey)".
     pub fn statusText(self: *Connection, buf: []u8) []const u8 {
         self.status_lock.lock();
         defer self.status_lock.unlock();
@@ -499,6 +502,7 @@ pub const Connection = struct {
     /// questions to the editor when this attempt can ask (else BatchMode).
     fn sshArgs(self: *Connection, alloc: Allocator, argv: *std.ArrayList([]const u8)) !?std.process.Environ.Map {
         try argv.append(alloc, self.options.ssh_program);
+        if (self.options.config_file) |f| try argv.appendSlice(alloc, &.{ "-F", f });
         try argv.appendSlice(alloc, &ssh.base_args);
         if (self.interactive) if (self.listener) |l| if (self.options.askpass) |program| {
             return try askpass.sshEnviron(alloc, self.io, program, l.path());
@@ -524,7 +528,7 @@ pub const Connection = struct {
         const bin = for (self.options.binaries) |b| {
             if (std.mem.eql(u8, b.arch, arch_name)) break b;
         } else {
-            self.setStatus("No jiffy-edit-server build for {s} (run `zig build server`)", .{arch_name});
+            self.setStatus("No cs-zig-server build for {s} (run `zig build server`)", .{arch_name});
             return error.NoServerBinary;
         };
         const data = try Io.Dir.cwd().readFileAlloc(self.io, bin.path, self.gpa, .limited(256 << 20));
@@ -545,10 +549,10 @@ pub const Connection = struct {
             const pct = off * 100 / data.len;
             if (pct / 5 != last_pct / 5) {
                 last_pct = pct;
-                self.setStatus("Uploading jiffy-edit-server ({s}) to {s}… {d}%", .{ arch_name, self.host, pct });
+                self.setStatus("Uploading cs-zig-server ({s}) to {s}… {d}%", .{ arch_name, self.host, pct });
             }
         }
-        self.setStatus("Starting jiffy-edit-server on {s}…", .{self.host});
+        self.setStatus("Starting cs-zig-server on {s}…", .{self.host});
     }
 
     fn spawnChild(self: *Connection, argv: []const []const u8, env: ?*const std.process.Environ.Map) !void {

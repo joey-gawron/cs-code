@@ -1,6 +1,6 @@
 //! A terminal's pty, here or on a Remote-SSH host. Terminal sessions use
 //! `AnyPty` in place of framework's `Pty`: a working directory of
-//! ssh://host/dir starts the program on that host (jiffy-edit-server allocates
+//! ssh://host/dir starts the program on that host (cs-zig-server allocates
 //! the pty there and proxies it over the connection), anything else is a
 //! local `Pty`. The methods mirror `Pty`'s.
 

@@ -58,6 +58,10 @@ pub const menus = [_]Menu{
         a("Close File", .close_tab),
         a("Close All Files", .close_all),
         sep,
+        a("Connect to Host…", .remote_connect),
+        a("Open Remote Folder…", .remote_open_folder),
+        a("Close Remote Connection", .remote_close),
+        sep,
         a("Exit", .quit),
     } },
     .{ .title = "Edit", .items = &.{

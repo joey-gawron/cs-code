@@ -1,4 +1,4 @@
-//! The ssh side of Remote-SSH: command lines that launch jiffy-edit-server on
+//! The ssh side of Remote-SSH: command lines that launch cs-zig-server on
 //! a host (deploying it first when the host lacks this exact build), and the
 //! host list for "Remote: Connect to Host…" from ~/.ssh/config.
 //!
@@ -43,10 +43,10 @@ pub fn versionTag(buf: *[24]u8, data: []const u8) []const u8 {
 pub const ArchTag = struct { arch: []const u8, tag: []const u8 };
 
 /// The remote command that starts the installed server for the host's
-/// architecture. If it isn't there, the script prints "JIFFY-EDIT-MISSING
+/// architecture. If it isn't there, the script prints "CS-ZIG-MISSING
 /// <uname -m>" and waits for the build on stdin, in the same ssh session (so
 /// a password is asked once): an `installHeader` line, then exactly that many
-/// bytes. It installs them as ~/.jiffy-edit-server/<tag>/jiffy-edit-server (a temp
+/// bytes. It installs them as ~/.cs-zig-server/<tag>/cs-zig-server (a temp
 /// file, checked for size, then renamed) and execs it; on EOF or a short
 /// upload it exits without installing anything.
 /// Wrapped in `sh -c '…'` so it works whatever the login shell is.
@@ -61,12 +61,12 @@ pub fn launchCommand(gpa: Allocator, tags: []const ArchTag) ![]u8 {
     // `read` takes stdin one byte at a time and `head -c` stops at the size,
     // so what follows the binary (the client's frames) reaches the server.
     try out.print(gpa,
-        \\*) v=none;; esac; f="$HOME/.jiffy-edit-server/$v/jiffy-edit-server"; if [ -x "$f" ]; then exec "$f" --stdio; fi; echo "{s} $(uname -m)"; read -r v n || exit 1; case "$v" in ""|*[!0-9a-z-]*) exit 1;; esac; case "$n" in ""|*[!0-9]*) exit 1;; esac; d="$HOME/.jiffy-edit-server/$v"; f="$d/jiffy-edit-server"; mkdir -p "$d" && head -c "$n" > "$f.$$" && [ $(wc -c < "$f.$$") -eq "$n" ] && chmod 755 "$f.$$" && mv -f "$f.$$" "$f" && exec "$f" --stdio; rm -f "$f.$$"; echo "Cannot install jiffy-edit-server in $d" >&2; exit 1'
+        \\*) v=none;; esac; f="$HOME/.cs-zig-server/$v/cs-zig-server"; if [ -x "$f" ]; then exec "$f" --stdio; fi; echo "{s} $(uname -m)"; read -r v n || exit 1; case "$v" in ""|*[!0-9a-z-]*) exit 1;; esac; case "$n" in ""|*[!0-9]*) exit 1;; esac; d="$HOME/.cs-zig-server/$v"; f="$d/cs-zig-server"; mkdir -p "$d" && head -c "$n" > "$f.$$" && [ $(wc -c < "$f.$$") -eq "$n" ] && chmod 755 "$f.$$" && mv -f "$f.$$" "$f" && exec "$f" --stdio; rm -f "$f.$$"; echo "Cannot install cs-zig-server in $d" >&2; exit 1'
     , .{protocol.missing_magic});
     return out.toOwnedSlice(gpa);
 }
 
-/// The line the client sends after "JIFFY-EDIT-MISSING", before the binary.
+/// The line the client sends after "CS-ZIG-MISSING", before the binary.
 pub fn installHeader(buf: []u8, tag: []const u8, size: usize) ![]const u8 {
     return std.fmt.bufPrint(buf, "{s} {d}\n", .{ tag, size });
 }
@@ -97,13 +97,13 @@ pub fn parseConfig(alloc: Allocator, text: []const u8, hosts: *std.ArrayList([]c
     }
 }
 
-/// Host aliases from ~/.ssh/config and the files it includes (one level of
-/// `Include`, with `*` in the file name). Allocated in `alloc`.
-pub fn configHosts(alloc: Allocator, io: Io, home: []const u8) ![]const []const u8 {
+/// Host aliases from ~/.ssh/config (or `config_file`) and the files it
+/// includes (one level of `Include`, with `*` in the file name). Allocated in `alloc`.
+pub fn configHosts(alloc: Allocator, io: Io, home: []const u8, config_file: ?[]const u8) ![]const []const u8 {
     var hosts: std.ArrayList([]const u8) = .empty;
     var includes: std.ArrayList([]const u8) = .empty;
     const ssh_dir = try std.fs.path.join(alloc, &.{ home, ".ssh" });
-    const main_path = try std.fs.path.join(alloc, &.{ ssh_dir, "config" });
+    const main_path = config_file orelse try std.fs.path.join(alloc, &.{ ssh_dir, "config" });
     const text = Io.Dir.cwd().readFileAlloc(io, main_path, alloc, .limited(1 << 20)) catch return hosts.items;
     try parseConfig(alloc, text, &hosts, &includes);
     var ignored: std.ArrayList([]const u8) = .empty;

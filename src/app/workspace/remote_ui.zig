@@ -93,8 +93,8 @@ fn clearPending(ws: *Workspace) void {
 
 // ---- Connections ---------------------------------------------------------------
 
-/// Locates jiffy-edit-server builds: $CS_ZIG_SERVER_DIR/<arch>/, then
-/// <exe dir>/../share/jiffy-edit-server/<arch>/ (`zig build server`), then the
+/// Locates cs-zig-server builds: $CS_ZIG_SERVER_DIR/<arch>/, then
+/// <exe dir>/../share/cs-zig-server/<arch>/ (`zig build server`), then the
 /// native build next to the editor (`zig build`).
 fn findBinaries(ws: *Workspace) void {
     const st = &ws.remote;
@@ -104,7 +104,7 @@ fn findBinaries(ws: *Workspace) void {
     const exe_dir = dir_buf[0 .. std.process.executableDirPath(ws.io, &dir_buf) catch 0];
     const env_dir: ?[]const u8 = if (std.c.getenv("CS_ZIG_SERVER_DIR")) |d| std.mem.span(d) else null;
     const native = @tagName(builtin.cpu.arch);
-    st.native_server = std.fs.path.join(ws.gpa, &.{ exe_dir, "jiffy-edit-server" }) catch null;
+    st.native_server = std.fs.path.join(ws.gpa, &.{ exe_dir, "cs-zig-server" }) catch null;
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
     if (std.process.executablePath(ws.io, &exe_buf)) |n| {
         st.askpass_program = ws.gpa.dupe(u8, exe_buf[0..n]) catch null;
@@ -112,8 +112,8 @@ fn findBinaries(ws: *Workspace) void {
     for ([_][]const u8{ "x86_64", "aarch64" }) |arch| {
         var candidates: [3]?[]u8 = .{ null, null, null };
         defer for (candidates) |cand| if (cand) |p| ws.gpa.free(p);
-        if (env_dir) |d| candidates[0] = std.fs.path.join(ws.gpa, &.{ d, arch, "jiffy-edit-server" }) catch null;
-        candidates[1] = std.fs.path.join(ws.gpa, &.{ exe_dir, "..", "share", "jiffy-edit-server", arch, "jiffy-edit-server" }) catch null;
+        if (env_dir) |d| candidates[0] = std.fs.path.join(ws.gpa, &.{ d, arch, "cs-zig-server" }) catch null;
+        candidates[1] = std.fs.path.join(ws.gpa, &.{ exe_dir, "..", "share", "cs-zig-server", arch, "cs-zig-server" }) catch null;
         if (std.mem.eql(u8, arch, native)) if (st.native_server) |n| {
             candidates[2] = ws.gpa.dupe(u8, n) catch null;
         };
@@ -125,6 +125,12 @@ fn findBinaries(ws: *Workspace) void {
             break;
         }
     }
+}
+
+/// $CS_ZIG_SSH_CONFIG: an ssh config file used instead of ~/.ssh/config.
+fn sshConfigFile() ?[]const u8 {
+    const f = std.c.getenv("CS_ZIG_SSH_CONFIG") orelse return null;
+    return std.mem.span(f);
 }
 
 fn entryFor(ws: *Workspace, conn: *const Connection) ?*Entry {
@@ -146,7 +152,7 @@ fn obtain(ws: *Workspace, host: []const u8) !*Connection {
     // ssh: every host becomes this machine (development and tests).
     const local = if (std.c.getenv("CS_ZIG_REMOTE_TRANSPORT")) |t| std.mem.eql(u8, std.mem.span(t), "local") else false;
     const transport: client.Transport = if (local) .{ .subprocess = st.native_server orelse return error.NoServerBinary } else .ssh;
-    const conn = try Connection.create(ws.gpa, ws.io, ws.executor, host, .{ .transport = transport, .binaries = st.binaries.items, .askpass = st.askpass_program });
+    const conn = try Connection.create(ws.gpa, ws.io, ws.executor, host, .{ .transport = transport, .binaries = st.binaries.items, .askpass = st.askpass_program, .config_file = sshConfigFile() });
     errdefer conn.destroy();
     conn.sink = .{ .ctx = ws, .onEvent = onEvent };
     try vfs.register(host, conn.backend());
@@ -459,7 +465,7 @@ pub fn promptConnect(ws: *Workspace) void {
     var arena = std.heap.ArenaAllocator.init(ws.gpa);
     defer arena.deinit();
     const home: []const u8 = if (std.c.getenv("HOME")) |h| std.mem.span(h) else "/";
-    const hosts = ssh.configHosts(arena.allocator(), ws.io, home) catch &.{};
+    const hosts = ssh.configHosts(arena.allocator(), ws.io, home, sshConfigFile()) catch &.{};
     const label = ws.gpa.dupe(u8, "Connect to Host (from ~/.ssh/config, or type user@host):") catch return;
     ws.openList(.list, label, @intFromEnum(PromptKind.connect_host), &.{});
     const o = ws.overlay orelse return;
