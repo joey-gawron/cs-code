@@ -121,6 +121,48 @@ pub fn build(b: *std.Build) void {
     layers_run.addDirectoryArg(b.path("src"));
     b.step("layers", "Check that imports respect framework <- model <- app").dependOn(&layers_run.step);
 
+    // The big generated inputs of `zig build profile`, the performance tests and `zig build leaks`.
+    const fixtures_mod = b.createModule(.{ .root_source_file = b.path("tools/fixtures.zig") });
+
+    // `zig build leaks [-- options]`: scripted headless sessions of every
+    // feature under the allocator's leak checking (tools/leaks.zig), on the
+    // installed zig-out/bin/cs (`-- --bin PATH` for another prefix). `-- --tool
+    // leaks` runs them under macOS's `leaks` instead, which also sees C libraries.
+    const leaks_tool = b.addExecutable(.{ .name = "leaks", .root_module = b.createModule(.{
+        .root_source_file = b.path("tools/leaks.zig"),
+        .target = b.graph.host,
+        .optimize = .safe,
+        .imports = &.{.{ .name = "fixtures", .module = fixtures_mod }},
+    }) });
+    const leaks_run = b.addRunArtifact(leaks_tool);
+    leaks_run.step.dependOn(b.getInstallStep());
+    if (grammar_dir.len > 0) leaks_run.addArgs(&.{ "--grammars", grammar_dir });
+    if (optimize == .fast or optimize == .small) leaks_run.addArg("--unchecked-build");
+    leaks_run.stdio = .inherit; // progress while it runs
+    leaks_run.addPassthruArgs();
+    b.step("leaks", "Run scripted headless sessions of every feature under leak checking (tools/leaks.zig)").dependOn(&leaks_run.step);
+
+    // `zig build profile -- [--bin PATH] [--runs N] [--out FILE] [--compare FILE]`:
+    // peak and steady RSS, memory footprint, wall and CPU time of headless
+    // scenarios, for checking a build against a recorded baseline
+    // (tools/profile.zig, docs/MEMORY.md). Measure a ReleaseFast build.
+    const proc_stats_mod = b.createModule(.{ .root_source_file = b.path("src/framework/platform/proc_stats.zig") });
+    const profile_tool = b.addExecutable(.{ .name = "profile", .root_module = b.createModule(.{
+        .root_source_file = b.path("tools/profile.zig"),
+        .target = b.graph.host,
+        // macOS: proc_pid_rusage and wait4 come from libSystem.
+        .link_libc = b.graph.host.result.os.tag.isDarwin(),
+        .optimize = .safe,
+        .imports = &.{
+            .{ .name = "fixtures", .module = fixtures_mod },
+            .{ .name = "proc_stats", .module = proc_stats_mod },
+        },
+    }) });
+    const profile_run = b.addRunArtifact(profile_tool);
+    profile_run.stdio = .inherit; // progress while it runs
+    profile_run.addPassthruArgs();
+    b.step("profile", "Measure memory and speed of headless scenarios (tools/profile.zig)").dependOn(&profile_run.step);
+
     const test_step = b.step("test", "Run unit tests");
     const exe_tests = b.addTest(.{ .root_module = exe_mod });
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
