@@ -1,465 +1,411 @@
-//! cs-zig: one window with an editor surface on a file, the built-in sample, or a synthetic
-//! buffer. The Zig spike's counterpart of the Rust spike's `cs` binary.
-//!
-//! ```text
-//! cs [FILE] [--generate N] [--long-line N] [--demo SCRIPT] [--size W,H] [--screenshot PATH.ppm] [--headless]
-//! ```
-//!
-//! `CS_FRAME_STATS=1` logs startup milestones, each frame's time (split into building the scene,
-//! issuing the GL draw and presenting) and a summary on exit (Ctrl-C and closing the window
-//! included). `CS_DEMO_INTERVAL_MS` changes the 100 ms between demo steps.
-
 const std = @import("std");
-const builtin = @import("builtin");
 const c = @import("c");
-const gl = @import("framework/gpu/gl.zig");
-const Atlas = @import("framework/gpu/atlas.zig").Atlas;
-const Renderer = @import("framework/gpu/renderer.zig").Renderer;
-const Scene = @import("framework/gpu/scene.zig").Scene;
+const App = @import("app.zig").App;
 const platform = @import("framework/platform/platform.zig");
 const window_mod = @import("framework/platform/window.zig");
-const headless_mod = @import("framework/platform/headless.zig");
-const text_mod = @import("framework/text/text_system.zig");
-const Buffer = @import("model/text/buffer.zig").Buffer;
-const Editor = @import("editor/editor.zig").Editor;
-const demo = @import("editor/demo.zig");
-const sample = @import("editor/sample.zig");
-const stats_mod = @import("editor/stats.zig");
+const keymap = @import("app/settings/keymap.zig");
+const session = @import("app/session/session.zig");
+const askpass = @import("model/remote/askpass.zig");
+const login_path = @import("framework/platform/login_path.zig");
 
-const usage = "usage: cs [FILE] [--generate N] [--long-line N] [--demo SCRIPT] [--size W,H] [--screenshot PATH.ppm] [--headless]";
+const usage =
+    \\Usage: cs-zig [options] [path[:line[:col]]...]
+    \\
+    \\Opens files, or a folder as a project (like `subl .`). If a cs-zig
+    \\session is already running, the paths open there and this command returns
+    \\immediately; otherwise this process becomes the session.
+    \\
+    \\Options:
+    \\  -w, --wait          Wait until the files are closed (for $EDITOR / git)
+    \\  --daemon            Start a background session (no window) and exit;
+    \\                      later `cs-zig` calls connect to it instantly and
+    \\                      language servers stay warm
+    \\  --kill-server       Stop the running session
+    \\  --session NAME      Use a named session (default: "default")
+    \\  --standalone        Don't connect to or start a session
+    \\  --x11 / --wayland   Force a window system (Linux)
+    \\  --vim               Start with vim mode enabled
+    \\  --no-lsp            Don't start language servers
+    \\  --remote HOST       Open the paths on HOST over ssh, like ssh://HOST/path
+    \\                      (relative paths start in the remote home)
+    \\  --askpass PROMPT    For ssh started by the editor: ask PROMPT in the
+    \\                      editor and print the answer (SSH_ASKPASS)
+    \\  -h, --help          Show this help
+    \\
+    \\Headless (offscreen) rendering, for screenshots and UI tests:
+    \\  --headless WxH      Render offscreen at this device-pixel size
+    \\  --scale S           Device scale factor (default 1)
+    \\  --key CHORD         Press a key chord, e.g. ctrl+shift+p (repeatable)
+    \\  --type TEXT         Type text
+    \\  --click X,Y[,N[,B]] Click at logical X,Y (N = click count; B = left,
+    \\                      right or middle, optionally +shift, +ctrl, +alt, +super)
+    \\  --action NAME       Run an action, e.g. toggle_sidebar
+    \\  --pump MS           Keep processing background work (LSP) for MS ms
+    \\  --screenshot PATH   Write the final frame as PNG and exit
+    \\                      (a step that quits the editor ends the steps)
+    \\
+;
 
-const Source = union(enum) {
-    sample,
-    file: []const u8,
-    generate: usize,
-    long_line: usize,
+const Step = union(enum) {
+    pump: []const u8,
+    key: []const u8,
+    type: []const u8,
+    click: []const u8,
+    action: []const u8,
 };
-
-var interrupted: bool = false;
-
-/// Either a real window or an offscreen GL context of the same size (`--headless`, for machines
-/// whose display is locked or asleep: Cocoa stops drawing to an occluded window).
-const Surface = union(enum) {
-    window: window_mod.Window,
-    headless: struct { h: headless_mod.Headless, w: f32, ht: f32 },
-
-    fn destroy(s: *Surface) void {
-        switch (s.*) {
-            .window => |w| w.destroy(),
-            .headless => |*h| h.h.deinit(),
-        }
-    }
-    fn scale(s: *Surface) f32 {
-        return switch (s.*) {
-            .window => |w| w.scale(),
-            .headless => 1,
-        };
-    }
-    fn logicalSize(s: *Surface) platform.Vec2 {
-        return switch (s.*) {
-            .window => |w| w.logicalSize(),
-            .headless => |h| .{ .x = h.w, .y = h.ht },
-        };
-    }
-    fn bufferSize(s: *Surface) struct { i32, i32 } {
-        return switch (s.*) {
-            .window => |w| w.bufferSize(),
-            .headless => |h| .{ @intFromFloat(h.w), @intFromFloat(h.ht) },
-        };
-    }
-    fn pollEvents(s: *Surface, timeout_ms: i32) !void {
-        switch (s.*) {
-            .window => |w| try w.pollEvents(timeout_ms, &.{}),
-            .headless => _ = c.usleep(@intCast(@max(0, timeout_ms) * 1000)),
-        }
-    }
-    fn events(s: *Surface) []const platform.Event {
-        return switch (s.*) {
-            .window => |w| w.events(),
-            .headless => &.{},
-        };
-    }
-    fn canRender(s: *Surface) bool {
-        return switch (s.*) {
-            .window => |w| w.canRender(),
-            .headless => true,
-        };
-    }
-    fn present(s: *Surface) void {
-        switch (s.*) {
-            .window => |w| w.present(),
-            .headless => gl.p.Finish(),
-        }
-    }
-    fn setTextInputRect(s: *Surface, r: platform.Rect) void {
-        if (s.* == .window) s.window.setTextInputRect(r, true);
-    }
-};
-
-fn onSigint(_: c_int) callconv(.c) void {
-    // A second Ctrl-C exits at once, in case the loop is stuck.
-    if (interrupted) std.process.exit(130);
-    interrupted = true;
-}
-
-const log_to_stderr = std.debug.print;
 
 pub fn main(init: std.process.Init) !void {
-    const started = stats_mod.nowNs();
     const gpa = init.gpa;
     const io = init.io;
-    var arena_state: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-    var source: Source = .sample;
-    var script: ?[]const u8 = null;
-    var win_w: i32 = 1000;
-    var win_h: i32 = 760;
+    // ssh runs us as its SSH_ASKPASS (`$SSH_ASKPASS PROMPT`, with the socket
+    // of the connection that started it in CS_ZIG_ASKPASS); `--askpass
+    // PROMPT` does the same by hand.
+    const askpass_socket = init.environ_map.get(askpass.socket_env);
+    if ((args.len == 3 and std.mem.eql(u8, args[1], "--askpass")) or (askpass_socket != null and args.len == 2)) {
+        const sock = askpass_socket orelse {
+            std.debug.print("cs-zig --askpass: {s} is not set (only ssh started by the editor asks this way)\n", .{askpass.socket_env});
+            std.process.exit(1);
+        };
+        const hint = init.environ_map.get("SSH_ASKPASS_PROMPT") orelse "";
+        std.process.exit(askpass.runHelper(sock, hint, args[args.len - 1], 1));
+    }
+
+    // From Finder or the Dock on macOS: restart with the login shell's PATH.
+    login_path.adopt(gpa, io, init.environ_map, args);
+
+    var headless: ?[2]u32 = null;
+    var scale: f32 = 1;
     var screenshot: ?[]const u8 = null;
-    var use_headless = false;
+    var vim = false;
+    var enable_lsp = true;
+    var wait = false;
+    var daemon = false;
+    var daemon_child = false;
+    var kill_server = false;
+    var standalone = false;
+    var remote_host: ?[]const u8 = null;
+    var session_name: []const u8 = "default";
+    var backend: ?window_mod.Backend = null;
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(gpa);
+    var steps: std.ArrayList(Step) = .empty;
+    defer steps.deinit(gpa);
+
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            log_to_stderr("{s}\n", .{usage});
+        const next = struct {
+            fn f(a: []const [:0]const u8, idx: *usize) ![]const u8 {
+                idx.* += 1;
+                if (idx.* >= a.len) return error.MissingArgument;
+                return a[idx.*];
+            }
+        }.f;
+        const eql = std.mem.eql;
+        if (eql(u8, arg, "-h") or eql(u8, arg, "--help")) {
+            std.debug.print("{s}", .{usage});
             return;
-        } else if (std.mem.eql(u8, arg, "--headless")) {
-            use_headless = true;
-        } else if (std.mem.eql(u8, arg, "--generate") or std.mem.eql(u8, arg, "--long-line") or std.mem.eql(u8, arg, "--demo") or
-            std.mem.eql(u8, arg, "--size") or std.mem.eql(u8, arg, "--screenshot"))
-        {
-            i += 1;
-            if (i >= args.len) fail("{s} needs a value\n{s}", .{ arg, usage });
-            const value = args[i];
-            if (std.mem.eql(u8, arg, "--generate")) {
-                source = .{ .generate = std.fmt.parseInt(usize, value, 10) catch fail("--generate takes a count", .{}) };
-            } else if (std.mem.eql(u8, arg, "--long-line")) {
-                source = .{ .long_line = std.fmt.parseInt(usize, value, 10) catch fail("--long-line takes a count", .{}) };
-            } else if (std.mem.eql(u8, arg, "--demo")) {
-                script = value;
-            } else if (std.mem.eql(u8, arg, "--screenshot")) {
-                screenshot = value;
-            } else {
-                const comma = std.mem.indexOfScalar(u8, value, ',') orelse fail("--size takes W,H", .{});
-                win_w = std.fmt.parseInt(i32, value[0..comma], 10) catch fail("--size takes W,H", .{});
-                win_h = std.fmt.parseInt(i32, value[comma + 1 ..], 10) catch fail("--size takes W,H", .{});
-            }
-        } else if (std.mem.startsWith(u8, arg, "--")) {
-            fail("unknown option {s}\n{s}", .{ arg, usage });
+        } else if (eql(u8, arg, "--headless")) {
+            const spec = try next(args, &i);
+            const x = std.mem.indexOfScalar(u8, spec, 'x') orelse return error.BadSize;
+            headless = .{ try std.fmt.parseInt(u32, spec[0..x], 10), try std.fmt.parseInt(u32, spec[x + 1 ..], 10) };
+        } else if (eql(u8, arg, "--scale")) {
+            scale = try std.fmt.parseFloat(f32, try next(args, &i));
+        } else if (eql(u8, arg, "--screenshot")) {
+            screenshot = try next(args, &i);
+        } else if (eql(u8, arg, "--key")) {
+            try steps.append(gpa, .{ .key = try next(args, &i) });
+        } else if (eql(u8, arg, "--type")) {
+            try steps.append(gpa, .{ .type = try next(args, &i) });
+        } else if (eql(u8, arg, "--click")) {
+            try steps.append(gpa, .{ .click = try next(args, &i) });
+        } else if (eql(u8, arg, "--action")) {
+            try steps.append(gpa, .{ .action = try next(args, &i) });
+        } else if (eql(u8, arg, "--pump")) {
+            try steps.append(gpa, .{ .pump = try next(args, &i) });
+        } else if (eql(u8, arg, "--vim")) {
+            vim = true;
+        } else if (eql(u8, arg, "--no-lsp")) {
+            enable_lsp = false;
+        } else if (eql(u8, arg, "-w") or eql(u8, arg, "--wait")) {
+            wait = true;
+        } else if (eql(u8, arg, "--daemon")) {
+            daemon = true;
+        } else if (eql(u8, arg, "--daemon-child")) {
+            daemon_child = true;
+        } else if (eql(u8, arg, "--kill-server")) {
+            kill_server = true;
+        } else if (eql(u8, arg, "--standalone")) {
+            standalone = true;
+        } else if (eql(u8, arg, "--remote")) {
+            remote_host = try next(args, &i);
+        } else if (eql(u8, arg, "--session")) {
+            session_name = try next(args, &i);
+        } else if (eql(u8, arg, "--x11") or eql(u8, arg, "--wayland")) {
+            // Only Linux has a choice of window system.
+            backend = std.meta.stringToEnum(window_mod.Backend, arg[2..]);
+        } else if (arg.len > 0 and arg[0] == '-') {
+            std.debug.print("unknown option: {s}\n\n{s}", .{ arg, usage });
+            return error.InvalidArgument;
         } else {
-            source = .{ .file = arg };
+            try paths.append(gpa, arg);
         }
     }
-    const frame_stats = if (init.environ_map.get("CS_FRAME_STATS")) |v| std.mem.eql(u8, v, "1") else false;
-    const demo_interval_ms: i64 = if (init.environ_map.get("CS_DEMO_INTERVAL_MS")) |v| std.fmt.parseInt(i64, v, 10) catch 100 else 100;
-
-    // The text, then the buffer: "buffer ready" covers generating or reading the text and
-    // building the rope, as the Rust side's startup line does.
-    var title: []const u8 = "sample";
-    const text: []u8 = switch (source) {
-        .sample => try sample.sampleText(gpa),
-        .file => |path| blk: {
-            title = path;
-            break :blk try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
-        },
-        .generate => |n| blk: {
-            title = try std.fmt.allocPrint(arena, "generated ({d} lines)", .{n});
-            break :blk try sample.generate(gpa, n);
-        },
-        .long_line => |n| blk: {
-            title = try std.fmt.allocPrint(arena, "one line of {d} characters", .{n});
-            break :blk try sample.longLine(gpa, n);
-        },
-    };
-    var buffer = try Buffer.initText(gpa, 0, text);
-    gpa.free(text);
-    buffer.tab_size = 4;
-    if (frame_stats) log_to_stderr("startup: buffer of {d} lines ready at {d:.1} ms\n", .{ buffer.lineCount(), stats_mod.ms(stats_mod.nowNs() - started) });
-
-    var steps: []demo.Step = &.{};
-    if (script) |s| {
-        const parsed = try demo.parse(arena, s);
-        for (parsed.errors) |e| log_to_stderr("unknown demo step: \"{s}\"\n", .{e});
-        steps = parsed.steps;
+    // `--remote HOST path` means ssh://HOST/path; relative paths (and no
+    // paths at all) start in the remote home.
+    if (remote_host) |host| {
+        if (paths.items.len == 0) try paths.append(gpa, "~");
+        for (paths.items) |*p| {
+            if (std.mem.startsWith(u8, p.*, "ssh://")) continue;
+            const rel = if (std.mem.eql(u8, p.*, ".")) "~" else p.*;
+            const sep: []const u8 = if (rel[0] == '/') "" else if (rel[0] == '~') "/" else "/~/";
+            p.* = try std.fmt.allocPrint(init.arena.allocator(), "ssh://{s}{s}{s}", .{ host, sep, rel });
+        }
     }
 
-    if (frame_stats) log_to_stderr("startup: opening the window at {d:.1} ms\n", .{stats_mod.ms(stats_mod.nowNs() - started)});
-    const title_z = try std.fmt.allocPrintSentinel(arena, "cs-zig: {s}", .{title}, 0);
-    var window: Surface = if (use_headless)
-        .{ .headless = .{ .h = try headless_mod.Headless.init(@intCast(win_w), @intCast(win_h)), .w = @floatFromInt(win_w), .ht = @floatFromInt(win_h) } }
-    else
-        .{ .window = try window_mod.Window.create(gpa, .{ .title = title_z, .width = win_w, .height = win_h }, null) };
-    defer window.destroy();
+    // Writing to a reader that went away must not kill the editor.
+    const ignore: std.posix.Sigaction = .{ .handler = .{ .handler = std.posix.SIG.IGN }, .mask = std.posix.sigemptyset(), .flags = 0 };
+    std.posix.sigaction(std.posix.SIG.PIPE, &ignore, null);
 
-    // GL objects, after the window made its context current.
-    var atlas = Atlas.init(1024);
-    defer atlas.deinit();
-    var renderer = try Renderer.init();
-    defer renderer.deinit();
-    var text_system = try text_mod.TextSystem.init(gpa, &atlas);
-    defer text_system.deinit();
-    var scale = window.scale();
-    text_system.setScale(scale);
-    text_system.resetGlyphs();
-    const font = try text_system.font(.{ .family = "monospace", .size = 14 });
-    const editor = try Editor.init(gpa, buffer, &text_system, font);
-    defer editor.deinit();
-    var scene = Scene.init(gpa);
-    defer scene.deinit();
-    const size0 = window.logicalSize();
-    editor.resize(size0.x, size0.y);
-    if (frame_stats) log_to_stderr("startup: window open at {d:.1} ms (scale {d:.1}, {d:.0}x{d:.0} points)\n", .{ stats_mod.ms(stats_mod.nowNs() - started), scale, size0.x, size0.y });
+    if (headless) |size| return runHeadless(gpa, io, size, scale, enable_lsp, vim, paths.items, steps.items, screenshot);
 
-    _ = c.signal(c.SIGINT, onSigint);
+    var cwd_buf: [std.fs.max_path_bytes]u8 = @splat(0); // See Workspace.realPath.
+    const cwd = cwd_buf[0 .. std.process.currentPath(io, &cwd_buf) catch 0];
+    var sock_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const sock = session.socketPath(&sock_buf, session_name);
 
-    var stats: stats_mod.Stats = .{};
-    defer stats.deinit(gpa);
-    var frame_no: usize = 0;
-    var next_step: usize = 0;
-    var step_due_ms: i64 = platform.nowMs() + demo_interval_ms;
-    var last_step: ?[]const u8 = null;
-    var quit = false;
-    var describe_buf: [256]u8 = undefined;
-
-    while (!quit and !interrupted) {
-        const now = platform.nowMs();
-        // Sleep until the next caret blink toggle or the next demo step.
-        var timeout: i64 = blinkRemaining(editor, now);
-        if (next_step < steps.len) timeout = @min(timeout, @max(0, step_due_ms - now));
-        if (editor.dirty) timeout = 0;
-        if (interrupted) break;
-        try window.pollEvents(@intCast(timeout));
-        for (window.events()) |ev| switch (ev) {
-            .key_down => |k| editor.onKey(k) catch |err| log_to_stderr("key: {t}\n", .{err}),
-            .text_input => |t| editor.onText(t) catch |err| log_to_stderr("text: {t}\n", .{err}),
-            .mouse_down => |m| if (m.button == .left) editor.click(m.pos.x, m.pos.y, m.mods.shift),
-            .scroll => |s| {
-                const unit: f64 = if (s.unit == .lines) editor.lh * 3 else 1;
-                editor.scrollBy(-s.delta.x * unit, -s.delta.y * unit);
-            },
-            .resize => |r| {
-                if (r.scale != scale) {
-                    scale = r.scale;
-                    text_system.setScale(scale);
-                    editor.metricsChanged();
-                }
-                editor.resize(r.width, r.height);
-            },
-            .close_requested => quit = true,
-            else => {},
+    if (kill_server) {
+        const path = sock orelse return error.NoSocketPath;
+        const fd = session.connect(path) orelse {
+            std.debug.print("cs-zig: no session \"{s}\" is running\n", .{session_name});
+            return;
         };
-
-        // Demo: one step per interval; the previous step's resulting state is logged just before
-        // the next one runs, so it includes what the frame drawing it decided.
-        const after_events = platform.nowMs();
-        if (next_step < steps.len and after_events >= step_due_ms) {
-            if (last_step) |label| logDemo(editor, label, &describe_buf);
-            const step = steps[next_step];
-            next_step += 1;
-            var wait_ms: i64 = 0;
-            switch (step) {
-                .scroll => |dy| editor.scrollBy(0, dy),
-                .scrollx => |dx| editor.scrollBy(dx, 0),
-                .key => |k| runKey(editor, k),
-                .type => |t| runType(editor, t),
-                .click => |p| editor.click(p[0], p[1], false),
-                .goto => |line| editor.gotoLine(line),
-                .wait => |ms| wait_ms = @intCast(ms),
-                .quit => quit = true,
-            }
-            last_step = stepLabel(arena, step) catch "step";
-            step_due_ms = platform.nowMs() + demo_interval_ms + wait_ms;
-            if (next_step == steps.len and !quit) {
-                // Let the last step's frame happen, log its state and finish.
-                step_due_ms = platform.nowMs() + demo_interval_ms;
-            }
-        } else if (next_step == steps.len and steps.len > 0 and after_events >= step_due_ms and !quit) {
-            if (last_step) |label| logDemo(editor, label, &describe_buf);
-            quit = true;
-        }
-        if (quit) {
-            if (last_step) |label| logDemo(editor, label, &describe_buf);
-            last_step = null;
-        }
-
-        // Draw when something changed or the caret blinked.
-        const blink_phase = blinkPhase(editor, platform.nowMs());
-        if (!editor.dirty and blink_phase == last_blink_phase) continue;
-        last_blink_phase = blink_phase;
-        if (!window.canRender()) continue;
-        const f = drawFrame(editor, &scene, &renderer, &atlas, &text_system, &window, scale);
-        editor.dirty = false;
-        window.setTextInputRect(editor.caretRect());
-        stats.record(gpa, f);
-        frame_no += 1;
-        if (frame_stats) {
-            if (frame_no == 1) log_to_stderr("startup: first frame built at {d:.1} ms, presented at {d:.1} ms\n", .{
-                stats_mod.ms(first_built_at - started),
-                stats_mod.ms(stats_mod.nowNs() - started),
-            });
-            log_to_stderr("frame {d}: total {d:.3} ms: build {d:.3} ms, draw {d:.3} ms, present {d:.3} ms\n", .{
-                frame_no, stats_mod.ms(f.total()), stats_mod.ms(f.build), stats_mod.ms(f.draw), stats_mod.ms(f.present),
-            });
-        }
-        if (screenshot) |path| {
-            if (frame_no >= 2) {
-                try writeScreenshot(gpa, io, &window, path);
-                quit = true;
-            }
-        }
-    }
-
-    if (frame_stats) printSummary(gpa, &stats);
-}
-
-var last_blink_phase: i64 = -1;
-var first_built_at: u64 = 0;
-
-fn blinkPhase(editor: *const Editor, now_ms: i64) i64 {
-    return @divFloor(now_ms - editor.blink_epoch_ms, 500);
-}
-
-fn blinkRemaining(editor: *const Editor, now_ms: i64) i64 {
-    const elapsed = now_ms - editor.blink_epoch_ms;
-    return @max(1, 500 - @mod(elapsed, 500));
-}
-
-fn drawFrame(editor: *Editor, scene: *Scene, renderer: *Renderer, atlas: *Atlas, text: *text_mod.TextSystem, window: *Surface, scale: f32) stats_mod.Frame {
-    var f: stats_mod.Frame = .{};
-    var attempt: usize = 0;
-    while (true) : (attempt += 1) {
-        const t0 = stats_mod.nowNs();
-        const bw, const bh = window.bufferSize();
-        scene.begin(@floatFromInt(bw), @floatFromInt(bh), scale) catch return f;
-        editor.paint(scene, platform.nowMs());
-        const t1 = stats_mod.nowNs();
-        if (first_built_at == 0) first_built_at = t1;
-        renderer.draw(scene, atlas, .{ .r = 0.118, .g = 0.118, .b = 0.118, .a = 1 });
-        text.endFrame();
-        const t2 = stats_mod.nowNs();
-        // The frame needed more glyphs than fit in the atlas: grow it and draw again.
-        if (text.atlas_full and attempt < 2) {
-            atlas.reset(true);
-            text.atlas_full = false;
-            f.build += t1 - t0;
-            f.draw += t2 - t1;
-            continue;
-        }
-        window.present();
-        const t3 = stats_mod.nowNs();
-        f.build += t1 - t0;
-        f.draw += t2 - t1;
-        f.present += t3 - t2;
-        return f;
-    }
-}
-
-fn writeScreenshot(gpa: std.mem.Allocator, io: std.Io, window: *Surface, path: []const u8) !void {
-    const w, const h = window.bufferSize();
-    const uw: usize = @intCast(w);
-    const uh: usize = @intCast(h);
-    const px = try gpa.alloc(u8, uw * uh * 4);
-    defer gpa.free(px);
-    gl.p.PixelStorei(gl.PACK_ALIGNMENT, 1);
-    gl.p.ReadPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px.ptr);
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(gpa);
-    try out.print(gpa, "P6\n{d} {d}\n255\n", .{ uw, uh });
-    // GL rows run bottom-up; PPM wants top-down RGB.
-    var y = uh;
-    while (y > 0) {
-        y -= 1;
-        const row = px[y * uw * 4 ..][0 .. uw * 4];
-        var x: usize = 0;
-        while (x < uw) : (x += 1) try out.appendSlice(gpa, row[x * 4 ..][0..3]);
-    }
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items });
-    log_to_stderr("screenshot: {d}x{d} written to {s}\n", .{ uw, uh, path });
-}
-
-fn printSummary(gpa: std.mem.Allocator, stats: *const stats_mod.Stats) void {
-    const all = stats.summary(gpa, 0, .build);
-    const steady = stats.summary(gpa, 5, .build);
-    log_to_stderr("frame stats (build, start of frame to end of scene recording): frames {d}, p50 {d:.2} ms, p95 {d:.2} ms, max {d:.2} ms\n", .{ all.frames, all.p50_ms, all.p95_ms, all.max_ms });
-    log_to_stderr("  excluding the first 5 frames: frames {d}, p50 {d:.2} ms, p95 {d:.2} ms, max {d:.2} ms\n", .{ steady.frames, steady.p50_ms, steady.p95_ms, steady.max_ms });
-    inline for (.{ .{ "draw", stats_mod.Stats.summary(stats, gpa, 0, .draw) }, .{ "present", stats_mod.Stats.summary(stats, gpa, 0, .present) }, .{ "total", stats_mod.Stats.summary(stats, gpa, 0, .total) } }) |entry| {
-        const s = entry[1];
-        log_to_stderr("  {s}: p50 {d:.2} ms, p95 {d:.2} ms, max {d:.2} ms\n", .{ entry[0], s.p50_ms, s.p95_ms, s.max_ms });
-    }
-    var ru: std.c.rusage = undefined;
-    // ru_maxrss is bytes on macOS, kilobytes on Linux.
-    const maxrss_unit: f64 = if (builtin.os.tag.isDarwin()) 1024 * 1024 else 1024;
-    if (std.c.getrusage(std.c.rusage.SELF, &ru) == 0) log_to_stderr("peak RSS {d:.1} MB\n", .{@as(f64, @floatFromInt(ru.maxrss)) / maxrss_unit});
-}
-
-fn logDemo(editor: *Editor, label: []const u8, buf: []u8) void {
-    var w: std.Io.Writer = .fixed(buf);
-    editor.describe(&w) catch {};
-    log_to_stderr("demo: {s} -> {s}\n", .{ label, w.buffered() });
-}
-
-fn stepLabel(arena: std.mem.Allocator, step: demo.Step) ![]const u8 {
-    return switch (step) {
-        .scroll => |v| try std.fmt.allocPrint(arena, "scroll {d}", .{v}),
-        .scrollx => |v| try std.fmt.allocPrint(arena, "scrollx {d}", .{v}),
-        .key => |k| try std.fmt.allocPrint(arena, "key {s}", .{k}),
-        .type => |t| try std.fmt.allocPrint(arena, "type {s}", .{t}),
-        .click => |p| try std.fmt.allocPrint(arena, "click {d},{d}", .{ p[0], p[1] }),
-        .goto => |l| try std.fmt.allocPrint(arena, "goto {d}", .{l}),
-        .wait => |ms| try std.fmt.allocPrint(arena, "wait {d}", .{ms}),
-        .quit => "quit",
-    };
-}
-
-fn runType(editor: *Editor, text: []const u8) void {
-    // One keystroke per character, the way real typing arrives.
-    var it = std.unicode.Utf8View.initUnchecked(text).iterator();
-    while (it.nextCodepointSlice()) |cp| editor.onText(cp) catch |err| log_to_stderr("type: {t}\n", .{err});
-}
-
-/// Parses `down`, `cmd-down`, `shift-alt-left`, `a`... and runs it as a key press.
-fn runKey(editor: *Editor, spec: []const u8) void {
-    var mods: platform.Modifiers = .{};
-    var rest = spec;
-    while (std.mem.indexOfScalar(u8, rest, '-')) |dash| {
-        if (dash == 0 or dash + 1 >= rest.len) break;
-        const m = rest[0..dash];
-        if (std.mem.eql(u8, m, "cmd") or std.mem.eql(u8, m, "super")) mods.super = true else if (std.mem.eql(u8, m, "shift")) mods.shift = true else if (std.mem.eql(u8, m, "alt")) mods.alt = true else if (std.mem.eql(u8, m, "ctrl")) mods.ctrl = true else break;
-        rest = rest[dash + 1 ..];
-    }
-    const named = [_]struct { []const u8, platform.NamedKey }{
-        .{ "left", .left },      .{ "right", .right },         .{ "up", .up },
-        .{ "down", .down },      .{ "home", .home },           .{ "end", .end },
-        .{ "pageup", .page_up }, .{ "pagedown", .page_down },  .{ "enter", .enter },
-        .{ "tab", .tab },        .{ "backspace", .backspace }, .{ "delete", .delete },
-        .{ "escape", .escape },
-    };
-    var ev: platform.KeyEvent = undefined;
-    for (named) |n| if (std.mem.eql(u8, rest, n[0])) {
-        ev = .{ .key = .{ .named = n[1] }, .mods = mods };
-        editor.onKey(ev) catch |err| log_to_stderr("key: {t}\n", .{err});
+        defer _ = c.close(fd);
+        _ = session.sendRequest(gpa, fd, .{ .cmd = .quit });
         return;
-    };
-    const cp = std.unicode.utf8Decode(rest) catch {
-        log_to_stderr("demo: bad keystroke \"{s}\"\n", .{spec});
+    }
+
+    if (daemon) return startDaemon(gpa, io, session_name, sock orelse return error.NoSocketPath, enable_lsp);
+
+    if (daemon_child) {
+        // Our own session, detached from the launching terminal.
+        _ = c.setsid();
+        const app = try App.create(gpa, io, .{ .open_window = false, .socket_path = sock, .keep_running = true, .enable_lsp = enable_lsp, .backend = backend });
+        defer app.destroy();
+        try app.run();
         return;
+    }
+
+    // Hand the paths to a running session if there is one.
+    if (!standalone) if (sock) |path| if (session.connect(path)) |fd| {
+        defer _ = c.close(fd);
+        if (session.sendRequest(gpa, fd, .{ .cmd = .open, .cwd = cwd, .paths = paths.items, .wait = wait })) return;
+        std.debug.print("cs-zig: the running session didn't answer; starting a new window\n", .{});
     };
-    ev = .{ .key = .{ .char = cp }, .mods = mods, .text = if (mods.super or mods.ctrl) "" else rest };
-    editor.onKey(ev) catch |err| log_to_stderr("key: {t}\n", .{err});
+
+    const app = try App.create(gpa, io, .{
+        .socket_path = if (standalone) null else sock,
+        .enable_lsp = enable_lsp,
+        .backend = backend,
+    });
+    defer app.destroy();
+    const ws = &app.workspace;
+    if (vim) ws.perform(.toggle_vim_mode);
+    for (paths.items) |p| _ = ws.openArgument(cwd, p) catch |err| std.log.err("cannot open {s}: {t}", .{ p, err });
+    try ws.openStartTabs(paths.items.len > 0);
+    try app.run();
 }
 
-fn fail(comptime fmt: []const u8, args: anytype) noreturn {
-    log_to_stderr(fmt ++ "\n", args);
-    std.process.exit(2);
+/// Starts `cs-zig --daemon-child` detached and waits until its socket answers.
+fn startDaemon(gpa: std.mem.Allocator, io: std.Io, name: []const u8, sock: [:0]const u8, enable_lsp: bool) !void {
+    if (session.connect(sock)) |fd| {
+        _ = c.close(fd);
+        std.debug.print("cs-zig: session \"{s}\" is already running\n", .{name});
+        return;
+    }
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = std.process.executablePath(io, &exe_buf) catch return error.NoSelfExe;
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.appendSlice(gpa, &.{ exe_buf[0..n], "--daemon-child", "--session", name });
+    if (!enable_lsp) try argv.append(gpa, "--no-lsp");
+    _ = try std.process.spawn(io, .{ .argv = argv.items, .stdin = .ignore, .stdout = .ignore, .stderr = .ignore });
+    const deadline = platform.nowMs() + 5000;
+    while (platform.nowMs() < deadline) {
+        if (session.connect(sock)) |fd| {
+            _ = c.close(fd);
+            std.debug.print("cs-zig: session \"{s}\" started ({s})\n", .{ name, sock });
+            return;
+        }
+        var req: std.c.timespec = .{ .sec = 0, .nsec = 50 * std.time.ns_per_ms };
+        _ = std.c.nanosleep(&req, null);
+    }
+    return error.DaemonDidNotStart;
+}
+
+fn runHeadless(gpa: std.mem.Allocator, io: std.Io, size: [2]u32, scale: f32, enable_lsp: bool, vim: bool, paths: []const []const u8, steps: []const Step, screenshot: ?[]const u8) !void {
+    const app = try App.create(gpa, io, .{ .headless_size = size, .scale = scale, .enable_lsp = enable_lsp });
+    defer app.destroy();
+    const ws = &app.workspace;
+    if (vim) ws.perform(.toggle_vim_mode);
+
+    var cwd_buf: [std.fs.max_path_bytes]u8 = @splat(0); // See Workspace.realPath.
+    const cwd = cwd_buf[0 .. std.process.currentPath(io, &cwd_buf) catch 0];
+    for (paths) |path| {
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch null;
+        if (stat != null and stat.?.kind == .directory) {
+            const abs = try ws.realPath(path);
+            defer gpa.free(abs);
+            try ws.openProject(abs, true);
+        } else {
+            _ = ws.openArgument(cwd, path) catch |err| std.log.err("cannot open {s}: {t}", .{ path, err });
+        }
+    }
+    try ws.openStartTabs(paths.len > 0);
+
+    // Lay out once so scripted input lands on real geometry.
+    app.render();
+    settleGrammars(app);
+    for (steps) |step| {
+        switch (step) {
+            .key => |spec| app.handleEvent(.{ .key_down = try keyEvent(spec) }),
+            .type => |text| {
+                var it = (try std.unicode.Utf8View.init(text)).iterator();
+                while (it.nextCodepointSlice()) |cp| {
+                    const ev: platform.KeyEvent = .{ .key = .{ .char = std.unicode.utf8Decode(cp) catch ' ' }, .mods = .{}, .text = cp };
+                    app.handleEvent(.{ .key_down = ev });
+                }
+            },
+            .click => |spec| {
+                var parts = std.mem.splitScalar(u8, spec, ',');
+                const x = try std.fmt.parseFloat(f32, parts.next() orelse "0");
+                const y = try std.fmt.parseFloat(f32, parts.next() orelse "0");
+                const n = try std.fmt.parseInt(u8, parts.next() orelse "1", 10);
+                var button: platform.MouseButton = .left;
+                var mods: platform.Modifiers = .{};
+                if (parts.next()) |b| {
+                    var names = std.mem.splitScalar(u8, b, '+');
+                    button = std.meta.stringToEnum(platform.MouseButton, names.next().?) orelse return error.BadButton;
+                    while (names.next()) |mod| {
+                        if (std.mem.eql(u8, mod, "shift")) mods.shift = true else if (std.mem.eql(u8, mod, "ctrl")) mods.ctrl = true else if (std.mem.eql(u8, mod, "alt")) mods.alt = true else if (std.mem.eql(u8, mod, "super")) mods.super = true else return error.BadModifier;
+                    }
+                }
+                const pos: platform.Vec2 = .{ .x = x, .y = y };
+                app.handleEvent(.{ .mouse_move = .{ .pos = pos, .mods = mods } });
+                app.handleEvent(.{ .mouse_down = .{ .pos = pos, .button = button, .mods = mods, .click_count = n } });
+                app.handleEvent(.{ .mouse_up = .{ .pos = pos, .button = button, .mods = mods, .click_count = n } });
+            },
+            .pump => |ms_text| {
+                const ms = try std.fmt.parseInt(i64, ms_text, 10);
+                const until = platform.nowMs() + ms;
+                // Like the real event loop: background results, file watching, timers.
+                var fds: std.ArrayList(platform.PollFd) = .empty;
+                defer fds.deinit(ws.gpa);
+                while (platform.nowMs() < until) {
+                    app.executor.drain();
+                    fds.clearRetainingCapacity();
+                    ws.extraPollFds(&fds);
+                    _ = std.c.poll(@ptrCast(fds.items.ptr), @intCast(fds.items.len), 10);
+                    ws.serviceExtraFds(fds.items);
+                    ws.tick();
+                }
+            },
+            .action => |name| {
+                const action = std.meta.stringToEnum(keymap.Action, name) orelse return error.UnknownAction;
+                ws.perform(action);
+            },
+        }
+        app.executor.drain();
+        app.render();
+        // Quitting ends the run, as it ends the event loop.
+        if (ws.should_quit) break;
+    }
+    settleGrammars(app);
+    if (screenshot) |path| try app.screenshot(path);
+}
+
+/// Grammars load in the background, and highlighting with one can ask for
+/// more (a Vue file's TypeScript); big files parse in the background too:
+/// renders until they have all arrived.
+fn settleGrammars(app: *App) void {
+    var waited: usize = 0;
+    while ((app.registry.loading.count() > 0 or syntaxParsing(app)) and waited < 500) : (waited += 1) {
+        var req: std.c.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+        _ = std.c.nanosleep(&req, null);
+        app.executor.drain();
+        app.render();
+    }
+}
+
+fn syntaxParsing(app: *App) bool {
+    for (app.workspace.buffers.items) |b| if (b.syntax) |*s| if (s.parsing()) return true;
+    return false;
+}
+
+fn keyEvent(spec: []const u8) !platform.KeyEvent {
+    const chord = try keymap.Chord.parse(spec);
+    var ev: platform.KeyEvent = .{ .key = chord.key, .mods = chord.mods };
+    // Plain printable keys also produce text, like a real keyboard.
+    if (chord.key == .char and !chord.mods.ctrl and !chord.mods.alt) {
+        const S = struct {
+            var buf: [4]u8 = undefined;
+        };
+        var cp = chord.key.char;
+        if (chord.mods.shift and cp < 128) cp = std.ascii.toUpper(@intCast(cp));
+        const n = std.unicode.utf8Encode(cp, &S.buf) catch 0;
+        ev.text = S.buf[0..n];
+    }
+    return ev;
 }
 
 test {
-    _ = demo;
-    _ = sample;
-    _ = stats_mod;
-    _ = @import("model/text/rope.zig");
+    _ = @import("model/text/selection.zig");
+    _ = @import("framework/util/regex.zig");
+    _ = @import("framework/util/png.zig");
+    _ = @import("framework/platform/login_path.zig");
+    _ = @import("model/org/table.zig");
+    _ = @import("framework/util/executor.zig");
+    _ = @import("model/project/fuzzy.zig");
+    _ = @import("app/settings/keymap.zig");
+    _ = @import("app/settings/leader.zig");
+    _ = @import("app/workspace/groups.zig");
+    _ = @import("app/workspace/context_menu.zig");
+    _ = @import("app/workspace/find_panel.zig");
+    _ = @import("app/workspace/path_complete.zig");
+    _ = @import("app/workspace/workspace.zig");
+    _ = @import("model/text/fold_map.zig");
+    _ = @import("model/text/display_map.zig");
     _ = @import("framework/text/line_index.zig");
+    _ = @import("framework/text/text_system.zig");
     _ = @import("model/text/buffer.zig");
+    _ = @import("model/text/fold_tree.zig");
+    _ = @import("framework/platform/file_watcher.zig");
+    _ = @import("model/project/search.zig");
+    _ = @import("model/org/date.zig");
+    _ = @import("model/org/parser.zig");
+    _ = @import("model/org/highlight.zig");
+    _ = @import("model/org/agenda.zig");
+    _ = @import("model/org/capture.zig");
+    _ = @import("model/org/clock.zig");
+    _ = @import("model/org/refile.zig");
+    _ = @import("model/org/export.zig");
+    _ = @import("framework/ui/theme.zig");
+    _ = @import("framework/ui/scheme_loader.zig");
+    _ = @import("app/settings/sun.zig");
+    _ = @import("app/settings/settings_file.zig");
+    _ = @import("app/settings/ui_state.zig");
+    _ = @import("model/lsp/protocol.zig");
+    _ = @import("model/lsp/lsp.zig");
+    _ = @import("model/syntax/languages.zig");
+    _ = @import("model/syntax/injection.zig");
+    _ = @import("model/git/git.zig");
+    _ = @import("model/git/blame.zig");
+    _ = @import("model/git/status.zig");
+    _ = @import("model/git/diff.zig");
+    _ = @import("framework/platform/pty.zig");
+    _ = @import("model/terminal/terminal.zig");
+    _ = @import("app/terminal/palette.zig");
+    _ = @import("app/app_icon.zig");
 }

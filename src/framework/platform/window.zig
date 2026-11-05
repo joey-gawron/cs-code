@@ -10,8 +10,8 @@ const x11 = if (macos) struct {} else @import("x11.zig");
 const cocoa = if (macos) @import("cocoa.zig") else struct {};
 
 pub const Options = struct {
-    title: [:0]const u8 = "jiffy-edit",
-    app_id: [:0]const u8 = "jiffy-edit",
+    title: [:0]const u8 = "cs-zig",
+    app_id: [:0]const u8 = "cs-zig",
     width: i32 = 1280,
     height: i32 = 800,
     /// Window icon sizes, for window lists and task bars that don't find the

@@ -5,9 +5,9 @@
 //! of the long lines it recently showed and keeps them in step with edits.
 
 const std = @import("std");
-const line_index = @import("../framework/text/line_index.zig");
-const text_mod = @import("../framework/text/text_system.zig");
-const buffer_mod = @import("../model/text/buffer.zig");
+const line_index = @import("../../framework/text/line_index.zig");
+const text_mod = @import("../../framework/text/text_system.zig");
+const buffer_mod = @import("../../model/text/buffer.zig");
 
 const Allocator = std.mem.Allocator;
 const Buffer = buffer_mod.Buffer;

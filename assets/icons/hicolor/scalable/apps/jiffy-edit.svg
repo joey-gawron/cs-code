@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="960" viewBox="0 0 960 960">
+  <title>Jiffy Edit</title>
+  <!-- Rebuilt from the raster in "jiffy-edit Icon.pdf" (main icon, BBox 41.99 60.02 281.99 300.02 pt,
+       960 px at 288 ppi). Tile: r = 215 (22.4%), vertical gradient. Glyph: 83.2-unit strokes. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4DCC71"/>
+      <stop offset="1" stop-color="#1E9D4B"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="960" rx="215" fill="url(#tile)"/>
+  <g fill="none" stroke="#FAFCFA" stroke-width="83.2">
+    <path d="M282.6 243.5H482M391.5 285V407.1"/>
+    <path d="M785.4 243.5H549.3V695.5H785.4" stroke-linejoin="round"/>
+    <path d="M391 538C391 627 353.8 695.2 277 695.2C204 695.2 168 642.5 168 597.8C168 527.2 230 472.5 291.8 472.5H672"/>
+  </g>
+  <path d="M680 382.1L819 472.5L680 562.9Z" fill="#FAFCFA" stroke="#FAFCFA" stroke-width="18" stroke-linejoin="round"/>
+</svg>

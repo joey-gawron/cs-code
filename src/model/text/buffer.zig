@@ -9,6 +9,9 @@ const std = @import("std");
 const rope_mod = @import("rope.zig");
 const selection = @import("selection.zig");
 const platform = @import("../../framework/platform/platform.zig");
+const syntax_mod = @import("../syntax/syntax.zig");
+const languages = @import("../syntax/languages.zig");
+const vfs = @import("../remote/vfs.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -37,6 +40,17 @@ pub const Change = struct {
 };
 
 pub const EditKind = enum { typing, deleting, other };
+
+pub const Severity = enum(u8) { err = 1, warning = 2, info = 3, hint = 4 };
+
+/// A language-server diagnostic, kept in byte offsets that move with edits.
+pub const Diagnostic = struct {
+    start: usize,
+    end: usize,
+    severity: Severity,
+    message: []u8,
+    source: []u8,
+};
 
 const Record = struct {
     start: usize,
@@ -86,6 +100,10 @@ pub const Buffer = struct {
     line_ending: LineEnding = .lf,
     tab_size: u32 = 4,
     translate_tabs_to_spaces: bool = true,
+    language: *const languages.LanguageConfig = &languages.plain_text,
+    syntax: ?syntax_mod.Syntax = null,
+    /// Too big to parse (see `syntax_size_limit`): shown without highlighting.
+    syntax_skipped: bool = false,
 
     undo_stack: std.ArrayList(Transaction) = .empty,
     redo_stack: std.ArrayList(Transaction) = .empty,
@@ -100,6 +118,7 @@ pub const Buffer = struct {
     forced_group_started: bool = false,
 
     listeners: std.ArrayList(Listener) = .empty,
+    diagnostics: std.ArrayList(Diagnostic) = .empty,
 
     pub fn initEmpty(gpa: Allocator, id: u32) !Buffer {
         return .{ .gpa = gpa, .id = id, .rope = Rope.init() };
@@ -110,7 +129,8 @@ pub const Buffer = struct {
     }
 
     pub fn load(gpa: Allocator, io: Io, id: u32, path: []const u8) !Buffer {
-        const raw = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
+        // Local, or ssh://host/... through its connection.
+        const raw = try vfs.readFile(gpa, io, path, 1 << 30);
         defer gpa.free(raw);
         var buf: Buffer = .{ .gpa = gpa, .id = id, .rope = Rope.init() };
         errdefer buf.deinit();
@@ -127,6 +147,7 @@ pub const Buffer = struct {
     }
 
     pub fn deinit(self: *Buffer) void {
+        if (self.syntax) |*s| s.deinit();
         self.rope.deinit(self.gpa);
         if (self.path) |p| self.gpa.free(p);
         for (self.undo_stack.items) |*t| t.deinit(self.gpa);
@@ -134,6 +155,27 @@ pub const Buffer = struct {
         self.undo_stack.deinit(self.gpa);
         self.redo_stack.deinit(self.gpa);
         self.listeners.deinit(self.gpa);
+        self.clearDiagnostics();
+        self.diagnostics.deinit(self.gpa);
+    }
+
+    pub fn clearDiagnostics(self: *Buffer) void {
+        for (self.diagnostics.items) |d| {
+            self.gpa.free(d.message);
+            self.gpa.free(d.source);
+        }
+        self.diagnostics.clearRetainingCapacity();
+    }
+
+    /// Replaces the diagnostics (takes ownership of their strings).
+    pub fn setDiagnostics(self: *Buffer, list: []const Diagnostic) void {
+        self.clearDiagnostics();
+        self.diagnostics.appendSlice(self.gpa, list) catch {};
+        std.mem.sort(Diagnostic, self.diagnostics.items, {}, struct {
+            fn lt(_: void, a: Diagnostic, b: Diagnostic) bool {
+                return a.start < b.start;
+            }
+        }.lt);
     }
 
     pub fn isDirty(self: *const Buffer) bool {
@@ -172,7 +214,8 @@ pub const Buffer = struct {
             converted = cv;
             out = cv;
         }
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out });
+        // Written next to the target and renamed, so a crash never truncates the file.
+        try vfs.writeFileAtomic(self.gpa, io, path, out);
         self.saved_version = self.version;
     }
 
@@ -292,7 +335,48 @@ pub const Buffer = struct {
             .old_end_point = old_end_point,
             .new_end_point = self.rope.offsetToPoint(start + text.len),
         };
+        if (self.syntax) |*s| s.applyChange(change);
+        for (self.diagnostics.items) |*d| {
+            d.start = selection.transformOffset(d.start, change.start, change.old_len, change.new_len, false);
+            d.end = @max(d.start, selection.transformOffset(d.end, change.start, change.old_len, change.new_len, true));
+        }
         for (self.listeners.items) |l| l.onChange(l.ctx, self, change);
+    }
+
+    /// Switches syntax; loads the grammar through `registry` when available.
+    /// A grammar that isn't loaded yet loads in the background: the buffer is
+    /// plain text until `languageLoaded` hands it over.
+    pub fn setLanguage(self: *Buffer, registry: *syntax_mod.Registry, config: *const languages.LanguageConfig) void {
+        if (self.syntax) |*s| s.deinit();
+        self.syntax = null;
+        self.language = config;
+        const lang = registry.request(config) orelse return;
+        self.syntax = syntax_mod.Syntax.init(self.gpa, lang) catch null;
+    }
+
+    /// A grammar finished loading in the background: highlights with it if
+    /// it is still this buffer's. Returns whether it did.
+    pub fn languageLoaded(self: *Buffer, lang: *syntax_mod.Language) bool {
+        // Or one for the code it embeds (a Vue file's TypeScript).
+        if (self.syntax) |*s| return s.injectedLanguageLoaded();
+        const grammar = self.language.grammar orelse return false;
+        if (!std.mem.eql(u8, grammar, lang.config.grammar.?)) return false;
+        self.syntax = syntax_mod.Syntax.init(self.gpa, lang) catch return false;
+        return true;
+    }
+
+    /// Brings the syntax tree up to date with the text (incremental reparse).
+    pub fn updateSyntax(self: *Buffer) void {
+        const s = &(self.syntax orelse return);
+        // A tree-sitter tree takes tens of bytes per byte of source, so huge
+        // files stay plain text.
+        if (self.rope.len() > syntax_size_limit) {
+            s.deinit();
+            self.syntax = null;
+            self.syntax_skipped = true;
+            return;
+        }
+        s.update(&self.rope);
     }
 
     /// Forgets undo and redo (generated text, like the Source Control tab's).
@@ -373,7 +457,7 @@ pub const Buffer = struct {
     fn detectIndentation(self: *Buffer, text: []const u8) void {
         var tab_lines: usize = 0;
         var space_lines: usize = 0;
-        var widths = [_]usize{0} * *9;
+        var widths: [9]usize = @splat(0);
         var prev_spaces: usize = 0;
         var lines = std.mem.splitScalar(u8, text, '\n');
         var n: usize = 0;
@@ -413,6 +497,10 @@ fn selectionsEql(a: []const Selection, b: []const Selection) bool {
 }
 
 /// CRLF → LF (remembering the style) and replaces invalid UTF-8 with U+FFFD.
+/// Buffers larger than this (bytes) aren't parsed for highlighting. Set from
+/// the "syntax_max_file_size_mb" setting.
+pub var syntax_size_limit: usize = 8 << 20;
+
 pub fn normalizeText(gpa: Allocator, raw: []const u8, line_ending: *LineEnding) ![]u8 {
     var out: std.ArrayList(u8) = try .initCapacity(gpa, raw.len);
     errdefer out.deinit(gpa);

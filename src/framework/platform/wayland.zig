@@ -21,8 +21,8 @@ const log = std.log.scoped(.wayland);
 const ToplevelIconManager = if (build_options.toplevel_icon) c.struct_xdg_toplevel_icon_manager_v1 else opaque {};
 
 pub const Options = struct {
-    title: [:0]const u8 = "jiffy-edit",
-    app_id: [:0]const u8 = "jiffy-edit",
+    title: [:0]const u8 = "cs-zig",
+    app_id: [:0]const u8 = "cs-zig",
     width: i32 = 1280,
     height: i32 = 800,
     icons: []const platform.IconImage = &.{},
@@ -479,7 +479,7 @@ pub const Window = struct {
     fn iconPool(shm: *c.struct_wl_shm, icons: []const platform.IconImage) !*c.struct_wl_shm_pool {
         var size: usize = 0;
         for (icons) |image| size += image.rgba.len;
-        const fd = try std.posix.memfd_create("jiffy-edit-icon", std.posix.MFD.CLOEXEC);
+        const fd = try std.posix.memfd_create("cs-zig-icon", std.posix.MFD.CLOEXEC);
         defer _ = c.close(fd);
         if (c.ftruncate(fd, @intCast(size)) != 0) return error.IconBufferFailed;
         const map = try std.posix.mmap(null, size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0);
