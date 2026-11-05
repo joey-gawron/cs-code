@@ -20,13 +20,13 @@ public class ThemeCatalogTests
     /// <summary>The VS 2022 themes, then the embedded ones in catalogue order.</summary>
     internal static IEnumerable<(ColorTheme Theme, string Origin)> AllThemes() =>
         VsThemes.All.Select(t => (t, "CsCode (Visual Studio 2022 palette)"))
-            .Concat(BuiltinColorThemes.All.Zip(Builtins, (d, t) => (t, d.Origin == ThemeOrigin.VsCode ? "VS Code built-in" : "TextMateSharp")));
+            .Concat(BuiltinColorThemes.All.Zip(Builtins, (d, t) => (t, d.Origin switch { ThemeOrigin.VsCode => "VS Code built-in", ThemeOrigin.CsCode => "CsCode", _ => "TextMateSharp" })));
 
     [Fact]
-    public void The_catalogue_is_the_21_embedded_themes_with_unique_ids_and_labels()
+    public void The_catalogue_is_the_23_embedded_themes_with_unique_ids_and_labels()
     {
-        Assert.Equal(21, BuiltinColorThemes.All.Count);
-        Assert.Equal(21, Builtins.Count);
+        Assert.Equal(23, BuiltinColorThemes.All.Count);
+        Assert.Equal(23, Builtins.Count);
         var all = Builtins.Concat(VsThemes.All).ToList();
         Assert.Equal(all.Count, all.Select(t => t.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.Equal(all.Count, all.Select(t => t.Label).Distinct(StringComparer.OrdinalIgnoreCase).Count()); // workbench.colorTheme stores labels
@@ -42,6 +42,8 @@ public class ThemeCatalogTests
     [InlineData("vscode.hc-light", ThemeKind.HighContrastLight)]
     [InlineData("textmatesharp.dracula", ThemeKind.Dark)]
     [InlineData("textmatesharp.atom-one-light", ThemeKind.Light)]
+    [InlineData("cscode.gruvbox-dark", ThemeKind.Dark)]
+    [InlineData("cscode.gruvbox-light", ThemeKind.Light)]
     public void Kinds_come_from_the_contribution_ui_theme(string id, ThemeKind kind) => Assert.Equal(kind, Builtins.Single(t => t.Id == id).Kind);
 
     [Fact]
