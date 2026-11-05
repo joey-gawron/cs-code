@@ -34,6 +34,7 @@ const git_status_ui = @import("git_status_ui.zig");
 const groups = @import("groups.zig");
 const terminal_ui = @import("terminal_ui.zig");
 const settings_ui = @import("settings_ui.zig");
+const scm_state = @import("scm_state.zig");
 const panel_ui = @import("panel_ui.zig");
 const search_ui = @import("search_ui.zig");
 const debug_ui = @import("debug_ui.zig");
@@ -3263,7 +3264,7 @@ pub const Workspace = struct {
         var y = sb.y + sidebar_header_h - self.sidebar_scroll;
 
         // Root folder row.
-        self.paintSidebarRow(ctx, .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h }, base_x, p.name, .dir, self.root_expanded, false, false);
+        self.paintSidebarRow(ctx, .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h }, base_x, p.name, .dir, self.root_expanded, false, false, null);
         y += sidebar_row_h;
 
         const snap = p.snapshot orelse return;
@@ -3277,18 +3278,21 @@ pub const Workspace = struct {
             const x = base_x + indent * @as(f32, @floatFromInt(e.depth + 1));
             const row: Rect = .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h };
             const selected = active_rel != null and std.mem.eql(u8, active_rel.?, e.path);
-            self.paintSidebarRow(ctx, row, x, e.name, e.kind, e.kind == .dir and p.isExpanded(e.path), selected, e.ignored);
+            var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const deco = if (std.fmt.bufPrint(&abs_buf, "{s}/{s}", .{ p.root, std.mem.trimEnd(u8, e.path, "/") })) |abs| scm_state.decoration(self, abs) else |_| null;
+            self.paintSidebarRow(ctx, row, x, e.name, e.kind, e.kind == .dir and p.isExpanded(e.path), selected, e.ignored, deco);
             y += sidebar_row_h;
         }
     }
 
-    fn paintSidebarRow(self: *Workspace, ctx: *const ui.Ctx, row: Rect, x: f32, name: []const u8, kind: project_mod.Kind, expanded: bool, selected: bool, dim: bool) void {
+    fn paintSidebarRow(self: *Workspace, ctx: *const ui.Ctx, row: Rect, x: f32, name: []const u8, kind: project_mod.Kind, expanded: bool, selected: bool, dim: bool, deco: ?scm_state.Decoration) void {
         const theme = ctx.theme;
         // Not from the pinned header over a row scrolled part-way under it.
         const hovered = ctx.hovered(row) and ctx.mouse.y >= self.sidebar_rect.y + sidebar_header_h;
         if (selected) ctx.scene.fill(row, theme.sidebar_selected) else if (hovered) ctx.scene.fill(row, theme.sidebar_hover);
         const cy = row.y + row.h / 2;
-        const fg = if (dim) theme.sidebar_foreground_dim.withAlpha(0.6) else theme.sidebar_foreground;
+        var fg = if (dim) theme.sidebar_foreground_dim.withAlpha(0.6) else theme.sidebar_foreground;
+        if (deco) |d| fg = scm_state.kindColor(theme, d.kind);
         if (kind == .dir) {
             ctx.chevron(x + 4, cy, expanded, theme.sidebar_foreground_dim);
             ctx.folderIcon(x + 14, cy, if (dim) theme.folder_icon.withAlpha(0.5) else theme.folder_icon, expanded);
@@ -3296,7 +3300,18 @@ pub const Workspace = struct {
             ctx.fileIcon(x + 13, cy, if (dim) theme.sidebar_foreground_dim.withAlpha(0.5) else Color.hex(0xc5c5c5));
         }
         const tx = x + 34;
-        _ = ctx.labelFit(.{ .x = tx, .y = row.y, .w = row.right() - tx - 8, .h = row.h }, name, self.fonts.ui, fg);
+        // A changed file's letter (a folder's dot) at the right edge.
+        const badge_w: f32 = if (deco != null) 22 else 0;
+        const shown_w = ctx.labelFit(.{ .x = tx, .y = row.y, .w = row.right() - tx - 8 - badge_w, .h = row.h }, name, self.fonts.ui, fg);
+        if (deco) |d| {
+            if (d.kind == .deleted and d.letter != 0) ctx.scene.fill(.{ .x = tx, .y = @round(cy), .w = shown_w, .h = 1 }, fg);
+            if (d.letter == 0) {
+                ctx.dot(row.right() - 14, cy, 3, fg);
+            } else {
+                const letter = [_]u8{d.letter};
+                _ = ctx.labelRight(.{ .x = row.x, .y = row.y, .w = row.w - 10, .h = row.h }, &letter, self.fonts.ui, fg);
+            }
+        }
     }
 
     /// The strip standing in for the hidden side bar: a click brings it back,
@@ -3330,6 +3345,14 @@ pub const Workspace = struct {
         var x = r.x + 26 + 10;
         var buf: [256]u8 = undefined;
         if (remote_ui.statusLabel(self, &buf)) |t| x += ctx.label(.{ .x = x, .y = r.y, .w = 320, .h = r.h }, t, self.fonts.ui_bold, fg) + 16;
+        if (scm_state.branchLabel(self, &buf)) |t| {
+            // A branch: two commits joined by a line.
+            const cy = r.y + r.h / 2;
+            ctx.scene.fill(.{ .x = x + 3.5, .y = cy - 4, .w = 1.2, .h = 8 }, fg);
+            ctx.dot(x + 4, cy - 4.5, 2, fg);
+            ctx.dot(x + 4, cy + 4.5, 2, fg);
+            x += 14 + ctx.label(.{ .x = x + 14, .y = r.y, .w = 320, .h = r.h }, t, font, fg) + 16;
+        }
 
         if (self.key_hook) |hook| if (hook.enabled) {
             const t = hook.statusText(hook.ctx, &buf);

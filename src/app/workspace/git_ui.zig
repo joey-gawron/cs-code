@@ -12,6 +12,7 @@ const keymap = @import("../settings/keymap.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const git = @import("../../model/git/git.zig");
 const blame_mod = @import("../../model/git/blame.zig");
+const scm_state = @import("scm_state.zig");
 
 const Workspace = workspace_mod.Workspace;
 const Editor = editor_mod.Editor;
@@ -44,9 +45,12 @@ pub const State = struct {
     /// A popup waiting for `git show`.
     popup: ?Popup = null,
     show_job: ?*git.Job = null,
+    /// The repository's status, decorations and commands (scm_state.zig).
+    scm: scm_state.State = .{},
 };
 
 pub fn deinit(ws: *Workspace) void {
+    scm_state.deinit(ws);
     const st = &ws.git_state;
     if (st.show_job) |j| j.detach();
     for (st.blames.items) |b| b.destroy();
@@ -154,6 +158,7 @@ fn pollRepos(ws: *Workspace) void {
 }
 
 pub fn tick(ws: *Workspace) void {
+    scm_state.tick(ws);
     sync(ws);
     pollRepos(ws);
     const st = &ws.git_state;
@@ -185,9 +190,9 @@ pub fn tick(ws: *Workspace) void {
 /// Time until the next blame timer (inline blame, hover popup).
 pub fn nextTimer(ws: *Workspace) ?i64 {
     const st = &ws.git_state;
-    var soonest: ?i64 = null;
+    var soonest: ?i64 = scm_state.nextTimer(ws);
     if (ws.activeEditor()) |ed| if (blame_view.inlineDueIn(ed)) |ms| {
-        soonest = @max(1, ms);
+        soonest = if (soonest) |s| @min(s, @max(1, ms)) else @max(1, ms);
     };
     if (!st.rest_done) if (ws.activeEditor()) |ed| if (ed.blame != null) {
         const ms = @max(1, st.rest_since + hover_delay_ms - platform.nowMs());

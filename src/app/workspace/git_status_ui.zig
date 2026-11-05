@@ -27,6 +27,7 @@ const status_mod = @import("../../model/git/status.zig");
 const rpath = @import("../../model/remote/path.zig");
 const git_ui = @import("git_ui.zig");
 const git_popup = @import("git_popup.zig");
+const scm_state = @import("scm_state.zig");
 const panel_ui = @import("panel_ui.zig");
 const Palette = @import("../terminal/palette.zig").Palette;
 
@@ -482,6 +483,7 @@ fn onStatus(ctx: *anyopaque, job: *git.Job) void {
 
 /// A file changed on disk (from the file watcher).
 pub fn onDiskChange(ws: *Workspace, path: []const u8) void {
+    scm_state.onDiskChange(ws, path);
     const p = ws.panel.source_control orelse return;
     if (p.view.root) |root| if (isUnder(path, root)) {
         p.stale = true;
