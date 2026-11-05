@@ -48,8 +48,12 @@ internal sealed class EditorVimHost : IVimHost
         // the selection); leaving Visual mode, the selection call clears the selection and then places it.
         _caret = position;
         if (View is { InVisual: true }) return;
-        _surface.SetCaret(position);
+        if (QuietCaret) _surface.PlaceCaret(position);
+        else _surface.SetCaret(position);
     }
+
+    /// <summary>While the integration runs a motion at the other carets in turn (multi-cursor), the caret moves without scrolling the view.</summary>
+    public bool QuietCaret { get; set; }
 
     /// <summary>The selection the engine last asked for, and the editor range it was drawn as (to tell the engine's selection from the mouse's).</summary>
     public VimSelection LastSelection { get; private set; } = VimSelection.None;

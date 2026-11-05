@@ -76,14 +76,17 @@ public class MultiCursorTests
     }
 
     [AvaloniaFact(Timeout = 120_000)]
-    public async Task With_Vim_on_the_keys_add_no_caret()
+    public async Task With_Vim_on_the_keys_add_carets_too_and_insert_mode_types_at_each()
     {
         var (host, tab) = await StartAsync(vim: true);
         await using var _ = host;
         var view = (CodeEditorControl)tab.LiveView!;
         Assert.True(view.Modal.IsAttached, "Vim is on by default");
         await PressAsync(host, Key.Down, InsertCursorModifiers);
-        Assert.Single(tab.Controller!.Selections);
-        Assert.Equal("alpha\nbeta\ngamma\n", view.Document.GetText().Replace("\r\n", "\n"));
+        Assert.True(await RealAppHost.WaitFor(() => tab.Controller!.Selections.Count == 2), $"carets: {tab.Controller!.Selections.Count}");
+        host.Window.KeyTextInput("i"); // Vim's i: Insert mode at both carets (docs/VIM.md, multi-cursor)
+        host.Window.KeyTextInput("-");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("-alpha\n-beta\ngamma\n", view.Document.GetText().Replace("\r\n", "\n"));
     }
 }

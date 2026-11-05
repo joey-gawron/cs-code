@@ -222,7 +222,7 @@ internal sealed class InlayHintFeature : ISettingsAware, IThemeAware, IDisposabl
         };
         border.PointerPressed += async (_, e) =>
         {
-            if (!e.GetCurrentPoint(border).Properties.IsLeftButtonPressed || !EditorKeys.HasCommand(e.KeyModifiers)) return;
+            if (!e.GetCurrentPoint(border).Properties.IsLeftButtonPressed || !EditorKeys.HasLinkModifier(e.KeyModifiers, _v.Settings.MultiCursorModifier)) return;
             e.Handled = true; // never moves the caret
             var index = (e.Source as Control)?.Tag is int i ? i : -1;
             var hint = await ResolveAsync(placed).ConfigureAwait(true);
@@ -252,10 +252,10 @@ internal sealed class InlayHintFeature : ISettingsAware, IThemeAware, IDisposabl
     private static InlayHintLabelPart? PartAt(object? source, InlayHint hint) =>
         source is Control { Tag: int index } && hint.LabelParts is { } parts && index >= 0 && index < parts.Count ? parts[index] : null;
 
-    private static string? TooltipOf(InlayHint hint, InlayHintLabelPart? part)
+    private string? TooltipOf(InlayHint hint, InlayHintLabelPart? part)
     {
         var text = (part?.Tooltip ?? hint.Tooltip)?.Value;
-        var link = part?.Location is { } l ? $"{(OperatingSystem.IsMacOS() ? "⌘" : "Ctrl")}+click to go to {Path.GetFileName(l.Uri.IsFile ? l.Uri.LocalPath : l.Uri.AbsolutePath)}:{l.Range.Start.Line + 1}" : null;
+        var link = part?.Location is { } l ? $"{EditorKeys.LinkModifierLabel(_v.Settings.MultiCursorModifier)}+click to go to {Path.GetFileName(l.Uri.IsFile ? l.Uri.LocalPath : l.Uri.AbsolutePath)}:{l.Range.Start.Line + 1}" : null;
         return text is null ? link : link is null ? text : text + "\n\n" + link;
     }
 

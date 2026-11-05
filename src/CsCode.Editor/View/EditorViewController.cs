@@ -43,7 +43,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         if (reveal) Reveal(range, center: false);
     }
 
-    /// <summary>Several selections at once (multi-cursor): the first is the primary. Bounded by <c>editor.multiCursorLimit</c>; one only while Vim is on.</summary>
+    /// <summary>Several selections at once (multi-cursor): the first is the primary. Bounded by <c>editor.multiCursorLimit</c>; one only under a modal layer that does not handle several carets.</summary>
     public void SetSelections(IReadOnlyList<TextRange> selections, bool reveal = true)
     {
         if (_disposed || selections.Count == 0) return;
@@ -135,7 +135,11 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
             view.TextView.ScrollOffset.Y,
             view.TextView.ScrollOffset.X,
             FoldedLinesProvider?.Invoke() ?? [],
-            doc.Version) { WordWrap = view.WordWrapOverride };
+            doc.Version)
+        {
+            WordWrap = view.WordWrapOverride,
+            Carets = view.MultiCursor.IsActive ? view.MultiCursor.CaretStates() : null, // multi-cursor: every caret, the primary first
+        };
     }
 
     public void RestoreViewState(EditorViewState state)
@@ -148,6 +152,7 @@ internal sealed class EditorViewController(CodeEditorControl view) : IEditorView
         var b = doc.Validate(state.SelectionEnd);
         view.SetSelection(a == b ? new TextRange(caret, caret) : new TextRange(a, b));
         view.Editor.CaretOffset = doc.OffsetAt(caret);
+        if (state.Carets is { Count: > 1 } carets) view.MultiCursor.RestoreCarets(carets);
         ApplyScroll(state.VerticalOffset, state.HorizontalOffset, attemptsLeft: 8);
     }
 
