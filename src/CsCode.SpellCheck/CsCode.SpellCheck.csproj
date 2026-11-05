@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The built-in, code-aware spell checker (docs/SPELLCHECK.md): Hunspell dictionaries through WeCantSpell.Hunspell, cspell-compatible
+       settings and cspell.json, diagnostics, quick fixes and commands. UI-free: references Core only; the editor supplies the token kinds
+       (ISyntaxClassificationService) and the shell starts it. -->
+  <ItemGroup>
+    <ProjectReference Include="../CsCode.Core/CsCode.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WeCantSpell.Hunspell" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- en_US from LibreOffice's dictionaries (SCOWL-derived; licence in Dictionaries/README_en_US.txt and THIRD-PARTY-NOTICES.md) and
+         CsCode's own list of software terms and language keywords. Embedded: nothing to copy next to the app. -->
+    <EmbeddedResource Include="Dictionaries/en_US.dic" LogicalName="CsCode.SpellCheck.Dictionaries.en_US.dic" />
+    <EmbeddedResource Include="Dictionaries/en_US.aff" LogicalName="CsCode.SpellCheck.Dictionaries.en_US.aff" />
+    <EmbeddedResource Include="Dictionaries/README_en_US.txt" LogicalName="CsCode.SpellCheck.Dictionaries.README_en_US.txt" />
+    <EmbeddedResource Include="Dictionaries/software-terms.txt" LogicalName="CsCode.SpellCheck.Dictionaries.software-terms.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsCode.SpellCheck.Tests" />
+    <InternalsVisibleTo Include="CsCode.Editor.Tests" />
+  </ItemGroup>
+
+</Project>

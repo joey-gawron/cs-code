@@ -39,6 +39,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<SnippetService>(),
             sp.GetRequiredService<EditorWorker>()));
         services.AddSingleton<IEditorViewFactory>(sp => sp.GetRequiredService<EditorViewFactory>());
+        // The token store by kind (comment / string / prose / code) for readers such as the spell checker (docs/SPELLCHECK.md).
+        services.AddSingleton<ISyntaxClassificationService>(sp => new SyntaxClassifier(sp.GetRequiredService<TokenizationManager>(), sp.GetRequiredService<EditorServices>().Documents));
         // editor.codeActionsOnSave. Registered as an IWillSaveParticipant by the shell (AddCodeActionsOnSave), not here: the remote module redirects
         // the will-save participants registered before it to the out-of-process language host.
         services.AddSingleton(sp => new Features.CodeActionsOnSaveParticipant(sp.GetRequiredService<EditorServices>()));

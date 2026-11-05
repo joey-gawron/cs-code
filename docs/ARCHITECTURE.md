@@ -65,6 +65,7 @@ Dependency rules (enforced by project references, checked in review):
 | `IDiffEditorService` (diff tabs) | **Shell**, over the editor's `DiffEditorControl` (`IEditorViewFactory.CreateDiffView`) |
 | `org` language (grammar and configuration as contributions, `IFoldingRangeProvider`, `IDocumentSymbolProvider`) | **Panels.Org** (`docs/ORG.md`) |
 | `ILocalHistoryService`, `ITimelineProvider` (local history; docs/LOCAL-HISTORY.md) | **Panels.Timeline** (local history and its provider); **Panels.Git** (`GitTimelineProvider`) |
+| `ISyntaxClassificationService` (token kinds: comment / string / prose / code), `ITextSpellChecker` | **Editor** (`SyntaxClassifier`, over its token store); **SpellCheck** (`CsCode.SpellCheck`, Core only: the built-in spell checker, docs/SPELLCHECK.md) |
 
 ## 3. Language features: one registry, bridged when remote
 

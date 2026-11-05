@@ -521,7 +521,11 @@ internal sealed class TokenizationSession : IDisposable
                 _redrawLast = -1;
                 _redrawPosted = false;
             }
-            if (!_disposed && l >= f) _tokensChanged.Fire((f, l));
+            if (!_disposed && l >= f)
+            {
+                _tokensChanged.Fire((f, l));
+                _owner.NotifyTokenRowsChanged(_doc.Uri, f, l);
+            }
         });
     }
 

@@ -27,6 +27,7 @@ using CsCode.Panels.Timeline;
 using CsCode.Platform;
 using CsCode.Profiling;
 using CsCode.Remote;
+using CsCode.SpellCheck;
 using CsCode.Ui;
 using CsCode.Vim;
 using CsCode.Ui.Threading;
@@ -71,6 +72,7 @@ public static class AppServices
         services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame
         services.AddCsCodeNewProject(); // File > New > Project...: the New Project page and its generators (docs/NEW-PROJECT.md)
         services.AddCsCodeOrg(); // org mode: the org language, org.* commands and keys, the Org Agenda window (docs/ORG.md)
+        services.AddCsCodeSpellCheck(); // the built-in spell checker: cSpell diagnostics, quick fixes, commands, status bar (docs/SPELLCHECK.md)
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         services.AddCodeActionsOnSave(); // after AddCsCodeRemote (see there): editor.codeActionsOnSave, the first will-save participant
         services.AddCsCodeTimeline(); // after AddCsCodeRemote (see there): local history (save hook, renames follow) and the Timeline window (docs/LOCAL-HISTORY.md)

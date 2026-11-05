@@ -96,6 +96,7 @@ public sealed class VimConfiguration : IDisposable
         if (Changed(VimSettings.IgnoreCase)) o.IgnoreCase = Bool(VimSettings.IgnoreCase, true);
         if (Changed(VimSettings.SmartCase)) o.SmartCase = Bool(VimSettings.SmartCase, true);
         if (Changed(VimSettings.WrapScan)) o.WrapScan = Bool(VimSettings.WrapScan, true);
+        if (Changed(VimSettings.Spell)) o.Spell = Bool(VimSettings.Spell, true);
         if (Changed(VimSettings.StartInInsertMode)) _s.StartInInsertMode = Bool(VimSettings.StartInInsertMode, false);
         if (Changed(VimSettings.PersistRegisters)) _s.PersistRegisters = Bool(VimSettings.PersistRegisters, true);
         if (Changed(VimSettings.MaxRegisterChars)) o.MaxRegisterChars = Math.Max(1024, Int(VimSettings.MaxRegisterChars, 8_000_000));

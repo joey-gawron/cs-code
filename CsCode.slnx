@@ -20,6 +20,7 @@
     <Project Path="src/CsCode.Profiling/CsCode.Profiling.csproj" />
     <Project Path="src/CsCode.ProjectTemplates/CsCode.ProjectTemplates.csproj" />
     <Project Path="src/CsCode.Sessions/CsCode.Sessions.csproj" />
+    <Project Path="src/CsCode.SpellCheck/CsCode.SpellCheck.csproj" />
     <Project Path="src/CsCode.Terminal/CsCode.Terminal.csproj" />
     <Project Path="src/CsCode.Testing/CsCode.Testing.csproj" />
     <Project Path="src/CsCode.Panels.Testing/CsCode.Panels.Testing.csproj" />
@@ -50,6 +51,7 @@
     <Project Path="tests/CsCode.Platform.Tests/CsCode.Platform.Tests.csproj" />
     <Project Path="tests/CsCode.ProjectTemplates.Tests/CsCode.ProjectTemplates.Tests.csproj" />
     <Project Path="tests/CsCode.Sessions.Tests/CsCode.Sessions.Tests.csproj" />
+    <Project Path="tests/CsCode.SpellCheck.Tests/CsCode.SpellCheck.Tests.csproj" />
     <Project Path="tests/CsCode.Remote.Tests/CsCode.Remote.Tests.csproj" />
     <Project Path="tests/CsCode.Terminal.Tests/CsCode.Terminal.Tests.csproj" />
     <Project Path="tests/CsCode.TestDoubles/CsCode.TestDoubles.csproj" />

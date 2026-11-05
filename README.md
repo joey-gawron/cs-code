@@ -11,6 +11,7 @@ TextMate grammars and snippets dropped into the user data folder.
   [docs/RUN-AND-DEBUG.md](docs/RUN-AND-DEBUG.md)
 * Org mode (agenda side panel, scheduling, deadlines, capture, notes in `.org` files): [docs/ORG.md](docs/ORG.md)
 * Local history and the Timeline window (every save kept per file, compare and restore, git commits of the file): [docs/LOCAL-HISTORY.md](docs/LOCAL-HISTORY.md)
+* Spell checking (built in; reads Code Spell Checker's `cSpell.*` settings and a project's `cspell.json`): [docs/SPELLCHECK.md](docs/SPELLCHECK.md)
 * Build: `dotnet build CsCode.slnx` · Test: `dotnet test CsCode.slnx`
 * Linux only: on a Nix-provided `dotnet` (non-NixOS host), `source tools/nix-dev-env.sh` first.
 * macOS: see [macOS](#macos) below.
