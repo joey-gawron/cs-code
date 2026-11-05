@@ -1411,7 +1411,7 @@ pub const Workspace = struct {
                 .location => |loc| lsp_ui.confirmLocation(self, loc.path, loc.line, loc.character, loc.utf8),
                 else => {},
             },
-            .list => if (!lsp_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !org_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !remote_ui.confirmList(self, tag, item, q) and !git_status_ui.confirmList(self, tag, item, q) and !file_cmd.confirmList(self, tag, item)) self.confirmList(@enumFromInt(tag), if (item) |it| it.payload.value else 2),
+            .list => if (!lsp_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !org_ui.confirmList(self, tag, if (item) |it| it.payload.value else null) and !remote_ui.confirmList(self, tag, item, q) and !git_status_ui.confirmList(self, tag, item, q) and !file_cmd.confirmList(self, tag, item) and !search_ui.confirmList(self, tag, item)) self.confirmList(@enumFromInt(tag), if (item) |it| it.payload.value else 2),
         }
     }
 

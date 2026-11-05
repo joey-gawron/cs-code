@@ -354,7 +354,6 @@ pub fn promptRunCommand(ws: *Workspace) void {
 
 /// The Run Command prompt's answer. Returns false for other prompts.
 pub fn confirmPrompt(ws: *Workspace, tag: u32, input: []const u8) bool {
-    if (search_ui.confirmPrompt(ws, tag, input)) return true;
     if (tag != run_command_tag) return false;
     const cmd = std.mem.trim(u8, input, " \t");
     if (cmd.len > 0) runCommand(ws, cmd);

@@ -276,3 +276,41 @@ test "preserve case follows the matched text" {
     try testing.expectEqualStrings("bAr", preserveCase(&buf, "fOo", "bAr"));
     try testing.expectEqualStrings("Bar", preserveCase(&buf, "123", "Bar"));
 }
+
+test "a real search feeds the tree: paths, lines and ranges agree with the files" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/a.zig", .data = "alpha\n    let Needle = needle;\nomega\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = "no\nneedle needle needle\n" });
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try gpa.dupe(u8, buf[0..try tmp.dir.realPath(io, &buf)]);
+    defer gpa.free(root);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const where = try search.Where.parse(arena.allocator(), "", null);
+    var results = try search.searchOnce(gpa, io, .{ .pattern = "needle" }, &.{root}, &.{}, &where, &.{});
+    defer results.deinit();
+    var tree = try build(gpa, results.text, results.matches);
+    defer tree.deinit();
+    try testing.expectEqual(@as(usize, 2), tree.files.len);
+    try testing.expectEqual(@as(usize, 5), tree.hits);
+    for (tree.files) |f| {
+        const name = std.fs.path.basename(f.path);
+        for (f.matches) |m| for (m.ranges) |r| {
+            try testing.expect(std.ascii.eqlIgnoreCase("needle", m.preview[r[0]..r[1]]));
+        };
+        if (std.mem.eql(u8, name, "a.zig")) {
+            try testing.expectEqual(@as(u32, 2), f.matches[0].line);
+            // "    let Needle = needle;": the first hit is at byte 8 of the line.
+            try testing.expectEqual(@as(u32, 8), f.matches[0].preview_col + f.matches[0].ranges[0][0]);
+            try testing.expectEqual(@as(usize, 2), f.matches[0].ranges.len);
+        } else {
+            try testing.expectEqualStrings("b.txt", name);
+            try testing.expectEqual(@as(u32, 2), f.matches[0].line);
+            try testing.expectEqual(@as(u32, 3), f.hits);
+        }
+    }
+}

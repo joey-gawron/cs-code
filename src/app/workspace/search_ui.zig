@@ -14,6 +14,7 @@ const builtin = @import("builtin");
 const workspace_mod = @import("workspace.zig");
 const editor_mod = @import("../editor/editor.zig");
 const find_panel = @import("find_panel.zig");
+const quick_panel = @import("quick_panel.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const ui = @import("../../framework/ui/ui.zig");
 const search = @import("../../model/project/search.zig");
@@ -54,6 +55,8 @@ pub const State = struct {
     regex_error: bool = false,
     started_ms: i64 = 0,
     elapsed_ms: i64 = 0,
+    /// Why the tree is empty after results were there: the summary says so.
+    emptied_by: enum { none, replace, dismiss } = .none,
     /// The results text and match ranges, for Open in Editor (owned).
     text: []u8 = &.{},
     ranges: [][2]usize = &.{},
@@ -95,6 +98,7 @@ pub fn begin(ws: *Workspace, q: search.Query) void {
     st.regex = q.regex;
     st.case_sensitive = q.case_sensitive;
     st.searching = true;
+    st.emptied_by = .none;
     st.regex_error = false;
     st.truncated = false;
     st.files_searched = 0;
@@ -110,6 +114,7 @@ pub fn finish(ws: *Workspace, r: *const search.Results, q: search.Query) void {
     st.files_searched = r.files_searched;
     st.truncated = r.truncated;
     st.regex_error = r.regex_error;
+    st.emptied_by = .none;
     if (st.tree) |*t| t.deinit();
     st.tree = search_tree.build(gpa, r.text, r.matches) catch null;
     gpa.free(st.text);
@@ -199,6 +204,8 @@ fn summaryText(st: *const State, buf: []u8) []const u8 {
     if (st.searching) return "Searching…";
     if (st.regex_error) return "Invalid regular expression";
     const t = st.tree orelse return "";
+    if (t.hits == 0 and st.emptied_by == .replace) return "All results replaced";
+    if (t.hits == 0 and st.emptied_by == .dismiss) return "All results dismissed";
     if (t.hits == 0) return std.fmt.bufPrint(buf, "No results found for '{s}' ({d} files searched)", .{ st.pattern, st.files_searched }) catch "No results found";
     return std.fmt.bufPrint(buf, "{d} result{s} in {d} file{s} \u{2014} {d} ms{s}", .{
         t.hits,
@@ -436,6 +443,7 @@ fn dismiss(ws: *Workspace, sel: Sel) void {
     st.tree = t;
     if (t.files.len == 0) {
         st.sel = null;
+        st.emptied_by = .dismiss;
         return;
     }
     const fi = @min(sel.file, @as(u32, @intCast(t.files.len - 1)));
@@ -608,9 +616,11 @@ fn replaceAll(ws: *Workspace) void {
     ws.openList(.list, label, replace_tag, &.{ "Replace All", "Cancel" });
 }
 
-pub fn confirmPrompt(ws: *Workspace, tag: u32, input: []const u8) bool {
+/// The Replace All confirmation (a quick panel list); false if the tag isn't ours.
+pub fn confirmList(ws: *Workspace, tag: u32, item: ?quick_panel.Item) bool {
     if (tag != replace_tag) return false;
-    if (std.mem.eql(u8, input, "Replace All")) if (ws.panel.search.tree) |t| replaceFiles(ws, 0, t.files.len);
+    const choice = (item orelse return true).payload.value;
+    if (choice == 0) if (ws.panel.search.tree) |t| replaceFiles(ws, 0, t.files.len);
     return true;
 }
 
@@ -671,7 +681,10 @@ fn replaceFiles(ws: *Workspace, from: usize, to: usize) void {
         t.dismissFile(fi);
     }
     st.tree = t;
-    if (t.files.len == 0) st.sel = null else if (st.sel) |s| {
+    if (t.files.len == 0) {
+        st.sel = null;
+        st.emptied_by = .replace;
+    } else if (st.sel) |s| {
         if (s.file >= t.files.len) st.sel = .{ .file = @intCast(t.files.len - 1) };
     }
     ws.focus = .editor;

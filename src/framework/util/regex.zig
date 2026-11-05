@@ -975,3 +975,44 @@ test "regex search finds what the VM finds at every position" {
         }
     };
 }
+
+test "regex anchors are line based and classes take escapes" {
+    try expectMatch("^b", "a\nb", "b");
+    try expectMatch("a$", "a\nb", "a");
+    try expectMatch("[\\d\\s]+", "ab 12 3cd", " 12 3");
+    try expectMatch("[a-c\\-]+", "xx-a-cz", "-a-c");
+    try expectMatch("x{1,2}?", "xxx", "x");
+    try expectMatch("(foo|bar)+", "xfoobarfoox", "foobarfoo");
+    try expectMatch("\\w+\\.zig", "src/main.zig", "main.zig");
+}
+
+test "regex case folding reaches classes, groups and alternation" {
+    var re = try Regex.compile(std.testing.allocator, "(foo|bar)[a-c]+", .{ .case_insensitive = true });
+    defer re.deinit();
+    const text = "xx FOOBAC yy";
+    const m = re.search(text, 0).?;
+    try std.testing.expectEqualStrings("FOOBAC", text[m.start..m.end]);
+    try std.testing.expectEqualStrings("FOO", text[m.groups[0].?[0]..m.groups[0].?[1]]);
+}
+
+test "regex rejects patterns that can't compile" {
+    for ([_][]const u8{ "(", "(ab", "[a-", "[abc", "[]", "a)", "(?", "\\" }) |bad| {
+        if (Regex.compile(std.testing.allocator, bad, .{})) |*re| {
+            var r = re.*;
+            r.deinit();
+            return error.TestExpectedError;
+        } else |_| {}
+    }
+}
+
+test "escape makes a pattern that matches the text literally" {
+    const literal = "a.b*c(d)[e]";
+    const pattern = try escape(std.testing.allocator, literal);
+    defer std.testing.allocator.free(pattern);
+    var re = try Regex.compile(std.testing.allocator, pattern, .{});
+    defer re.deinit();
+    const text = "xx a.b*c(d)[e] yy";
+    const m = re.search(text, 0).?;
+    try std.testing.expectEqualStrings(literal, text[m.start..m.end]);
+    try std.testing.expect(re.search("aXb*c(d)[e]", 0) == null);
+}

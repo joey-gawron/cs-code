@@ -449,6 +449,26 @@ pub fn collectFiles(alloc: Allocator, gpa: Allocator, io: Io, root: []const u8, 
     }
 }
 
+/// Runs one search on the calling thread, without the executor: the files
+/// and folders are searched as `Job.search` does on its worker.
+pub fn searchOnce(gpa: Allocator, io: Io, query: Query, roots: []const []const u8, files: []const []const u8, where: *const Where, overlays: []const Overlay) !Results {
+    var job: Job = .{
+        .gpa = gpa,
+        .io = io,
+        .executor = undefined,
+        .arena = .init(gpa),
+        .query = query,
+        .roots = roots,
+        .files = files,
+        .where = where.*,
+        .overlays = overlays,
+        .ctx = undefined,
+        .done = undefined,
+    };
+    defer job.arena.deinit();
+    return job.search();
+}
+
 // ---- Parsing results text (for jumping to a result) -----------------------------
 
 pub const ResultLine = struct { line_number: u32, is_match: bool, text_start: usize };
@@ -588,4 +608,177 @@ test "a search skips a FIFO instead of waiting for a writer" {
     thread.join();
     try std.testing.expect(!blocked);
     try std.testing.expectEqual(@as(usize, 1), results.?.files_matched);
+}
+
+const TestTree = struct {
+    tmp: std.testing.TmpDir,
+    root: []u8,
+
+    fn init(files: []const [2][]const u8) !TestTree {
+        const io = std.testing.io;
+        var tmp = std.testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        for (files) |f| {
+            if (std.fs.path.dirname(f[0])) |d| try tmp.dir.createDirPath(io, d);
+            try tmp.dir.writeFile(io, .{ .sub_path = f[0], .data = f[1] });
+        }
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const root = try std.testing.allocator.dupe(u8, buf[0..try tmp.dir.realPath(io, &buf)]);
+        return .{ .tmp = tmp, .root = root };
+    }
+
+    fn deinit(self: *TestTree) void {
+        std.testing.allocator.free(self.root);
+        self.tmp.cleanup();
+    }
+
+    fn run(self: *const TestTree, query: Query, where_text: []const u8, overlays: []const Overlay) !Results {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const where = try Where.parse(arena.allocator(), where_text, null);
+        return searchOnce(std.testing.allocator, std.testing.io, query, &.{self.root}, &.{}, &where, overlays);
+    }
+};
+
+fn matchedTexts(gpa: Allocator, r: Results) ![][]const u8 {
+    const out = try gpa.alloc([]const u8, r.matches.len);
+    for (r.matches, out) |m, *o| o.* = r.text[m[0]..m[1]];
+    return out;
+}
+
+test "a search is case insensitive unless asked, and whole word on request" {
+    const gpa = std.testing.allocator;
+    var t = try TestTree.init(&.{.{ "a.txt", "Foo foo FOO food foobar\nbarfoo foo_x\n" }});
+    defer t.deinit();
+    {
+        var r = try t.run(.{ .pattern = "foo" }, "", &.{});
+        defer r.deinit();
+        try std.testing.expectEqual(@as(usize, 7), r.matches.len);
+        const texts = try matchedTexts(gpa, r);
+        defer gpa.free(texts);
+        try std.testing.expectEqualStrings("Foo", texts[0]);
+        try std.testing.expectEqualStrings("FOO", texts[2]);
+    }
+    {
+        var r = try t.run(.{ .pattern = "foo", .case_sensitive = true }, "", &.{});
+        defer r.deinit();
+        try std.testing.expectEqual(@as(usize, 5), r.matches.len);
+    }
+    {
+        // "foo_x" and "foobar" are single words; only the stand-alone ones count.
+        var r = try t.run(.{ .pattern = "foo", .whole_word = true }, "", &.{});
+        defer r.deinit();
+        try std.testing.expectEqual(@as(usize, 3), r.matches.len);
+        try std.testing.expectEqual(@as(usize, 1), r.files_matched);
+    }
+}
+
+test "a regex search reports match ranges inside the results text" {
+    const gpa = std.testing.allocator;
+    var t = try TestTree.init(&.{.{ "a.zig", "const x = 42;\nconst y = 7 + 123;\nno digits\n" }});
+    defer t.deinit();
+    var r = try t.run(.{ .pattern = "\\d+", .regex = true }, "", &.{});
+    defer r.deinit();
+    const texts = try matchedTexts(gpa, r);
+    defer gpa.free(texts);
+    try std.testing.expectEqual(@as(usize, 3), texts.len);
+    try std.testing.expectEqualStrings("42", texts[0]);
+    try std.testing.expectEqualStrings("7", texts[1]);
+    try std.testing.expectEqualStrings("123", texts[2]);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "3 matches across 1 file") != null);
+    // Groups and alternation, and a pattern that doesn't compile.
+    var alt = try t.run(.{ .pattern = "(x|y) =", .regex = true, .case_sensitive = true }, "", &.{});
+    defer alt.deinit();
+    try std.testing.expectEqual(@as(usize, 2), alt.matches.len);
+    var bad = try t.run(.{ .pattern = "(unclosed", .regex = true }, "", &.{});
+    defer bad.deinit();
+    try std.testing.expect(bad.regex_error);
+    try std.testing.expectEqual(@as(usize, 0), bad.matches.len);
+}
+
+test "include and exclude filters, ignore files and binaries decide what is searched" {
+    var t = try TestTree.init(&.{
+        .{ ".gitignore", "ignored.zig\nbuild/\n" },
+        .{ "a.zig", "needle\n" },
+        .{ "b.md", "needle\n" },
+        .{ "ignored.zig", "needle\n" },
+        .{ "sub/c.zig", "needle\n" },
+        .{ "build/d.zig", "needle\n" },
+        .{ "bin.dat", "needle\x00binary\n" },
+    });
+    defer t.deinit();
+    {
+        // Ignored files and binaries never show; the rest do.
+        var r = try t.run(.{ .pattern = "needle" }, "", &.{});
+        defer r.deinit();
+        try std.testing.expectEqual(@as(usize, 3), r.files_matched);
+    }
+    {
+        var r = try t.run(.{ .pattern = "needle" }, "*.zig", &.{});
+        defer r.deinit();
+        try std.testing.expectEqual(@as(usize, 2), r.files_matched);
+    }
+    {
+        var r = try t.run(.{ .pattern = "needle" }, "*.zig, -sub", &.{});
+        defer r.deinit();
+        try std.testing.expectEqual(@as(usize, 1), r.files_matched);
+        try std.testing.expect(std.mem.indexOf(u8, r.text, "a.zig:") != null);
+    }
+}
+
+test "unsaved text is searched instead of the file on disk" {
+    var t = try TestTree.init(&.{.{ "a.txt", "old text\n" }});
+    defer t.deinit();
+    const path = try std.fs.path.join(std.testing.allocator, &.{ t.root, "a.txt" });
+    defer std.testing.allocator.free(path);
+    const overlays = [_]Overlay{.{ .path = path, .text = "brand new text\n" }};
+    var fresh = try t.run(.{ .pattern = "new" }, "", &overlays);
+    defer fresh.deinit();
+    try std.testing.expectEqual(@as(usize, 1), fresh.matches.len);
+    var stale = try t.run(.{ .pattern = "old" }, "", &overlays);
+    defer stale.deinit();
+    try std.testing.expectEqual(@as(usize, 0), stale.matches.len);
+}
+
+test "results show context lines and mark gaps between distant matches" {
+    var lines: std.ArrayList(u8) = .empty;
+    defer lines.deinit(std.testing.allocator);
+    for (1..21) |i| try lines.print(std.testing.allocator, "line {d}{s}\n", .{ i, if (i == 3 or i == 15) " hit" else "" });
+    var t = try TestTree.init(&.{.{ "a.txt", lines.items }});
+    defer t.deinit();
+    var r = try t.run(.{ .pattern = "hit", .context = 1 }, "", &.{});
+    defer r.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "     3: line 3 hit\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "     2  line 2\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "     4  line 4\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "  ..\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "     5  line 5\n") == null);
+    try std.testing.expectEqual(@as(usize, 2), r.matches.len);
+}
+
+test "a cancelled search says so and finds nothing more" {
+    var t = try TestTree.init(&.{.{ "a.txt", "needle\n" }});
+    defer t.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const where = try Where.parse(arena.allocator(), "", null);
+    var job: Job = .{
+        .gpa = std.testing.allocator,
+        .io = std.testing.io,
+        .executor = undefined,
+        .arena = .init(std.testing.allocator),
+        .query = .{ .pattern = "needle" },
+        .roots = &.{t.root},
+        .files = &.{},
+        .where = where,
+        .overlays = &.{},
+        .ctx = undefined,
+        .done = undefined,
+    };
+    defer job.arena.deinit();
+    job.cancel();
+    var r = try job.search();
+    defer r.deinit();
+    try std.testing.expectEqual(@as(usize, 0), r.matches.len);
+    try std.testing.expect(std.mem.indexOf(u8, r.text, "Search cancelled") != null);
 }
