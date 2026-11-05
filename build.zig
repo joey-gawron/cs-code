@@ -82,6 +82,8 @@ pub fn build(b: *std.Build) void {
     const exe_mod = editor.module(b, "src/main.zig", optimize);
     const exe = b.addExecutable(.{ .name = "cs", .root_module = exe_mod });
     b.installArtifact(exe);
+    // The code font, found by fontconfig next to the binary (fontconfig.zig).
+    b.installDirectory(.{ .source_dir = b.path("assets/fonts/fira-code"), .install_dir = .prefix, .install_subdir = "share/cs-zig/fonts" });
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

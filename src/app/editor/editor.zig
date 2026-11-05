@@ -29,7 +29,7 @@ const Rect = scene_mod.Rect;
 const Scanner = movement.Scanner;
 
 pub const Settings = struct {
-    font_family: []const u8 = "monospace",
+    font_family: []const u8 = "Fira Code",
     font_size: f32 = 13,
     ui_font_family: []const u8 = "sans-serif",
     ui_font_size: f32 = 13,

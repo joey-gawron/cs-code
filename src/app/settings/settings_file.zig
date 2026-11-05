@@ -13,15 +13,15 @@ pub const default_contents =
     \\// cs-zig settings. Changes apply when you save this file.
     \\{
     \\    // A scheme name, or "auto" to switch between the light and dark
-    \\    // schemes below by time of day. Built in: Mariana, Breakers, Monokai,
+    \\    // schemes below by time of day. Built in: Visual Studio Dark, Mariana, Breakers, Monokai,
     \\    // Dayfox, Nightfox, Gruvbox Dark, Gruvbox Light, Solarized Dark,
     \\    // Solarized Light. Any .sublime-color-scheme or .tmTheme from an
     \\    // installed Sublime Text, or dropped into ~/.config/cs-zig/schemes,
     \\    // can be named too (installed ones replace the built-in copies).
     \\    // "UI: Select Color Scheme" lists and previews them all.
-    \\    "color_scheme": "Mariana",
+    \\    "color_scheme": "Visual Studio Dark",
     \\    "light_color_scheme": "Dayfox",
-    \\    "dark_color_scheme": "Mariana",
+    \\    "dark_color_scheme": "Visual Studio Dark",
     \\
     \\    // How "auto" decides it's daytime:
     \\    //   "sun"  - sunrise to sunset at "latitude"/"longitude". Without them
@@ -34,7 +34,7 @@ pub const default_contents =
     \\    // "latitude": 37.77,
     \\    // "longitude": -122.42,
     \\
-    \\    "font_face": "monospace",
+    \\    "font_face": "Fira Code",
     \\    "font_size": 13,
     \\    "ui_font_face": "sans-serif",
     \\    "ui_font_size": 13,
@@ -412,5 +412,5 @@ test "default settings parse" {
     defer gpa.free(strict);
     var parsed = try std.json.parseFromSlice(Value, gpa, strict, .{});
     defer parsed.deinit();
-    try std.testing.expectEqualStrings("Mariana", parsed.value.object.get("color_scheme").?.string);
+    try std.testing.expectEqualStrings("Visual Studio Dark", parsed.value.object.get("color_scheme").?.string);
 }
