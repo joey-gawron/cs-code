@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const protocol = @import("protocol.zig");
+const signature = @import("signature.zig");
 const buffer_mod = @import("../text/buffer.zig");
 const Executor = @import("../../framework/util/executor.zig").Executor;
 const platform = @import("../../framework/platform/platform.zig");
@@ -220,6 +221,8 @@ pub const CodeAction = struct {
 
 pub const Result = union(enum) {
     hover: struct { buffer: *Buffer, offset: usize, text: []const u8 },
+    /// The signature under the caret's call; null closes the popup.
+    signature_help: struct { buffer: *Buffer, offset: usize, signature: ?signature.Signature },
     goto: struct { what: Goto, locations: []Location },
     references: struct { locations: []Location },
     completion: struct { buffer: *Buffer, offset: usize, version: u64, items: []CompletionItem },
@@ -351,6 +354,10 @@ pub const Server = struct {
     trigger_chars: [32]u8 = undefined,
     n_trigger: usize = 0,
     hover: bool = false,
+    signature_help: bool = false,
+    /// Characters that open or move the signature popup ("(" and ",").
+    sig_trigger_chars: [8]u8 = undefined,
+    n_sig_trigger: usize = 0,
     definition: bool = false,
     references: bool = false,
     rename: bool = false,
@@ -363,6 +370,10 @@ pub const Server = struct {
 
     pub fn isTrigger(self: *const Server, ch: u8) bool {
         return std.mem.indexOfScalar(u8, self.trigger_chars[0..self.n_trigger], ch) != null;
+    }
+
+    pub fn isSignatureTrigger(self: *const Server, ch: u8) bool {
+        return std.mem.indexOfScalar(u8, self.sig_trigger_chars[0..self.n_sig_trigger], ch) != null;
     }
 
     pub fn state(self: *const Server) ServerState {
@@ -593,7 +604,7 @@ const Doc = struct {
     }
 };
 
-const RequestKind = enum { initialize, hover, goto, references, completion, rename, formatting, code_action, code_action_resolve, execute_command, shutdown };
+const RequestKind = enum { initialize, hover, signature_help, goto, references, completion, rename, formatting, code_action, code_action_resolve, execute_command, shutdown };
 
 const Pending = struct {
     server: *Server,
@@ -979,6 +990,11 @@ pub const Lsp = struct {
                 .textDocument = .{
                     .synchronization = .{ .didSave = true, .dynamicRegistration = false },
                     .hover = .{ .contentFormat = &[_][]const u8{ "plaintext", "markdown" } },
+                    .signatureHelp = .{ .signatureInformation = .{
+                        .documentationFormat = &[_][]const u8{ "plaintext", "markdown" },
+                        .parameterInformation = .{ .labelOffsetSupport = true },
+                        .activeParameterSupport = true,
+                    } },
                     .completion = .{ .completionItem = .{ .snippetSupport = false, .documentationFormat = &[_][]const u8{ "plaintext", "markdown" } } },
                     .definition = .{ .linkSupport = true },
                     .implementation = .{ .linkSupport = true },
@@ -1037,6 +1053,11 @@ pub const Lsp = struct {
     pub fn serverName(self: *Lsp, buffer: *const Buffer) ?[]const u8 {
         const d = self.docFor(buffer) orelse return null;
         return d.server.config.name;
+    }
+
+    pub fn isSignatureTriggerChar(self: *Lsp, buffer: *const Buffer, ch: u8) bool {
+        const d = self.docFor(buffer) orelse return false;
+        return d.server.isSignatureTrigger(ch);
     }
 
     pub fn isTriggerChar(self: *Lsp, buffer: *const Buffer, ch: u8) bool {
@@ -1127,6 +1148,23 @@ pub const Lsp = struct {
         const d = self.docFor(buffer) orelse return false;
         self.flushDoc(d);
         self.request(d.server, .hover, "textDocument/hover", positionParams(d, offset), .{ .server = d.server, .kind = .hover, .buffer = buffer, .offset = offset }) catch return false;
+        return true;
+    }
+
+    /// The signature of the call around `offset`; the answer is a
+    /// `.signature_help` result.
+    pub fn signatureHelp(self: *Lsp, buffer: *Buffer, offset: usize, trigger: ?u8) bool {
+        const d = self.docFor(buffer) orelse return false;
+        if (!d.server.signature_help and d.server.initialized) return false;
+        self.flushDoc(d);
+        const pp = positionParams(d, offset);
+        var trig_buf: [1]u8 = .{trigger orelse 0};
+        const Context = struct { triggerKind: u8, triggerCharacter: ?[]const u8, isRetrigger: bool };
+        self.request(d.server, .signature_help, "textDocument/signatureHelp", .{
+            .textDocument = pp.textDocument,
+            .position = pp.position,
+            .context = Context{ .triggerKind = if (trigger != null) 2 else 1, .triggerCharacter = if (trigger != null) &trig_buf else null, .isRetrigger = false },
+        }, .{ .server = d.server, .kind = .signature_help, .buffer = buffer, .offset = offset }) catch return false;
         return true;
     }
 
@@ -1286,7 +1324,7 @@ pub const Lsp = struct {
                 server.init_failed = true;
                 self.changed();
             }
-            if (p.value.kind != .completion and p.value.kind != .hover) {
+            if (p.value.kind != .completion and p.value.kind != .hover and p.value.kind != .signature_help) {
                 self.sink.onResult(self.sink.ctx, .{ .message = text });
             }
             return;
@@ -1434,6 +1472,17 @@ pub const Lsp = struct {
                     };
                 }
                 server.hover = protocol.getBool(caps, "hoverProvider");
+                if (protocol.get(caps, "signatureHelpProvider")) |sh| {
+                    server.signature_help = true;
+                    for ([_][]const u8{ "triggerCharacters", "retriggerCharacters" }) |key| {
+                        if (protocol.get(sh, key)) |tc| if (tc == .array) {
+                            for (tc.array.items) |t| if (t == .string and t.string.len == 1 and server.n_sig_trigger < server.sig_trigger_chars.len and !server.isSignatureTrigger(t.string[0])) {
+                                server.sig_trigger_chars[server.n_sig_trigger] = t.string[0];
+                                server.n_sig_trigger += 1;
+                            };
+                        };
+                    }
+                }
                 server.definition = protocol.getBool(caps, "definitionProvider");
                 server.references = protocol.getBool(caps, "referencesProvider");
                 server.rename = protocol.getBool(caps, "renameProvider");
@@ -1484,6 +1533,10 @@ pub const Lsp = struct {
                 const trimmed = std.mem.trim(u8, text.items, " \n");
                 if (trimmed.len == 0) return;
                 self.sink.onResult(self.sink.ctx, .{ .hover = .{ .buffer = p.buffer.?, .offset = p.offset, .text = trimmed } });
+            },
+            .signature_help => {
+                const sig = signature.parse(alloc, result) catch null;
+                self.sink.onResult(self.sink.ctx, .{ .signature_help = .{ .buffer = p.buffer.?, .offset = p.offset, .signature = sig } });
             },
             .goto, .references => {
                 var locs: std.ArrayList(Location) = .empty;

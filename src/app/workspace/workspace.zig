@@ -2215,6 +2215,10 @@ pub const Workspace = struct {
                 if (!ok) self.setStatus("No language server for {s}", .{ed.buffer.language.name});
             },
             .lsp_code_actions => lsp_ui.requestCodeActions(self),
+            .lsp_signature_help => if (self.activeEditor()) |ed| {
+                const l = self.lsp orelse return;
+                if (!l.signatureHelp(ed.buffer, ed.primarySelection().head, null)) self.setStatus("No language server for {s}", .{ed.buffer.language.name});
+            },
             .lsp_rename => if (self.activeEditor()) |ed| {
                 var s = @import("../../model/text/movement.zig").Scanner.init(&ed.buffer.rope);
                 const head = ed.primarySelection().head;

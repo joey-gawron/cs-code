@@ -8,6 +8,9 @@ const buffer_mod = @import("../../model/text/buffer.zig");
 const movement = @import("../../model/text/movement.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const lsp_mod = @import("../../model/lsp/lsp.zig");
+const signature_mod = @import("../../model/lsp/signature.zig");
+const problems_ui = @import("problems_ui.zig");
+const panel_ui = @import("panel_ui.zig");
 const protocol = @import("../../model/lsp/protocol.zig");
 const fuzzy = @import("../../model/project/fuzzy.zig");
 const ui = @import("../../framework/ui/ui.zig");
@@ -28,9 +31,12 @@ pub const Completion = struct {
     selected: usize = 0,
     scroll: usize = 0,
     rect: Rect = .{},
+    /// What was typed since `word_start`, for highlighting the matched letters.
+    prefix: std.ArrayList(u8) = .empty,
 
     fn deinit(self: *Completion, gpa: Allocator) void {
         self.filtered.deinit(gpa);
+        self.prefix.deinit(gpa);
         self.arena.deinit();
     }
 };
@@ -45,9 +51,21 @@ pub const Hover = struct {
     mouse: platform.Vec2,
 };
 
+/// The signature of the call the caret is in, above the caret's line.
+pub const Signature = struct {
+    arena: std.heap.ArenaAllocator,
+    editor: *Editor,
+    /// The caret when it opened; it closes when the caret leaves that row.
+    offset: usize,
+    sig: signature_mod.Signature,
+};
+
 pub const State = struct {
     completion: ?Completion = null,
     hover: ?Hover = null,
+    signature: ?Signature = null,
+    /// The panel's Error List view.
+    problems: problems_ui.State = .{},
     matcher: ?fuzzy.Matcher = null,
     /// Mouse rest tracking for hover-on-dwell.
     rest_pos: platform.Vec2 = .{},
@@ -74,6 +92,7 @@ pub const code_action_tag: u32 = 0xC0DE;
 pub fn deinit(ws: *Workspace) void {
     closeCompletion(ws);
     closeHover(ws);
+    closeSignature(ws);
     clearCodeActions(ws);
     if (ws.lsp_state.matcher) |*m| m.deinit();
 }
@@ -81,6 +100,11 @@ pub fn deinit(ws: *Workspace) void {
 pub fn closeCompletion(ws: *Workspace) void {
     if (ws.lsp_state.completion) |*c| c.deinit(ws.gpa);
     ws.lsp_state.completion = null;
+}
+
+pub fn closeSignature(ws: *Workspace) void {
+    if (ws.lsp_state.signature) |*sg| sg.arena.deinit();
+    ws.lsp_state.signature = null;
 }
 
 pub fn closeHover(ws: *Workspace) void {
@@ -103,6 +127,18 @@ pub fn onResult(ctx: *anyopaque, result: lsp_mod.Result) void {
             const text = arena.allocator().dupe(u8, h.text) catch return;
             const at_mouse = ws.lsp_state.rest_requested;
             ws.lsp_state.hover = .{ .arena = arena, .editor = ed, .offset = h.offset, .text = text, .at_mouse = at_mouse, .mouse = ws.lsp_state.rest_pos };
+        },
+        .signature_help => |sh| {
+            const ed = ws.activeEditor() orelse return;
+            if (ed.buffer != sh.buffer or ws.focus != .editor) return;
+            closeSignature(ws);
+            const sig = sh.signature orelse return;
+            var arena = std.heap.ArenaAllocator.init(ws.gpa);
+            const alloc = arena.allocator();
+            var copy = sig;
+            copy.label = alloc.dupe(u8, sig.label) catch return arena.deinit();
+            copy.doc = alloc.dupe(u8, sig.doc) catch return arena.deinit();
+            ws.lsp_state.signature = .{ .arena = arena, .editor = ed, .offset = sh.offset, .sig = copy };
         },
         .goto => |g| {
             const fallback = ws.lsp_state.goto_fallback;
@@ -345,6 +381,8 @@ pub fn refilter(ws: *Workspace) void {
     }
     const prefix = ed.buffer.textRange(ws.gpa, c.word_start, head) catch return;
     defer ws.gpa.free(prefix);
+    c.prefix.clearRetainingCapacity();
+    c.prefix.appendSlice(ws.gpa, prefix) catch {};
     if (ws.lsp_state.matcher == null) ws.lsp_state.matcher = fuzzy.Matcher.init(ws.gpa);
     const m = &ws.lsp_state.matcher.?;
     const Scored = struct { idx: u32, score: i32 };
@@ -394,6 +432,10 @@ fn acceptCompletion(ws: *Workspace) void {
 
 /// Keys while the completion popup is open. Returns true if consumed.
 pub fn completionKey(ws: *Workspace, k: platform.KeyEvent) bool {
+    if (ws.lsp_state.signature != null and k.key == .named and k.key.named == .escape and ws.lsp_state.completion == null) {
+        closeSignature(ws);
+        return true;
+    }
     const c = &(ws.lsp_state.completion orelse return false);
     if (k.key != .named) return false;
     const n = c.filtered.items.len;
@@ -420,6 +462,8 @@ pub fn afterTyping(ws: *Workspace, ed: *Editor, text: []const u8) void {
     if (text.len != 1) return closeCompletion(ws);
     const ch = text[0];
     const head = ed.primarySelection().head;
+    if (ch == ')') closeSignature(ws);
+    if (lsp.isSignatureTriggerChar(ed.buffer, ch)) _ = lsp.signatureHelp(ed.buffer, head, ch);
     if (lsp.isTriggerChar(ed.buffer, ch)) {
         closeCompletion(ws);
         _ = lsp.completion(ed.buffer, head, ch);
@@ -436,24 +480,31 @@ pub fn afterTyping(ws: *Workspace, ed: *Editor, text: []const u8) void {
 
 // ---- Painting ---------------------------------------------------------------------
 
-fn kindLetter(kind: u8) u8 {
-    // LSP CompletionItemKind → a one-letter badge.
+const Badge = struct { letter: u8, color: ui.Color };
+
+/// LSP CompletionItemKind → the one-letter, coloured badge of cs-code's list.
+fn kindBadge(kind: u8) Badge {
+    const Color = ui.Color;
     return switch (kind) {
-        2, 3, 4 => 'f',
-        5, 10 => 'p',
-        6, 21 => 'v',
-        7, 8, 22 => 't',
-        9 => 'm',
-        13, 20 => 'e',
-        14 => 'k',
-        15 => 's',
-        17 => 'F',
-        else => ' ',
+        2, 3, 4 => .{ .letter = 'f', .color = Color.hex(0xb180d7) },
+        5, 10 => .{ .letter = 'p', .color = Color.hex(0x75beff) },
+        6, 21 => .{ .letter = 'v', .color = Color.hex(0x75beff) },
+        7 => .{ .letter = 'C', .color = Color.hex(0xeeb93b) },
+        8 => .{ .letter = 'I', .color = Color.hex(0x75beff) },
+        22 => .{ .letter = 'S', .color = Color.hex(0xeeb93b) },
+        25 => .{ .letter = 'T', .color = Color.hex(0xeeb93b) },
+        9 => .{ .letter = 'm', .color = Color.hex(0xc5c5c5) },
+        13, 20 => .{ .letter = 'E', .color = Color.hex(0xee9d28) },
+        14 => .{ .letter = 'k', .color = Color.hex(0xc5c5c5) },
+        15 => .{ .letter = 's', .color = Color.hex(0xc5c5c5) },
+        17 => .{ .letter = 'F', .color = Color.hex(0xc5c5c5) },
+        else => .{ .letter = 't', .color = Color.hex(0xc5c5c5) },
     };
 }
 
 pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     paintHover(ws, ctx);
+    paintSignature(ws, ctx);
     paintCompletion(ws, ctx);
 }
 
@@ -467,6 +518,20 @@ fn caretAnchor(ed: *Editor, offset: usize) ?platform.Vec2 {
     return .{ .x = x, .y = y };
 }
 
+/// Draws `text` in `base`, the bytes marked in `matched` in `hit`; returns its width.
+fn drawMatched(ctx: *const ui.Ctx, r: Rect, text: []const u8, matched: []const bool, base: ui.Color, hit: ui.Color) f32 {
+    var x = r.x;
+    var i: usize = 0;
+    while (i < text.len) {
+        const is_hit = i < matched.len and matched[i];
+        var j = i + 1;
+        while (j < text.len and ((j < matched.len and matched[j]) == is_hit)) j += 1;
+        x += ctx.label(.{ .x = x, .y = r.y, .w = r.w, .h = r.h }, text[i..j], ctx.fonts.mono, if (is_hit) hit else base);
+        i = j;
+    }
+    return x - r.x;
+}
+
 fn paintCompletion(ws: *Workspace, ctx: *const ui.Ctx) void {
     const c = &(ws.lsp_state.completion orelse return);
     if (ws.activeEditor() != c.editor) return closeCompletion(ws);
@@ -475,7 +540,7 @@ fn paintCompletion(ws: *Workspace, ctx: *const ui.Ctx) void {
     const theme = ctx.theme;
     const row_h: f32 = 24;
     const shown = @min(c.filtered.items.len -| c.scroll, 10);
-    var width: f32 = 280;
+    var width: f32 = 300;
     for (c.filtered.items[c.scroll .. c.scroll + shown]) |idx| {
         const it = c.items[idx];
         width = @max(width, ctx.text.measure(it.label, ctx.fonts.mono) + ctx.text.measure(it.detail[0..@min(it.detail.len, 40)], ctx.fonts.ui_small) + 70);
@@ -488,25 +553,81 @@ fn paintCompletion(ws: *Workspace, ctx: *const ui.Ctx) void {
     const x = @min(anchor.x - 30, ws.size.x - width - 4);
     const box: Rect = .{ .x = @max(4, x), .y = y, .w = width, .h = h };
     c.rect = box;
-    ctx.shadow(box, 5, 10);
-    ctx.scene.quad(box, .{ .color = theme.overlay_background, .border_color = theme.panel_border, .border_width = 1, .radius = 5 });
+    ctx.shadow(box, 3, 8);
+    ctx.scene.quad(box, .{ .color = theme.overlay_background, .border_color = theme.panel_border, .border_width = 1, .radius = 2 });
     ctx.scene.pushClip(box) catch return;
     defer ctx.scene.popClip();
+    const hit_color = ui.Color.hex(0x4fc1ff);
     for (0..shown) |i| {
         const fi = c.scroll + i;
         const it = c.items[c.filtered.items[fi]];
+        const selected = fi == c.selected;
         const r: Rect = .{ .x = box.x + 4, .y = box.y + 4 + @as(f32, @floatFromInt(i)) * row_h, .w = box.w - 8, .h = row_h };
-        if (fi == c.selected) ctx.scene.quad(r, .{ .color = theme.list_selected, .radius = 3 });
-        var letter = [_]u8{kindLetter(it.kind)};
+        if (selected) ctx.scene.quad(r, .{ .color = theme.list_selected, .radius = 0 });
+        const badge_info = kindBadge(it.kind);
+        var letter = [_]u8{badge_info.letter};
         const badge: Rect = .{ .x = r.x + 4, .y = r.y + 4, .w = 16, .h = row_h - 8 };
-        ctx.scene.quad(badge, .{ .color = theme.syntax.function.withAlpha(0.18), .radius = 3 });
-        ctx.labelCentered(badge, &letter, ctx.fonts.ui_small, theme.syntax.function);
-        const lw = ctx.label(.{ .x = r.x + 26, .y = r.y, .w = r.w, .h = r.h }, it.label, ctx.fonts.mono, theme.list_foreground);
+        ctx.scene.quad(badge, .{ .color = badge_info.color.withAlpha(0.22), .border_color = badge_info.color.withAlpha(0.5), .border_width = 1, .radius = 2 });
+        ctx.labelCentered(badge, &letter, ctx.fonts.ui_small, badge_info.color);
+        // The letters the typed prefix matched, in blue.
+        var mask: [96]bool = @splat(false);
+        if (ws.lsp_state.matcher) |*m| if (c.prefix.items.len > 0 and std.mem.eql(u8, it.label, it.filter_text)) {
+            if (m.match(c.prefix.items, it.filter_text, false)) |mt| for (mt.positions) |pos| {
+                if (pos < mask.len) mask[pos] = true;
+            };
+        };
+        const label_fg = if (selected) ui.Color.white else theme.list_foreground;
+        const lw = drawMatched(ctx, .{ .x = r.x + 28, .y = r.y, .w = r.w, .h = r.h }, it.label, &mask, label_fg, if (selected) ui.Color.hex(0xcfeaff) else hit_color);
         if (it.detail.len > 0) {
-            const avail = r.right() - (r.x + 26 + lw + 16) - 6;
-            if (avail > 40) _ = ctx.labelFit(.{ .x = r.right() - avail - 6, .y = r.y, .w = avail, .h = r.h }, it.detail, ctx.fonts.ui_small, theme.list_foreground_dim);
+            const avail = r.right() - (r.x + 28 + lw + 16) - 6;
+            if (avail > 40) _ = ctx.labelFit(.{ .x = r.right() - avail - 6, .y = r.y, .w = avail, .h = r.h }, it.detail, ctx.fonts.ui_small, if (selected) ui.Color.hex(0xd6ecff) else theme.list_foreground_dim);
         }
     }
+}
+
+/// The call's signature in a box above the caret's line, the active
+/// parameter in the accent colour, with "1 of 2" when there are overloads
+/// and the documentation under it.
+fn paintSignature(ws: *Workspace, ctx: *const ui.Ctx) void {
+    const sg = &(ws.lsp_state.signature orelse return);
+    if (ws.activeEditor() != sg.editor) return closeSignature(ws);
+    const ed = sg.editor;
+    // The caret left the line the call was typed on.
+    if (ed.selections.items.len == 0) return;
+    const head = ed.primarySelection().head;
+    if (ed.buffer.offsetToPoint(head).row != ed.buffer.offsetToPoint(sg.offset).row) return closeSignature(ws);
+    const anchor = caretAnchor(ed, head) orelse return;
+    const theme = ctx.theme;
+    const sig = sg.sig;
+    const label_h: f32 = 24;
+    const doc_line = if (sig.doc.len > 0) sig.doc[0 .. std.mem.indexOfScalar(u8, sig.doc, '\n') orelse sig.doc.len] else "";
+    const counter = if (sig.count > 1) std.fmt.allocPrint(ws.gpa, "{d} of {d}", .{ sig.index + 1, sig.count }) catch "" else "";
+    defer if (sig.count > 1 and counter.len > 0) ws.gpa.free(counter);
+    var width = ctx.text.measure(sig.label, ctx.fonts.mono) + 24;
+    if (counter.len > 0) width += ctx.text.measure(counter, ctx.fonts.ui_small) + 16;
+    width = @min(@max(width, 160), ws.size.x - 12);
+    const h = label_h + (if (doc_line.len > 0) @as(f32, 22) else 0) + 6;
+    const lh = ed.lineHeight();
+    var y = anchor.y - h - 4;
+    if (y < 4) y = anchor.y + lh + 4;
+    const box: Rect = .{ .x = @max(4, @min(anchor.x - 8, ws.size.x - width - 4)), .y = y, .w = width, .h = h };
+    ctx.shadow(box, 3, 8);
+    ctx.scene.quad(box, .{ .color = theme.overlay_background, .border_color = theme.panel_border, .border_width = 1, .radius = 2 });
+    ctx.scene.pushClip(box) catch return;
+    defer ctx.scene.popClip();
+    var x = box.x + 10;
+    const line: Rect = .{ .x = x, .y = box.y + 3, .w = box.w, .h = label_h };
+    const parts = [_]struct { text: []const u8, active: bool }{
+        .{ .text = sig.label[0..sig.param_start], .active = false },
+        .{ .text = sig.label[sig.param_start..sig.param_end], .active = true },
+        .{ .text = sig.label[sig.param_end..], .active = false },
+    };
+    for (parts) |part| {
+        if (part.text.len == 0) continue;
+        x += ctx.label(.{ .x = x, .y = line.y, .w = line.w, .h = line.h }, part.text, ctx.fonts.mono, if (part.active) ui.Color.hex(0x4fc1ff) else theme.list_foreground);
+    }
+    if (counter.len > 0) _ = ctx.labelRight(.{ .x = box.x, .y = line.y, .w = box.w - 10, .h = label_h }, counter, ctx.fonts.ui_small, theme.list_foreground_dim);
+    if (doc_line.len > 0) _ = ctx.labelFit(.{ .x = box.x + 10, .y = line.y + label_h - 2, .w = box.w - 20, .h = 22 }, doc_line, ctx.fonts.ui_small, theme.list_foreground_dim);
 }
 
 fn paintHover(ws: *Workspace, ctx: *const ui.Ctx) void {
@@ -584,25 +705,9 @@ pub fn gotoDiagnostic(ws: *Workspace, forward: bool, errors_only: bool) void {
     ws.setStatus("{s}", .{target.message[0..@min(target.message.len, 150)]});
 }
 
-/// The active file's diagnostics in a list ("12:5  message"); picking one
-/// goes there.
+/// LSP: List Diagnostics shows the panel's Error List.
 pub fn listDiagnostics(ws: *Workspace) void {
-    const ed = ws.activeEditor() orelse return;
-    const diags = ed.buffer.diagnostics.items;
-    if (diags.len == 0) {
-        ws.setStatus("No diagnostics", .{});
-        return;
-    }
-    // Language servers only see files.
-    const path = ed.buffer.path orelse return;
-    const o = ws.openLocationPanel("Diagnostics") orelse return;
-    const owned_path = o.arena().dupe(u8, path) catch return;
-    for (diags) |d| {
-        const p = ed.buffer.offsetToPoint(d.start);
-        const line = d.message[0 .. std.mem.indexOfScalar(u8, d.message, '\n') orelse d.message.len];
-        const title = std.fmt.allocPrint(o.arena(), "{d}:{d}  {s}", .{ p.row + 1, p.column + 1, line }) catch continue;
-        o.addItem(.{ .title = title, .detail = severityName(d.severity), .payload = .{ .location = .{ .path = owned_path, .line = p.row, .character = p.column, .utf8 = true } } }) catch break;
-    }
+    panel_ui.showProblems(ws, true);
 }
 
 fn severityName(s: buffer_mod.Severity) []const u8 {

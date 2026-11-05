@@ -38,6 +38,7 @@ const TerminalView = @import("../terminal/terminal_view.zig").TerminalView;
 const editor_view = @import("../editor/editor_view.zig");
 const terminal_ui = @import("terminal_ui.zig");
 const git_status_ui = @import("git_status_ui.zig");
+const problems_ui = @import("problems_ui.zig");
 const context_menu = @import("context_menu.zig");
 const rpath = @import("../../model/remote/path.zig");
 const pty = @import("../../framework/platform/pty.zig");
@@ -59,7 +60,7 @@ const all_row_h: f32 = 28;
 const row_h: f32 = 42;
 const term_row_h: f32 = 26;
 
-pub const View = enum { terminal, source_control, language_servers };
+pub const View = enum { terminal, source_control, language_servers, problems };
 
 /// A clickable part of the panel, from the last paint.
 const Hit = union(enum) {
@@ -191,6 +192,11 @@ pub fn showLanguageServers(ws: *Workspace, server: ?[]const u8, focus: bool) voi
     show(ws, .language_servers, focus);
 }
 
+/// Shows the Error List; `focus` gives it the keyboard.
+pub fn showProblems(ws: *Workspace, focus: bool) void {
+    show(ws, .problems, focus);
+}
+
 pub fn hide(ws: *Workspace) void {
     ws.panel.visible = false;
     if (ws.focus == .panel) ws.focus = .editor;
@@ -215,6 +221,7 @@ pub fn viewEditor(ws: *Workspace) ?*Editor {
         .terminal => null,
         .source_control => if (st.source_control) |p| p.editor else null,
         .language_servers => st.log,
+        .problems => null,
     };
 }
 
@@ -228,6 +235,7 @@ pub fn focusedEditor(ws: *Workspace) ?*Editor {
 /// true if consumed.
 pub fn handleKey(ws: *Workspace, k: platform.KeyEvent) bool {
     const st = &ws.panel;
+    if (st.visible and st.view == .problems) return problems_ui.viewKey(ws, k);
     if (!st.visible or st.view != .source_control) return false;
     return git_status_ui.viewKey(ws, k);
 }
@@ -658,6 +666,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     const header: Rect = .{ .x = r.x, .y = r.y, .w = r.w, .h = header_h };
     scene.fill(header, theme.tabbar_background);
     const tabs = [_]struct { label: []const u8, view: View }{
+        .{ .label = "Error List", .view = .problems },
         .{ .label = "Terminal", .view = .terminal },
         .{ .label = "Source Control", .view = .source_control },
         .{ .label = "Language Servers", .view = .language_servers },
@@ -688,6 +697,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
             &.{ .{ .label = "Run…", .hit = .run_command }, .{ .label = "+", .hit = .new_terminal } },
         .source_control => &.{ .{ .label = "Refresh", .hit = .refresh }, .{ .label = "?", .hit = .git_help } },
         .language_servers => &.{ .{ .label = "Clear", .hit = .clear }, .{ .label = "Restart", .hit = .restart } },
+        .problems => &.{},
     };
     for (buttons) |b| {
         const w = @max(28, ctx.text.measure(b.label, ws.fonts.ui_small) + 16);
@@ -702,6 +712,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
 
     const body: Rect = .{ .x = r.x, .y = header.bottom(), .w = r.w, .h = @max(0, r.h - header_h) };
     switch (st.view) {
+        .problems => problems_ui.paint(ws, ctx, body),
         .terminal => paintTerminals(ws, ctx, body),
         .source_control => if (st.source_control) |p| {
             const ed = p.editor;
@@ -924,6 +935,7 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
         }
         return true;
     };
+    if (st.view == .problems and problems_ui.onMouseDown(ws, m)) return true;
     if (st.log_rect.contains(pos.x, pos.y)) if (st.log) |ed| {
         focusPanel(ws);
         ed.onMouseDown(m);
@@ -958,6 +970,7 @@ pub fn dragEdge(ws: *Workspace, pos: platform.Vec2) void {
 pub fn onScroll(ws: *Workspace, s: platform.ScrollEvent) bool {
     const st = &ws.panel;
     if (!st.visible or !st.rect.contains(s.pos.x, s.pos.y)) return false;
+    if (st.view == .problems) problems_ui.onScroll(ws, s);
     if (st.log_rect.contains(s.pos.x, s.pos.y)) if (st.log) |ed| ed.onScroll(s);
     if (st.scm_rect.contains(s.pos.x, s.pos.y)) if (st.source_control) |p| p.editor.onScroll(s);
     if (st.term_rect.contains(s.pos.x, s.pos.y)) if (activeTerminal(ws)) |tv| tv.wheel(s);
