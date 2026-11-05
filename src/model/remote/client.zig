@@ -56,6 +56,9 @@ pub const Options = struct {
     binaries: []const ssh.Binary = &.{},
     /// The ssh executable (tests substitute one that runs commands locally).
     ssh_program: []const u8 = "ssh",
+    /// An ssh config file to use instead of ~/.ssh/config (`ssh -F`), like
+    /// cs-code's remote.ssh.configFile.
+    config_file: ?[]const u8 = null,
     /// What ssh runs to ask for passwords and host key confirmations
     /// (SSH_ASKPASS: the editor binary, see askpass.zig). Without it, or
     /// when `connect` blocks its caller, ssh runs in BatchMode.
@@ -499,6 +502,7 @@ pub const Connection = struct {
     /// questions to the editor when this attempt can ask (else BatchMode).
     fn sshArgs(self: *Connection, alloc: Allocator, argv: *std.ArrayList([]const u8)) !?std.process.Environ.Map {
         try argv.append(alloc, self.options.ssh_program);
+        if (self.options.config_file) |f| try argv.appendSlice(alloc, &.{ "-F", f });
         try argv.appendSlice(alloc, &ssh.base_args);
         if (self.interactive) if (self.listener) |l| if (self.options.askpass) |program| {
             return try askpass.sshEnviron(alloc, self.io, program, l.path());

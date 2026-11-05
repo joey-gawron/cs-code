@@ -97,13 +97,13 @@ pub fn parseConfig(alloc: Allocator, text: []const u8, hosts: *std.ArrayList([]c
     }
 }
 
-/// Host aliases from ~/.ssh/config and the files it includes (one level of
-/// `Include`, with `*` in the file name). Allocated in `alloc`.
-pub fn configHosts(alloc: Allocator, io: Io, home: []const u8) ![]const []const u8 {
+/// Host aliases from ~/.ssh/config (or `config_file`) and the files it
+/// includes (one level of `Include`, with `*` in the file name). Allocated in `alloc`.
+pub fn configHosts(alloc: Allocator, io: Io, home: []const u8, config_file: ?[]const u8) ![]const []const u8 {
     var hosts: std.ArrayList([]const u8) = .empty;
     var includes: std.ArrayList([]const u8) = .empty;
     const ssh_dir = try std.fs.path.join(alloc, &.{ home, ".ssh" });
-    const main_path = try std.fs.path.join(alloc, &.{ ssh_dir, "config" });
+    const main_path = config_file orelse try std.fs.path.join(alloc, &.{ ssh_dir, "config" });
     const text = Io.Dir.cwd().readFileAlloc(io, main_path, alloc, .limited(1 << 20)) catch return hosts.items;
     try parseConfig(alloc, text, &hosts, &includes);
     var ignored: std.ArrayList([]const u8) = .empty;

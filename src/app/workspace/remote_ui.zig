@@ -127,6 +127,12 @@ fn findBinaries(ws: *Workspace) void {
     }
 }
 
+/// $CS_ZIG_SSH_CONFIG: an ssh config file used instead of ~/.ssh/config.
+fn sshConfigFile() ?[]const u8 {
+    const f = std.c.getenv("CS_ZIG_SSH_CONFIG") orelse return null;
+    return std.mem.span(f);
+}
+
 fn entryFor(ws: *Workspace, conn: *const Connection) ?*Entry {
     for (ws.remote.entries.items) |*e| if (e.conn == conn) return e;
     return null;
@@ -146,7 +152,7 @@ fn obtain(ws: *Workspace, host: []const u8) !*Connection {
     // ssh: every host becomes this machine (development and tests).
     const local = if (std.c.getenv("CS_ZIG_REMOTE_TRANSPORT")) |t| std.mem.eql(u8, std.mem.span(t), "local") else false;
     const transport: client.Transport = if (local) .{ .subprocess = st.native_server orelse return error.NoServerBinary } else .ssh;
-    const conn = try Connection.create(ws.gpa, ws.io, ws.executor, host, .{ .transport = transport, .binaries = st.binaries.items, .askpass = st.askpass_program });
+    const conn = try Connection.create(ws.gpa, ws.io, ws.executor, host, .{ .transport = transport, .binaries = st.binaries.items, .askpass = st.askpass_program, .config_file = sshConfigFile() });
     errdefer conn.destroy();
     conn.sink = .{ .ctx = ws, .onEvent = onEvent };
     try vfs.register(host, conn.backend());
@@ -459,7 +465,7 @@ pub fn promptConnect(ws: *Workspace) void {
     var arena = std.heap.ArenaAllocator.init(ws.gpa);
     defer arena.deinit();
     const home: []const u8 = if (std.c.getenv("HOME")) |h| std.mem.span(h) else "/";
-    const hosts = ssh.configHosts(arena.allocator(), ws.io, home) catch &.{};
+    const hosts = ssh.configHosts(arena.allocator(), ws.io, home, sshConfigFile()) catch &.{};
     const label = ws.gpa.dupe(u8, "Connect to Host (from ~/.ssh/config, or type user@host):") catch return;
     ws.openList(.list, label, @intFromEnum(PromptKind.connect_host), &.{});
     const o = ws.overlay orelse return;
