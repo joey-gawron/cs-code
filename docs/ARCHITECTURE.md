@@ -61,6 +61,7 @@ Dependency rules (enforced by project references, checked in review):
 | `IRemoteConnectionManager`, `ssh:` file system provider, remote bridges, `IAskpassService` (ssh and git prompts in the GUI) | **Remote** + **Server** (wave 2) |
 | `LineDiff` (Core), `IFileDecorationProvider`, `IQuickDiffProvider`, `ILineBlameProvider` | **Panels.Git** (git CLI engine + Source Control window, `docs/SOURCE-CONTROL.md`) |
 | `IDiffEditorService` (diff tabs) | **Shell**, over the editor's `DiffEditorControl` (`IEditorViewFactory.CreateDiffView`) |
+| `ISyntaxClassificationService` (token kinds: comment / string / prose / code), `ITextSpellChecker` | **Editor** (`SyntaxClassifier`, over its token store); **SpellCheck** (`CsCode.SpellCheck`, Core only: the built-in spell checker, docs/SPELLCHECK.md) |
 
 ## 3. Language features: one registry, bridged when remote
 

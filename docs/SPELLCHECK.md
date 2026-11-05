@@ -25,6 +25,9 @@ Contents: [1 Using it](#1-using-it) · [2 Design](#2-design) · [3 Dictionaries 
   unknown words (`3+` when the file hit `cSpell.maxNumberOfProblems`), `$(circle-slash) Spell` when it is not checked (spell checking off, a
   language not enabled, an ignored path, a large file); the tooltip says which, and lists what could not be used (a YAML config, a bad pattern).
   A click runs **Toggle Spell Checking**.
+* **The Source Control commit message box** is checked too (as prose, language id `scminput`, cspell's for that box): misspelt words are
+  underlined 300 ms after typing stops, and right-clicking one offers its replacements, Add to User Dictionary, Cut, Copy and Paste
+  (docs/SOURCE-CONTROL.md). A commit message opened in an editor (`git-commit`) is a document like any other.
 * **In-document directives** (cspell's, in any comment): `cspell:ignore w1 w2` and `cspell:words w1 w2` accept words in this file,
   `cspell:flagWords w` forbids one, `cspell:disable` ... `cspell:enable` stop checking for the lines between, `cspell:disable-next-line`
   and `cspell:disable-line` for one line. The prefixes `cSpell:`, `spell-checker:` and `spellchecker:` work too.
@@ -33,6 +36,7 @@ Contents: [1 Using it](#1-using-it) · [2 Design](#2-design) · [3 Dictionaries 
 
 ```
  CsCode.Core          ISyntaxClassificationService (new, additive): per line, runs of Code / Comment / String / Text / Ignored
+                      ITextSpellChecker (new, additive): free text (the commit message box) through the same checker
  CsCode.Editor        SyntaxClassifier: that service over the token store (TextMate rows, and tree-sitter rows mapped onto TextMate scopes)
  CsCode.SpellCheck    (Core + WeCantSpell.Hunspell only, no Avalonia)
    SpellCheckService  documents → debounced, versioned checks on its own lane → IDiagnosticService (owner "cSpell"); IMemoryTrimmable
@@ -41,6 +45,7 @@ Contents: [1 Using it](#1-using-it) · [2 Design](#2-design) · [3 Dictionaries 
    SpellSettingsLoader cSpell.* from every settings file + the project's cspell.json → immutable SpellSettings
    SpellCheckHost     ICodeActionProvider (quick fixes), the cSpell.* commands, the status bar item
  CsCode.Vim           ]s [s z= zg zw → the checker's commands (gated on 'spell')
+ CsCode.Panels.Git    CommitMessageSpelling: underlines and a spelling menu over the commit message box (ITextSpellChecker)
  CsCode.App           AddCsCodeSpellCheck(); ShellController starts SpellCheckHost
 ```
 
@@ -85,7 +90,7 @@ editor opened in large-file mode for a long line; only the first `cSpell.checkLi
 |---|---|---|
 | **Hunspell engine**: WeCantSpell.Hunspell 7.0.1 (aarondandy), a managed C# port of Hunspell, NuGet, used unmodified | `Directory.Packages.props`, SPELL CHECK section | MPL-1.1 / GPL-2.0 / LGPL-2.1 tri-licence, as Hunspell; CsCode uses it under **MPL-1.1** (file-level copyleft: the package's own files stay under the MPL and their source is public at <https://github.com/aarondandy/WeCantSpell.Hunspell>; CsCode's files are not affected). Not permissive in the MIT sense; chosen because it is the managed Hunspell the brief names, has no native code, and is used as a binary dependency only. Recorded in THIRD-PARTY-NOTICES.md |
 | **en_US dictionary** (bundled, embedded in `CsCode.SpellCheck.dll`): LibreOffice's `en/en_US.dic` + `.aff`, "en_US Hunspell Dictionary Version 2020.12.07" (SCOWL size 60, 49,568 entries), fetched from <https://github.com/LibreOffice/dictionaries> | `src/CsCode.SpellCheck/Dictionaries/` with its `README_en_US.txt` verbatim | SCOWL's permissive licence (Kevin Atkinson and the listed authors: use, copy, modify, distribute and sell with the notice kept), the affix file under Geoff Kuenning's BSD licence (Ispell), plus public-domain sources; the README's notices travel with the files and in THIRD-PARTY-NOTICES.md |
-| **Software terms** (bundled): CsCode's own list of about 1,100 programming words and language keywords (`async`, `config`, `json`, `nullable`, `enum`, `stdout`, `regex`, `constexpr`, `kwargs`, POSIX calls and signals, well-known tools) | `Dictionaries/software-terms.txt` | CsCode's own |
+| **Software terms** (bundled): CsCode's own list of about 1,150 programming words and language keywords (`async`, `config`, `json`, `nullable`, `enum`, `stdout`, `regex`, `constexpr`, `kwargs`, POSIX calls and signals, well-known tools) | `Dictionaries/software-terms.txt` | CsCode's own |
 | More languages | `{UserDataDir}/dictionaries/*.dic` + `.aff` (watched: a pair dropped in is used at once) | whatever the dictionary's own |
 
 `cSpell.language` picks the dictionaries, comma separated: `"en"` is the bundled en_US (cspell's meaning), `"en-GB"` / `"en_GB"` a file
@@ -187,8 +192,11 @@ not counted) with the bundled en_US and the software terms, every word reported 
 | Dictionaries | Comment words checked | Flagged | Distinct | Per 1,000 words |
 |---|---:|---:|---:|---:|
 | en_US + software terms, before the terms were extended from this measurement | 184,643 | 3,076 | 817 | 16.7 |
-| **en_US + software terms (shipped)** | MEASURE_WORDS | MEASURE_US | MEASURE_US_DISTINCT | MEASURE_US_RATE |
-| en_US + LibreOffice en_GB + software terms | MEASURE_WORDS | MEASURE_GB | MEASURE_GB_DISTINCT | MEASURE_GB_RATE |
+| **en_US + software terms (shipped)** | 185,028 | 1,899 | 492 | 10.3 |
+| en_US + LibreOffice en_GB + software terms | 185,028 | 1,160 | 330 | 6.3 |
+
+(Last run: 881 files, 195,599 lines, 27,560 of them with a comment; tokenising them took 29 s, checking their comments 0.2 s. The first row
+was measured on the same tree before this module's own files were added, 878 files.)
 
 What remains: this repository is written in **British English** (`colour`, `behaviour`, `tokenised`, `honour`, `centre`, `grey`: the
 difference between the two rows); **names of this project and its tools** (`cscode`, `Avalonia`, `netcoredbg`, `debugpy`, `basedpyright`,
@@ -206,8 +214,13 @@ The test fails above 15 per 1,000 words with en_US alone.
 dotnet test tests/CsCode.SpellCheck.Tests                                                  # engine, service, settings over the real Platform
 dotnet test tests/CsCode.Editor.Tests --filter "FullyQualifiedName~SpellCheck"             # the editor's real TextMate tokens; §8's measurement
 dotnet test tests/CsCode.Vim.Tests --filter "FullyQualifiedName~SpellKeyTests"            # ]s [s z= zg zw and 'spell'
+dotnet test tests/CsCode.Panels.Git.Tests --filter "FullyQualifiedName~CommitMessageSpellingTests"   # the commit message box
 dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~SpellCheckRealAppTests" --blame-hang-timeout 5m   # the real app
 ```
+
+Last runs (arm64 Mac): CsCode.SpellCheck.Tests 93 passed; the editor's `SpellCheck` filter 5 passed (the source-tree measurement ~30 s of
+it); `SpellKeyTests` 4 passed (the whole CsCode.Vim.Tests: 3,493 passed, 11 skipped); `CommitMessageSpellingTests` 3 passed (the whole
+CsCode.Panels.Git.Tests: 64 passed, 1 skipped); `SpellCheckRealAppTests` 3 passed.
 
 * `WordSplitterTests`: identifier splitting (camel, Pascal, snake, kebab, digits, acronyms, `URLs`), URLs, e-mail, paths, hex, scripts,
   case-matched suggestions. `DictionaryTests`: en_US, possessives, plural acronyms, the software terms, the typo guard, suggestions in the
@@ -230,9 +243,11 @@ dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~SpellCheckRealAp
 * `SpellCheckTokenTests` (the editor's real tokens): C# (not the namespace, the doc-comment attribute values, an identifier, an interpolated
   `nameof`, a path; yes a regex-looking string argument), Python (docstrings, comments, f-strings without their braces), Markdown (prose, not
   code spans, fences' code or links), and a re-check when tokens arrive. `SpellCheckSourceTreeTests`: §8.
-* `SpellKeyTests` (Vim): the keys, counts, E756 and `:set spell`, the `vim.spell` default. `SpellCheckRealAppTests` (the real app, Vim on):
-  squiggles from real tokens, the status bar, `]s ]s [s`, `z=` replacing the word, `zg` writing settings.json; with Vim off, Ctrl+. listing
-  and applying a spelling fix.
+* `SpellKeyTests` (Vim): the keys, counts, E756 and `:set spell`, the `vim.spell` default. `CommitMessageSpellingTests` (headless): the
+  underlines (two lines, gone while the text differs from the checked one), the menu's replacement and Add to User Dictionary, nothing
+  checked off-window. `SpellCheckServiceTests.Free_text_is_checked_whole_with_offsets_into_it`: the `ITextSpellChecker` behind the box.
+  `SpellCheckRealAppTests` (the real app, Vim on): squiggles from real tokens, the status bar, `]s ]s [s`, `z=` replacing the word, `zg`
+  writing settings.json, Ctrl+. listing and applying a spelling fix, the Source Control window's message box getting the spelling layer.
 
 ## 10. Limits
 
@@ -249,6 +264,7 @@ dotnet test tests/CsCode.App.Tests --filter "FullyQualifiedName~SpellCheckRealAp
 * Words of scripts other than Latin, Greek and Cyrillic are skipped.
 * Neovim's `@spell` / `@nospell` captures are not used (§2). reStructuredText under tree-sitter has no root scope, so only its comments
   and strings would be read (it is not a prose language by default).
-* **Spell check in the Source Control commit message box: not done** (it is a plain text box, not an editor; the SHOULD item was left for
-  lack of time). A commit message opened as a `git-commit` document in an editor is checked as prose.
+* The commit message box (§1) is a plain text box: its underlines are drawn by a layer over it, so they follow the box's layout and scrolling
+  but not its selection highlight, and its spelling menu replaces the box's own menu only over a misspelt word. Its words have no quick-fix
+  lightbulb, no Error List entries and no Ignore in This File (there is no file).
 * The repository has no `cspell.json` of its own; the project words of §8 would go there.

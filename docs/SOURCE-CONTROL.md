@@ -110,6 +110,9 @@ Visual Studio's Git Changes / VS Code's Source Control view in one:
   `git.commit` when `scmInputFocus`), **Amend** (fills the box with the last message; an empty message amends with `--no-edit`). With nothing staged
   the button says **Commit All** and asks *"There are no staged changes to commit. Stage all your changes and commit them directly?"* (Yes /
   Always (sets `git.enableSmartCommit`) / Cancel). The message goes through stdin (`commit -F - --cleanup=strip`).
+* Spelling in the commit box (docs/SPELLCHECK.md): with the spell checker composed (`ITextSpellChecker`), misspelt words are underlined 300 ms after
+  typing stops (`Views/CommitMessageSpelling.cs`, a layer over the plain text box; language id `scminput`), and right-clicking one offers its
+  replacements and Add to User Dictionary with Cut / Copy / Paste (`CommitMessageSpellingTests`).
 * One virtualised list: **Merge Changes**, **Staged Changes**, **Changes** group rows (count badge; Unstage All, Discard All, Stage All buttons) and
   file rows (name in the git colour, folder dimmed, letter; Open File, Discard, Stage/Unstage buttons). Click opens the change in the diff editor,
   double-click opens the file. Keys: Enter (open changes), Space (stage/unstage), Delete (discard). Context menu: Open Changes, Open File,
