@@ -425,6 +425,30 @@ public class SpellCheckServiceTests
         Assert.Contains(h.Commands.All, c => c.Id == SpellCheckHost.EnableForWorkspace && c.Title == "Enable Spell Checking for Workspace");
     }
 
+    [Fact]
+    public async Task Free_text_is_checked_whole_with_offsets_into_it()
+    {
+        using var h = new SpellHarness();
+        await h.Service.SettingsReady;
+        ITextSpellChecker checker = new TextSpellChecker(h.Service, h.Config);
+        const string message = "Fix the wierd bug\r\n\r\nIt is definately fixed.";
+        var issues = await checker.CheckTextAsync(message, "scminput");
+        Assert.Equal([(8, 5, "wierd"), (27, 10, "definately")], issues.Select(i => (i.Start, i.Length, i.Word)));
+        Assert.Equal("wierd", message.Substring(issues[0].Start, issues[0].Length));
+        Assert.Equal(["weird", "wired", "wider", "wield"], (await checker.SuggestAsync("wierd")).Take(4));
+
+        var changed = 0;
+        using var subscription = checker.Changed.Subscribe(_ => Interlocked.Increment(ref changed));
+        await checker.AddToUserDictionaryAsync("wierd");
+        Assert.Equal(["wierd"], h.Config.Get<string[]>(SpellSettingsLoader.Words)!);
+        Assert.True(changed > 0);
+        Assert.Equal(["definately"], (await checker.CheckTextAsync(message, "scminput")).Select(i => i.Word));
+
+        h.Config.Set(SpellSettingsLoader.EnabledFileTypes, new Dictionary<string, bool> { ["scminput"] = false });
+        await WaitAsync(() => !h.Service.Settings.IsLanguageEnabled("scminput"));
+        Assert.Empty(await checker.CheckTextAsync(message, "scminput"));
+    }
+
     private static string? StatusText(SpellHarness h) => h.Status.Items.FirstOrDefault(i => i.Id == SpellCheckHost.StatusItemId)?.Text;
 
     internal static async Task WaitAsync(Func<bool> condition, int timeoutMs = 10_000)

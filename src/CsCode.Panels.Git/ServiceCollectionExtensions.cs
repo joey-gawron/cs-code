@@ -21,7 +21,8 @@ public sealed class SourceControlToolWindow(GitHost host) : IToolWindow
     public string? ToggleCommandId => GitHost.ShowScm;
     public string? AutoShowWhen => null;
 
-    public Control CreateView(IServiceProvider services) => new SourceControlView(host.CreateViewModel(), host.ReleaseViewModel, services.GetService<IContextKeyService>());
+    public Control CreateView(IServiceProvider services) => new SourceControlView(host.CreateViewModel(), host.ReleaseViewModel, services.GetService<IContextKeyService>(),
+        services.GetService<Core.Languages.ITextSpellChecker>());
 }
 
 public static class ServiceCollectionExtensions
