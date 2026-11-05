@@ -257,6 +257,8 @@ pub const Action = enum {
     git_copy_commit_hash,
     git_status,
     scm_show,
+    scm_graph,
+    scm_timeline,
 
     // Org mode.
     org_agenda,

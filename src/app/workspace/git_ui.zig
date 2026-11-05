@@ -13,6 +13,7 @@ const platform = @import("../../framework/platform/platform.zig");
 const git = @import("../../model/git/git.zig");
 const blame_mod = @import("../../model/git/blame.zig");
 const scm_state = @import("scm_state.zig");
+const scm_ui = @import("scm_ui.zig");
 const quick_diff_mod = @import("../editor/quick_diff.zig");
 const rpath = @import("../../model/remote/path.zig");
 
@@ -234,6 +235,7 @@ fn pollRepos(ws: *Workspace) void {
 
 pub fn tick(ws: *Workspace) void {
     scm_state.tick(ws);
+    scm_ui.tick(ws);
     syncQuickDiffs(ws);
     sync(ws);
     pollRepos(ws);

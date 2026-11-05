@@ -15,6 +15,9 @@ const git = @import("../../model/git/git.zig");
 const status_mod = @import("../../model/git/status.zig");
 const git_ui = @import("git_ui.zig");
 const diff_view = @import("diff_view.zig");
+const graph_view = @import("graph_view.zig");
+const history = @import("../../model/git/history.zig");
+const blame_mod = @import("../../model/git/blame.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const scene_mod = @import("../../framework/gpu/scene.zig");
 const ui = @import("../../framework/ui/ui.zig");
@@ -33,6 +36,8 @@ const option_h: f32 = 24;
 const group_h: f32 = 26;
 const file_h: f32 = 24;
 const min_width: f32 = 300;
+const timeline_head_h: f32 = 26;
+const timeline_row_h: f32 = 40;
 const margin: f32 = 10;
 const accent = Color.hex(0x007acc);
 const accent_hover = Color.hex(0x1a8ad4);
@@ -72,6 +77,8 @@ const What = union(enum) {
     row_open: usize,
     row_discard: usize,
     row_stage: usize,
+    timeline_toggle,
+    timeline_row: usize,
 };
 
 const Hit = struct { rect: Rect, what: What };
@@ -115,6 +122,7 @@ pub const Ui = struct {
     /// What a branch list's items stand for: remote or not.
     branches: std.ArrayList(Branch) = .empty,
     listing: ?*git.Job = null,
+    timeline: Timeline = .{},
 
     pub fn deinitUi(self: *Ui, gpa: Allocator) void {
         self.rows.deinit(gpa);
@@ -126,10 +134,31 @@ pub const Ui = struct {
         }
         self.branches.deinit(gpa);
         if (self.listing) |j| j.detach();
+        self.timeline.deinitTimeline(gpa);
     }
 };
 
 const Branch = struct { name: []u8, remote: []u8 };
+
+/// The commits that changed the active file (the Timeline pane).
+pub const Timeline = struct {
+    open: bool = true,
+    /// The file it is for (absolute), and the status generation it was read under.
+    path: ?[]u8 = null,
+    generation: u32 = std.math.maxInt(u32),
+    log: ?history.Log = null,
+    job: ?*git.Job = null,
+    scroll: f32 = 0,
+    selected: ?usize = null,
+    rect: Rect = .{},
+    list: Rect = .{},
+
+    fn deinitTimeline(self: *Timeline, gpa: Allocator) void {
+        if (self.job) |j| j.detach();
+        if (self.path) |p| gpa.free(p);
+        if (self.log) |*l| l.deinit();
+    }
+};
 
 fn ui_(ws: *Workspace) *Ui {
     return &scm_state.state(ws).ui;
@@ -390,9 +419,12 @@ pub fn paintBody(ws: *Workspace, ctx: *const ui.Ctx) void {
     }
     y += option_h + 4;
 
-    // The list.
-    const list: Rect = .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = @max(0, sb.bottom() - agenda_ui.tab_h - y) };
+    // The changes, and under them the Timeline of the active file.
+    const region: Rect = .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = @max(0, sb.bottom() - agenda_ui.tab_h - y) };
+    const tl_h: f32 = if (region.h < 170) 0 else if (u.timeline.open) std.math.clamp(region.h * 0.45, 110, 320) else timeline_head_h;
+    const list: Rect = .{ .x = region.x, .y = region.y, .w = region.w, .h = region.h - tl_h };
     u.list_rect = list;
+    if (tl_h > 0) paintTimeline(ws, ctx, .{ .x = region.x, .y = region.bottom() - tl_h, .w = region.w, .h = tl_h });
     scene.fill(.{ .x = list.x, .y = list.y - 1, .w = list.w, .h = 1 }, theme.tab_separator);
     scene.pushClip(list) catch return;
     defer scene.popClip();
@@ -515,6 +547,127 @@ fn paintRow(ws: *Workspace, ctx: *const ui.Ctx, row: Row, ri: usize, r: Rect) vo
     if (dir.len > 0 and tail - x - nw > 30) _ = ctx.labelFit(.{ .x = x + nw + 6, .y = r.y, .w = tail - x - nw - 6, .h = r.h }, dir, ws.fonts.ui_small, dim);
 }
 
+// ---- The Timeline ---------------------------------------------------------------------------
+
+/// The active file, when it is one of the repository's.
+fn timelineFile(ws: *Workspace) ?[]const u8 {
+    const root = scm_state.state(ws).root orelse return null;
+    const ed = ws.activeEditor() orelse return null;
+    const path = ed.buffer.path orelse return null;
+    if (path.len <= root.len + 1 or !std.mem.startsWith(u8, path, root) or path[root.len] != '/') return null;
+    return path;
+}
+
+/// Follows the active file, and reads its history again when the repository changed.
+pub fn tick(ws: *Workspace) void {
+    if (!active(ws)) return;
+    const st = scm_state.state(ws);
+    const tl = &st.ui.timeline;
+    if (!tl.open or st.root == null) return;
+    if (timelineFile(ws)) |p| {
+        const same = if (tl.path) |old| std.mem.eql(u8, old, p) else false;
+        if (!same) {
+            if (tl.path) |old| ws.gpa.free(old);
+            tl.path = ws.gpa.dupe(u8, p) catch null;
+            if (tl.log) |*l| l.deinit();
+            tl.log = null;
+            tl.selected = null;
+            tl.scroll = 0;
+            tl.generation = std.math.maxInt(u32);
+            if (tl.job) |j| j.detach();
+            tl.job = null;
+        }
+    }
+    if (tl.path == null or tl.job != null or st.snapshot == null) return;
+    if (tl.generation == st.generation) return;
+    tl.generation = st.generation;
+    const root = st.root.?;
+    const rel = tl.path.?[root.len + 1 ..];
+    tl.job = git.Job.start(git_ui.runner(ws), &.{ "log", "--follow", "-n", "80", "-z", history.log_format, "--", rel }, root, null, null, ws, onTimeline) catch null;
+}
+
+fn onTimeline(ctx: *anyopaque, job: *git.Job) void {
+    const ws: *Workspace = @ptrCast(@alignCast(ctx));
+    defer job.destroy();
+    const tl = &ui_(ws).timeline;
+    tl.job = null;
+    const out = job.output orelse return;
+    if (tl.log) |*l| l.deinit();
+    tl.log = history.parse(ws.gpa, out) catch null;
+    ws.dirty = true;
+}
+
+fn paintTimeline(ws: *Workspace, ctx: *const ui.Ctx, r: Rect) void {
+    const st = scm_state.state(ws);
+    const tl = &st.ui.timeline;
+    const theme = ctx.theme;
+    const scene = ctx.scene;
+    const dim = theme.sidebar_foreground_dim;
+    const fg = theme.sidebar_foreground;
+    tl.rect = r;
+    scene.fill(.{ .x = r.x, .y = r.y, .w = r.w, .h = 1 }, theme.tab_separator);
+    const head: Rect = .{ .x = r.x, .y = r.y + 1, .w = r.w, .h = timeline_head_h - 1 };
+    if (ctx.hovered(head)) scene.fill(head, theme.sidebar_hover);
+    ctx.chevron(r.x + 14, head.y + head.h / 2, tl.open, dim);
+    const tw = ctx.label(.{ .x = r.x + 26, .y = head.y, .w = 120, .h = head.h }, "TIMELINE", ws.fonts.ui_small, fg);
+    if (tl.path) |p| _ = ctx.labelFit(.{ .x = r.x + 26 + tw + 8, .y = head.y, .w = @max(0, r.w - tw - 44), .h = head.h }, std.fs.path.basename(p), ws.fonts.ui_small, dim);
+    addHit(ws, head, .timeline_toggle);
+    tl.list = .{};
+    if (!tl.open) return;
+    const list: Rect = .{ .x = r.x, .y = head.bottom(), .w = r.w, .h = @max(0, r.bottom() - head.bottom()) };
+    tl.list = list;
+    scene.pushClip(list) catch return;
+    defer scene.popClip();
+    const log = tl.log orelse {
+        _ = ctx.label(.{ .x = r.x + 14, .y = list.y + 4, .w = r.w - 28, .h = 22 }, if (tl.path == null) "Open a file to see its history." else "Reading the history\u{2026}", ws.fonts.ui, dim);
+        return;
+    };
+    if (log.commits.len == 0) {
+        _ = ctx.label(.{ .x = r.x + 14, .y = list.y + 4, .w = r.w - 28, .h = 22 }, "No commits touch this file yet.", ws.fonts.ui, dim);
+        return;
+    }
+    const now = blame_mod.unixNow();
+    var y = list.y - tl.scroll;
+    for (log.commits, 0..) |c, i| {
+        defer y += timeline_row_h;
+        if (y + timeline_row_h < list.y or y > list.bottom()) continue;
+        const row: Rect = .{ .x = r.x, .y = y, .w = r.w, .h = timeline_row_h };
+        const hovered = ctx.hovered(row) and list.contains(ctx.mouse.x, ctx.mouse.y);
+        if (tl.selected != null and tl.selected.? == i) scene.fill(row, theme.sidebar_selected) else if (hovered) scene.fill(row, theme.sidebar_hover);
+        addHit(ws, row, .{ .timeline_row = i });
+        // A commit's dot on the line down the left.
+        scene.fill(.{ .x = r.x + 18, .y = y, .w = 1, .h = timeline_row_h }, theme.tab_separator);
+        ctx.dot(r.x + 18.5, y + 14, 3.5, Color.hex(0x3794ff));
+        _ = ctx.labelFit(.{ .x = r.x + 32, .y = y + 3, .w = r.w - 46, .h = 18 }, c.subject, ws.fonts.ui, fg);
+        var buf: [160]u8 = undefined;
+        var age: [48]u8 = undefined;
+        const detail = std.fmt.bufPrint(&buf, "{s}, {s}", .{ c.author, blame_mod.formatRelative(&age, now, c.time) }) catch c.author;
+        _ = ctx.labelFit(.{ .x = r.x + 32, .y = y + 21, .w = r.w - 110, .h = 16 }, detail, ws.fonts.ui_small, dim);
+        _ = ctx.labelRight(.{ .x = r.x, .y = y + 21, .w = r.w - 12, .h = 16 }, c.short(), ws.env.font, dim);
+    }
+}
+
+fn openTimelineRow(ws: *Workspace, index: usize) void {
+    const st = scm_state.state(ws);
+    const tl = &st.ui.timeline;
+    const log = tl.log orelse return;
+    if (index >= log.commits.len) return;
+    const root = st.root orelse return;
+    const path = tl.path orelse return;
+    if (path.len <= root.len + 1) return;
+    tl.selected = index;
+    const c = log.commits[index];
+    graph_view.openCommitFile(ws, c.hash, c.short(), c.parents, .{ .status = 'M', .path = path[root.len + 1 ..] });
+}
+
+/// Brings up the dock with the Timeline open (a command).
+pub fn showTimeline(ws: *Workspace) void {
+    show(ws);
+    const tl = &ui_(ws).timeline;
+    tl.open = true;
+    tl.generation = std.math.maxInt(u32);
+}
+
 // ---- Input ------------------------------------------------------------------------------
 
 fn clampScroll(u: *Ui) void {
@@ -538,6 +691,13 @@ pub fn handleEvent(ws: *Workspace, ev: platform.Event) bool {
         .scroll => |s| {
             if (!shown or ws.overlay != null) return false;
             const u = ui_(ws);
+            if (u.timeline.list.contains(s.pos.x, s.pos.y)) {
+                const tl = &u.timeline;
+                const n: f32 = if (tl.log) |l| @floatFromInt(l.commits.len) else 0;
+                const dy = if (s.unit == .lines) s.delta.y * timeline_row_h else s.delta.y;
+                tl.scroll = std.math.clamp(tl.scroll + dy, 0, @max(0, n * timeline_row_h - tl.list.h));
+                return true;
+            }
             if (!u.list_rect.contains(s.pos.x, s.pos.y)) return false;
             const dy = if (s.unit == .lines) s.delta.y * file_h else s.delta.y;
             u.scroll += dy;
@@ -568,6 +728,7 @@ fn click(ws: *Workspace, m: platform.MouseEvent) bool {
             else => false,
         };
         if (in_list and !u.list_rect.contains(m.pos.x, m.pos.y)) continue;
+        if (h.what == .timeline_row and !u.timeline.list.contains(m.pos.x, m.pos.y)) continue;
         hit = h.what;
         break;
     }
@@ -605,6 +766,11 @@ fn click(ws: *Workspace, m: platform.MouseEvent) bool {
         .row_open => |ri| openRowFile(ws, ri),
         .row_discard => |ri| discardRow(ws, ri),
         .row_stage => |ri| toggleRow(ws, ri),
+        .timeline_toggle => {
+            u.timeline.open = !u.timeline.open;
+            if (u.timeline.open) u.timeline.generation = std.math.maxInt(u32);
+        },
+        .timeline_row => |ti| openTimelineRow(ws, ti),
     }
     return true;
 }
@@ -1127,6 +1293,7 @@ fn openMenu(ws: *Workspace) void {
         "Create Branch\u{2026}",
         "Stash\u{2026}",
         "Pop Latest Stash",
+        "Show Git Graph",
         "Open Git Status (magit)",
     };
     for (items, 0..) |t, i| o.addItem(.{ .title = o.arena().dupe(u8, t) catch continue, .payload = .{ .value = i } }) catch {};
@@ -1150,6 +1317,7 @@ fn menuAction(ws: *Workspace, index: usize) void {
         9 => ws.openPrompt("New branch name", tag_branch_name, ""),
         10 => ws.openPrompt("Stash message (optional)", tag_stash_message, ""),
         11 => run(ws, &.{ "stash", "pop" }, "Popping the stash", "Stash applied", false),
+        12 => graph_view.open(ws),
         else => @import("git_status_ui.zig").open(ws),
     }
 }

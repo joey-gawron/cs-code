@@ -172,7 +172,7 @@ pub fn selectedItem(ws: *Workspace) ?Item {
 // ---- Painting -----------------------------------------------------------------
 
 /// The bottom tab strip, on both tabs.
-const tab_pad: f32 = 22;
+const tab_pad: f32 = 16;
 
 const TabLabel = struct { tab: Tab, text: []const u8 };
 
@@ -195,14 +195,14 @@ pub fn paintTabs(ws: *Workspace, ctx: *const ui.Ctx) void {
     const labels = tabLabels(ws);
     var x = strip.x;
     for (labels) |l| {
-        const w = ctx.text.measure(l.text, ws.fonts.ui) + tab_pad;
+        const w = ctx.text.measure(l.text, ws.fonts.ui_small) + tab_pad;
         const r: Rect = .{ .x = x, .y = strip.y, .w = w, .h = tab_h };
         const active = st.tab == l.tab;
         if (active) {
             scene.fill(.{ .x = r.x, .y = r.y + 1, .w = r.w, .h = r.h - 1 }, theme.sidebar_background);
             scene.fill(.{ .x = r.x, .y = r.y, .w = r.w, .h = 1.5 }, active_border);
         } else if (ctx.hovered(r)) scene.fill(r, theme.tab_hover);
-        ctx.labelCentered(r, l.text, ws.fonts.ui, if (active) theme.tab_active_foreground else theme.tab_inactive_foreground);
+        ctx.labelCentered(r, l.text, ws.fonts.ui_small, if (active) theme.tab_active_foreground else theme.tab_inactive_foreground);
         x += w;
     }
 }
@@ -602,7 +602,7 @@ fn tabClick(ws: *Workspace, m: platform.MouseEvent) bool {
     var edge: f32 = 0;
     st.tab = .scm;
     for (tabLabels(ws)) |l| {
-        edge += ws.env.text.measure(l.text, ws.fonts.ui) + tab_pad;
+        edge += ws.env.text.measure(l.text, ws.fonts.ui_small) + tab_pad;
         if (x < edge) {
             st.tab = l.tab;
             break;

@@ -19,6 +19,7 @@ const Color = @import("../../framework/gpu/scene.zig").Color;
 const theme_mod = @import("../../framework/ui/theme.zig");
 const scm_ui = @import("scm_ui.zig");
 const diff_view = @import("diff_view.zig");
+const graph_view = @import("graph_view.zig");
 
 const Allocator = std.mem.Allocator;
 const Workspace = workspace_mod.Workspace;
@@ -87,6 +88,8 @@ pub const State = struct {
     message: std.ArrayList(u8) = .empty,
     /// The dock's own state (scm_ui.zig).
     ui: scm_ui.Ui = .{},
+    /// The Git Graph's log being read.
+    graph_job: ?*git.Job = null,
     /// Diff tabs being opened: their sides are still being read.
     loaders: std.ArrayList(*diff_view.Loader) = .empty,
 
@@ -113,6 +116,7 @@ pub const State = struct {
 };
 
 pub fn deinit(ws: *Workspace) void {
+    graph_view.cancelOpening(ws);
     diff_view.deinitLoaders(ws);
     ws.git_state.scm.deinitState(ws.gpa);
 }
