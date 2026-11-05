@@ -3291,7 +3291,7 @@ pub const Workspace = struct {
         }
 
         if (settings_ui.statusText(self, &buf)) |t| {
-            _ = ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, t, font, fg);
+            x += ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, t, font, fg) + 20;
         } else if (terminal_ui.statusText(self, &buf)) |t| {
             x += ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, t, font, fg) + 20;
             _ = panel_ui.paintStatusItem(self, ctx, r, r.right() - 14);

@@ -990,7 +990,7 @@ fn paintDropdown(ws: *Workspace, v: *View, ctx: *const ui.Ctx, bounds: Rect) voi
         }
         const hov = dd.hover != null and dd.hover.? == i;
         if (hov) scene.fill(r, theme.list_selected);
-        _ = ctx.labelFit(.{ .x = r.x + 22, .y = r.y, .w = r.w - 30, .h = r.h }, o.label, ctx.fonts.ui, if (hov) ui.Color.hex(0xffffff) else theme.list_foreground);
+        _ = ctx.labelFit(.{ .x = r.x + 22, .y = r.y, .w = r.w - 30, .h = r.h }, o.label, ctx.fonts.ui, theme.list_foreground);
         v.hits.append(v.gpa, .{ .rect = r, .what = .{ .option = i } }) catch {};
     }
 }
