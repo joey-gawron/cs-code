@@ -9,6 +9,7 @@ const platform = @import("../../framework/platform/platform.zig");
 const languages = @import("../../model/syntax/languages.zig");
 const org = @import("../org/org.zig");
 const agenda_mod = @import("../../model/org/agenda.zig");
+const agenda_ui = @import("agenda_ui.zig");
 const date = @import("../../model/org/date.zig");
 const clock = @import("../../model/org/clock.zig");
 const refile_mod = @import("../../model/org/refile.zig");
@@ -627,8 +628,9 @@ fn openLink(ws: *Workspace) void {
 
 // ---- Agenda tab ---------------------------------------------------------------
 
+/// The week, the day or the to-do list in the docked Org Agenda window.
 pub fn openAgenda(ws: *Workspace, view: agenda_mod.View) void {
-    openAgendaQuery(ws, view, "", "");
+    agenda_ui.show(ws, view);
 }
 
 /// The agenda tab (reused if open) showing `view` with `query` (search
@@ -713,7 +715,7 @@ fn configuredAgendaFiles(ws: *Workspace, alloc: Allocator) ?[]const []const u8 {
     return out.items;
 }
 
-fn collectSources(ws: *Workspace, alloc: Allocator) ![]agenda_mod.Source {
+pub fn collectSources(ws: *Workspace, alloc: Allocator) ![]agenda_mod.Source {
     var out: std.ArrayList(agenda_mod.Source) = .empty;
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     if (configuredAgendaFiles(ws, alloc)) |files| {
@@ -868,6 +870,8 @@ fn itemAction(ws: *Workspace, agenda_index: usize, row: u32, action: Action) voi
 /// After an action on an agenda item: back to the agenda, refreshed, on
 /// the same row.
 fn returnToAgenda(ws: *Workspace) void {
+    // An action begun in the docked window: its prompt is answered.
+    agenda_ui.promptDone(ws, true);
     const agenda_ed = ws.org_agenda_return orelse return;
     ws.org_agenda_return = null;
     for (ws.tabs.items, 0..) |t, i| if (t.editor == agenda_ed) {

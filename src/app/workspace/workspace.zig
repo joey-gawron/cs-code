@@ -44,6 +44,7 @@ const TerminalView = @import("../terminal/terminal_view.zig").TerminalView;
 const remote_ui = @import("remote_ui.zig");
 const session_ui = @import("session_ui.zig");
 const page_ui = @import("page_ui.zig");
+const agenda_ui = @import("agenda_ui.zig");
 const vfs = @import("../../model/remote/vfs.zig");
 const rpath = @import("../../model/remote/path.zig");
 
@@ -387,6 +388,8 @@ pub const Workspace = struct {
     remote: remote_ui.State = .{},
     /// The Welcome and New Project pages (page_ui.zig).
     page: page_ui.State = .{},
+    /// The docked Org Agenda and the side bar tab that shows it (agenda_ui.zig).
+    agenda: agenda_ui.State = .{},
     lsp: ?*lsp_mod.Lsp = null,
     lsp_state: lsp_ui.State = .{},
     /// The panel under the editors (terminals, language servers).
@@ -460,6 +463,7 @@ pub const Workspace = struct {
         if (self.session_name) |n| self.gpa.free(n);
         if (self.session_rename_to) |n| self.gpa.free(n);
         page_ui.deinit(self);
+        self.agenda.deinit(self.gpa);
         if (self.project) |p| p.destroy();
         self.sidebar_rows.deinit(self.gpa);
         self.tab_hits.deinit(self.gpa);
@@ -1094,7 +1098,7 @@ pub const Workspace = struct {
     }
 
     /// Shows or hides the side bar, remembered for the next start.
-    fn setSidebarVisible(self: *Workspace, visible: bool) void {
+    pub fn setSidebarVisible(self: *Workspace, visible: bool) void {
         self.sidebar_visible = visible;
         self.saveUiState();
     }
@@ -1811,6 +1815,7 @@ pub const Workspace = struct {
             else => {},
         };
         if (ev == .mouse_down and self.restOfSidebarToggle(ev.mouse_down)) return;
+        if (agenda_ui.handleEvent(self, ev)) return;
         if (page_ui.handleEvent(self, ev)) return;
         if (settings_ui.handleEvent(self, ev)) return;
         if (terminal_ui.handleEvent(self, ev)) return;
@@ -2061,6 +2066,7 @@ pub const Workspace = struct {
                     self.restore();
                     self.closeOverlay();
                     self.org_agenda_return = null;
+            agenda_ui.promptDone(self, false);
                 } else if (self.find_visible) {
                     self.hideFind();
                 } else if (self.panel.visible and (self.focus == .panel or self.panel.view == .language_servers)) {
@@ -2557,6 +2563,7 @@ pub const Workspace = struct {
             self.restore();
             self.closeOverlay();
             self.org_agenda_return = null;
+            agenda_ui.promptDone(self, false);
             return;
         }
 
@@ -2755,7 +2762,7 @@ pub const Workspace = struct {
         if (self.sidebar_visible and self.sidebar_rect.contains(x, y)) {
             const dy = if (s.unit == .lines) s.delta.y * sidebar_row_h * 3 else s.delta.y;
             const content = @as(f32, @floatFromInt(self.sidebar_rows.items.len + 1)) * sidebar_row_h + sidebar_header_h;
-            self.sidebar_scroll = std.math.clamp(self.sidebar_scroll + dy, 0, @max(0, content - self.sidebar_rect.h + sidebar_row_h));
+            self.sidebar_scroll = std.math.clamp(self.sidebar_scroll + dy, 0, @max(0, content - self.sidebar_rect.h + sidebar_row_h + agenda_ui.tab_h));
             return;
         }
         if (panel_ui.onScroll(self, s)) return;
@@ -3170,7 +3177,8 @@ pub const Workspace = struct {
         if (ctx.hovered(close)) scene.quad(close, .{ .color = theme.sidebar_hover, .radius = 3 });
         ctx.closeIcon(close.x + close.w / 2, close.y + close.h / 2, 8, theme.sidebar_foreground);
         const title_y = sb.y;
-        _ = ctx.label(.{ .x = sb.x + 8, .y = title_y, .w = 120, .h = 30 }, if (self.project != null) "Explorer" else "Open Files", self.fonts.ui, theme.sidebar_foreground);
+        defer agenda_ui.paintTabs(self, ctx);
+        _ = ctx.label(.{ .x = sb.x + 8, .y = title_y, .w = 120, .h = 30 }, if (self.agenda.tab == .agenda) "Org Agenda" else if (self.project != null) "Explorer" else "Open Files", self.fonts.ui, theme.sidebar_foreground);
         {
             const cy = title_y + 15;
             var gx = close.x - 14;
@@ -3182,6 +3190,7 @@ pub const Workspace = struct {
             ctx.chevron(gx, cy, true, theme.sidebar_foreground);
         }
         const heading_w = @max(0, close.x - 4 - (sb.x + 16));
+        if (self.agenda.tab == .agenda) return agenda_ui.paintBody(self, ctx);
         const p = self.project orelse {
             var y = sb.y + 34;
             const active_ed = self.activeEditor();
