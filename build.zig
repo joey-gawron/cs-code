@@ -79,7 +79,7 @@ pub fn build(b: *std.Build) void {
     }
     editor.c = translate_c.createModule();
 
-    const exe_mod = editor.module(b, "src/main.zig", optimize);
+    const exe_mod = editor.module(b, "src/main.zig", optimize, false);
     const exe = b.addExecutable(.{ .name = "cs", .root_module = exe_mod });
     b.installArtifact(exe);
     // The code font, found by fontconfig next to the binary (fontconfig.zig).
@@ -174,6 +174,30 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(core_tests).step);
     test_step.dependOn(&layers_run.step);
 
+    // Performance tests (src/perf_tests.zig): the memory and complexity
+    // claims of docs/MEMORY.md as allocation and byte budgets, on the
+    // profile's 100 MiB log and 20 MiB one-line JSON. A binary of their own,
+    // so `zig build test` runs them beside the other tests; the filter keeps
+    // the tests of the files they import from running twice. LLVM builds it
+    // even in Debug: its vector code runs the passes over 100 MiB about ten
+    // times as fast as the self-hosted backend's. `zig build perf` builds
+    // them in ReleaseFast with build_options.perf, which also checks budgets
+    // of CPU time and prints the times.
+    const perf_filters: []const []const u8 = &.{"perf: "};
+    const perf_mod = editor.module(b, "src/perf_tests.zig", optimize, false);
+    perf_mod.addImport("fixtures", fixtures_mod);
+    const perf_tests = b.addTest(.{ .name = "perf", .root_module = perf_mod, .filters = perf_filters, .use_llvm = true });
+    test_step.dependOn(&b.addRunArtifact(perf_tests).step);
+    const perf_release_mod = editor.module(b, "src/perf_tests.zig", .fast, true);
+    perf_release_mod.addImport("fixtures", fixtures_mod);
+    const perf_release = b.addTest(.{ .name = "perf", .root_module = perf_release_mod, .filters = perf_filters });
+    // Run as a plain command, outside the build runner's test protocol, so
+    // the times show as they are measured.
+    const perf_run = std.Build.Step.Run.create(b, "run perf tests");
+    perf_run.addArtifactArg(perf_release);
+    perf_run.stdio = .inherit;
+    b.step("perf", "Run the performance tests in ReleaseFast, with time budgets").dependOn(&perf_run.step);
+
     // Remote tests: protocol units plus client <-> cs-zig-server integration
     // (the server runs as a local subprocess instead of over ssh). Linux only, like the server.
     if (!macos) {
@@ -219,11 +243,11 @@ const Editor = struct {
     // macOS.
     sdk: ?[]const u8 = null,
 
-    fn module(e: Editor, b: *std.Build, root: []const u8, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+    fn module(e: Editor, b: *std.Build, root: []const u8, optimize: std.builtin.OptimizeMode, perf: bool) *std.Build.Module {
         const options = b.addOptions();
         options.addOption([]const u8, "grammar_dir", e.grammar_dir);
         options.addOption(bool, "toplevel_icon", e.toplevel_icon_source != null);
-        options.addOption(bool, "perf", false);
+        options.addOption(bool, "perf", perf);
 
         const mod = b.createModule(.{
             .root_source_file = b.path(root),
