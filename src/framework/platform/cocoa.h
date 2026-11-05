@@ -95,6 +95,11 @@ void je_set_clipboard(const char *text, size_t len);
 /// malloc'd UTF-8 (free with free()), or NULL when the clipboard holds no text.
 char *je_get_clipboard(size_t *len);
 
+/// The system's choose-a-folder panel (blocks until it closes), starting in
+/// `start` when that is not empty. malloc'd absolute path (free with free()),
+/// or NULL when the user cancelled.
+char *je_pick_folder(const char *start, const char *title, size_t *len);
+
 /// Files Finder or the Dock asked the app to open since the last call
 /// (Open With, a drop on the Dock icon), one absolute path per line.
 /// malloc'd (free with free()), or NULL when there are none.
