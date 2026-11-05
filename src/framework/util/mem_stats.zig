@@ -9,6 +9,7 @@
 //! default allocator reports leaks when `main` returns) keeps working.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const Atomic = std.atomic.Value;
@@ -106,13 +107,68 @@ pub const Counting = struct {
 /// The counters of the process's allocator, once `install` has run.
 var installed: ?*Counting = null;
 
+/// Blocks of at least this many bytes come straight from the OS in release
+/// builds: macOS's malloc keeps freed large blocks, dirty and resident, so
+/// opening a 100 MiB file left its freed 100 MiB read buffer counted against
+/// the process (resident size, Activity Monitor's Memory) long after.
+pub const os_block_bytes = 1 << 20;
+
+/// Sends blocks of `os_block_bytes` and more to `std.heap.page_allocator`
+/// (mmap and munmap: freeing returns the pages at once) and the rest to
+/// `child`. A block never changes side: growing or shrinking across the
+/// threshold is refused, so the caller copies.
+pub const BigToOs = struct {
+    child: Allocator,
+
+    pub fn allocator(self: *BigToOs) Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
+    }
+
+    fn pages() Allocator {
+        return std.heap.page_allocator;
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *BigToOs = @ptrCast(@alignCast(ctx));
+        return if (len >= os_block_bytes) pages().rawAlloc(len, alignment, ret_addr) else self.child.rawAlloc(len, alignment, ret_addr);
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *BigToOs = @ptrCast(@alignCast(ctx));
+        const big = memory.len >= os_block_bytes;
+        if (big != (new_len >= os_block_bytes)) return false;
+        return if (big) pages().rawResize(memory, alignment, new_len, ret_addr) else self.child.rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *BigToOs = @ptrCast(@alignCast(ctx));
+        const big = memory.len >= os_block_bytes;
+        if (big != (new_len >= os_block_bytes)) return null;
+        return if (big) pages().rawRemap(memory, alignment, new_len, ret_addr) else self.child.rawRemap(memory, alignment, new_len, ret_addr);
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
+        const self: *BigToOs = @ptrCast(@alignCast(ctx));
+        if (memory.len >= os_block_bytes) pages().rawFree(memory, alignment, ret_addr) else self.child.rawFree(memory, alignment, ret_addr);
+    }
+};
+
 /// Wraps `child` in a counter owned by the process (a static) and returns
-/// the allocator to use in its place.
+/// the allocator to use in its place. Release builds also send big blocks to
+/// the OS (`BigToOs`); Debug and ReleaseSafe keep every block in the
+/// allocator that reports leaks.
 pub fn install(child: Allocator) Allocator {
     const S = struct {
         var counting: Counting = undefined;
+        var routed: BigToOs = undefined;
     };
-    S.counting = .init(child);
+    const checked = builtin.mode == .debug or builtin.mode == .safe;
+    var base = child;
+    if (!checked) {
+        S.routed = .{ .child = child };
+        base = S.routed.allocator();
+    }
+    S.counting = .init(base);
     installed = &S.counting;
     return S.counting.allocator();
 }
@@ -152,4 +208,25 @@ test "growing and shrinking in place move the counters" {
     list.clearAndFree(a);
     try std.testing.expectEqual(@as(usize, 0), c.snapshot().live_bytes);
     try std.testing.expect(c.snapshot().peak_bytes >= 1000);
+}
+
+test "big blocks go to the OS and small ones to the child, and never change side" {
+    var big: BigToOs = .{ .child = std.testing.allocator };
+    const a = big.allocator();
+    const small = try a.alloc(u8, 4096);
+    const large = try a.alloc(u8, os_block_bytes + 12345);
+    @memset(large, 7);
+    // Growing a small block past the threshold, or shrinking a big one under it, is refused in place.
+    try std.testing.expect(!a.resize(small, os_block_bytes + 1));
+    try std.testing.expect(!a.resize(large, 100));
+    // realloc then copies: small becomes big (and is freed in the child),
+    // big becomes small (and is freed to the OS).
+    const grown = try a.realloc(small, os_block_bytes * 2);
+    try std.testing.expectEqual(@as(usize, os_block_bytes * 2), grown.len);
+    grown[grown.len - 1] = 1;
+    const shrunk = try a.realloc(large, 8192);
+    try std.testing.expectEqual(@as(usize, 8192), shrunk.len);
+    try std.testing.expectEqual(@as(u8, 7), shrunk[100]);
+    a.free(grown);
+    a.free(shrunk);
 }
