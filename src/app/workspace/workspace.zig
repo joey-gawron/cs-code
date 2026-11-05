@@ -215,6 +215,8 @@ const big_font_step: f32 = 4;
 
 pub const tabbar_h: f32 = 26;
 pub const status_h: f32 = 22;
+/// The remote indicator's green block at the left end of the status bar.
+const remote_indicator_w: f32 = 34;
 /// The title row (menus and Quick Launch) and the toolbar under it, as in cs-code.
 pub const menubar_h: f32 = 30;
 pub const toolbar_h: f32 = 30;
@@ -2538,6 +2540,12 @@ pub const Workspace = struct {
             }
         }
         if (toolbar.onMouseDown(self, m)) return;
+        if (m.button == .left and remote_indicator_w > 0 and self.status_rect.h > 0 and
+            (Rect{ .x = self.status_rect.x, .y = self.status_rect.y, .w = remote_indicator_w, .h = self.status_rect.h }).contains(x, y))
+        {
+            remote_ui.promptConnect(self);
+            return;
+        }
         if (self.menu_visible and self.menubar_rect.contains(x, y)) {
             for (self.menu_title_rects, 0..) |r, i| if (r.contains(x, y)) {
                 self.menu_open = if (self.menu_open == i) null else i;
@@ -3324,10 +3332,10 @@ pub const Workspace = struct {
         const font = self.fonts.ui;
         const fg = theme.statusbar_foreground;
         // The remote indicator, a green block at the left edge as in cs-code.
-        const remote: Rect = .{ .x = r.x, .y = r.y, .w = 26, .h = r.h };
-        ctx.scene.fill(remote, Color.hex(0x16825d));
-        ctx.labelCentered(remote, "><", self.fonts.ui_bold, Color.hex(0xffffff));
-        var x = r.x + 26 + 10;
+        const remote: Rect = .{ .x = r.x, .y = r.y, .w = remote_indicator_w, .h = r.h };
+        ctx.scene.fill(remote, if (ctx.hovered(remote)) Color.hex(0x1a9970) else Color.hex(0x16825d));
+        ctx.icon(.remote, remote.x + remote.w / 2, remote.y + remote.h / 2, 16, Color.hex(0xffffff));
+        var x = r.x + remote_indicator_w + 10;
         var buf: [256]u8 = undefined;
         if (remote_ui.statusLabel(self, &buf)) |t| x += ctx.label(.{ .x = x, .y = r.y, .w = 320, .h = r.h }, t, self.fonts.ui_bold, fg) + 16;
 

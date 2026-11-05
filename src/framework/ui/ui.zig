@@ -5,6 +5,9 @@ const scene_mod = @import("../gpu/scene.zig");
 const text_mod = @import("../text/text_system.zig");
 const theme_mod = @import("theme.zig");
 const platform = @import("../platform/platform.zig");
+const icons = @import("../gpu/icons.zig");
+
+pub const IconShape = icons.Shape;
 
 pub const Scene = scene_mod.Scene;
 pub const Rect = scene_mod.Rect;
@@ -119,6 +122,20 @@ pub const Ctx = struct {
             self.scene.fill(.{ .x = cx - half + t, .y = cy - half + t, .w = 1.5, .h = 1.5 }, color);
             self.scene.fill(.{ .x = cx + half - t - 1.5, .y = cy - half + t, .w = 1.5, .h = 1.5 }, color);
         }
+    }
+
+    /// A vector icon (icons.zig) centred on (cx, cy), `size` logical px square, anti-aliased at the device scale.
+    pub fn icon(self: *const Ctx, shape: IconShape, cx: f32, cy: f32, size: f32, color: Color) void {
+        const s = self.scene.scale;
+        const px: u32 = @intFromFloat(@max(1, @round(size * s)));
+        const region = self.text.iconRegion(shape, px) orelse return;
+        const half = @as(f32, @floatFromInt(px)) / 2;
+        self.scene.sprite(.{ .x = @round(cx * s - half), .y = @round(cy * s - half), .w = @floatFromInt(px), .h = @floatFromInt(px) }, .{
+            .x = @floatFromInt(region.x),
+            .y = @floatFromInt(region.y),
+            .w = @floatFromInt(region.w),
+            .h = @floatFromInt(region.h),
+        }, color);
     }
 
     pub fn dot(self: *const Ctx, cx: f32, cy: f32, r: f32, color: Color) void {

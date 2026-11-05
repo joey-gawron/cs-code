@@ -148,50 +148,27 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     _ = ctx.labelFit(.{ .x = cr.x + 6, .y = cr.y, .w = cr.w - 28, .h = cr.h }, config_name orelse "No configurations", ws.fonts.ui_small, if (config_name != null) theme.menubar_foreground else theme.list_foreground_dim);
     drawChevronDown(ctx, cr.right() - 13, cr.y + cr.h / 2, theme.menubar_foreground);
     const start_x = cr.right() + 14;
-    drawPlay(ctx, start_x + 4, tb.y + tb.h / 2, Color.hex(0x6cc667), true);
+    drawPlay(ctx, start_x + 6, tb.y + tb.h / 2, Color.hex(0x6cc667), true);
     const start_label: []const u8 = if (ws.debug.debugger) |d| (if (d.session.state == .stopped) "Continue" else "Start") else "Start";
     const sw = ctx.label(.{ .x = start_x + 18, .y = tb.y, .w = 70, .h = tb.h }, start_label, font, theme.menubar_foreground);
     drawPlay(ctx, start_x + 18 + sw + 18, tb.y + tb.h / 2, theme.list_foreground_dim, false);
 }
 
 fn drawMagnifier(ctx: *const ui.Ctx, cx: f32, cy: f32, color: Color) void {
-    ctx.scene.quad(.{ .x = cx - 5, .y = cy - 5, .w = 8, .h = 8 }, .{ .border_color = color, .border_width = 1.25, .radius = 4 });
-    for (0..4) |i| {
-        const t: f32 = @floatFromInt(i);
-        ctx.scene.fill(.{ .x = cx + 2 + t, .y = cy + 2 + t, .w = 1.5, .h = 1.5 }, color);
-    }
+    ctx.icon(.magnifier, cx, cy, 14, color);
 }
 
 fn drawChevronDown(ctx: *const ui.Ctx, cx: f32, cy: f32, color: Color) void {
-    for (0..5) |i| {
-        const t: f32 = @floatFromInt(i);
-        ctx.scene.fill(.{ .x = cx - 4 + t, .y = cy - 2 + t * 0.7, .w = 1.5, .h = 1.5 }, color);
-        ctx.scene.fill(.{ .x = cx + 4 - t - 1.5, .y = cy - 2 + t * 0.7, .w = 1.5, .h = 1.5 }, color);
-    }
+    ctx.icon(.chevron_down, cx, cy, 12, color);
 }
 
-/// A right-pointing triangle: filled for Start, an outline for Start Without Debugging.
+/// A right-pointing play triangle: solid for Start, an outline for Start Without Debugging.
 fn drawPlay(ctx: *const ui.Ctx, cx: f32, cy: f32, color: Color, filled: bool) void {
-    for (0..9) |i| {
-        const t: f32 = @floatFromInt(i);
-        const half = @min(t, 8 - t) * 0.9 + 0.5;
-        ctx.scene.fill(.{ .x = cx - 4 + t * 0.9, .y = cy - half, .w = 1, .h = half * 2 }, color);
-    }
-    if (filled) return;
-    for (1..8) |i| {
-        const t: f32 = @floatFromInt(i);
-        const half = @max(0, @min(t, 8 - t) * 0.9 - 1.2);
-        if (half > 0) ctx.scene.fill(.{ .x = cx - 4 + t * 0.9 + 0.5, .y = cy - half, .w = 1, .h = half * 2 }, ctx.theme.menubar_background);
-    }
+    ctx.icon(if (filled) .play else .play_outline, cx, cy, 16, color);
 }
 
 fn arrow(ctx: *const ui.Ctx, cx: f32, cy: f32, dir: f32, color: Color) void {
-    ctx.scene.fill(.{ .x = cx - 6, .y = cy - 0.75, .w = 12, .h = 1.5 }, color);
-    for (0..5) |i| {
-        const t: f32 = @floatFromInt(i);
-        ctx.scene.fill(.{ .x = cx + dir * (6 - t) - 0.75 - (if (dir > 0) @as(f32, 0) else @as(f32, 0)), .y = cy - t - 0.75, .w = 1.5, .h = 1.5 }, color);
-        ctx.scene.fill(.{ .x = cx + dir * (6 - t) - 0.75, .y = cy + t - 0.75, .w = 1.5, .h = 1.5 }, color);
-    }
+    ctx.icon(if (dir < 0) .arrow_left else .arrow_right, cx, cy, 16, color);
 }
 
 fn floppy(ctx: *const ui.Ctx, cx: f32, cy: f32, color: Color) void {
@@ -200,13 +177,9 @@ fn floppy(ctx: *const ui.Ctx, cx: f32, cy: f32, color: Color) void {
     ctx.scene.fill(.{ .x = cx - 3, .y = cy + 1, .w = 6, .h = 4 }, color.withAlpha(color.a * 0.7));
 }
 
-/// A counter-clockwise (or clockwise) arrow, as an open arc with a head.
+/// An undo (dir < 0) or redo arrow.
 fn curved(ctx: *const ui.Ctx, cx: f32, cy: f32, dir: f32, color: Color) void {
-    ctx.scene.quad(.{ .x = cx - 5.5, .y = cy - 4.5, .w = 11, .h = 10 }, .{ .border_color = color, .border_width = 1.5, .radius = 5 });
-    // Cut the arc's upper corner on the arrow's side and put the head there.
-    ctx.scene.fill(.{ .x = if (dir < 0) cx - 6.5 else cx + 1, .y = cy - 6, .w = 5.5, .h = 5 }, ctx.theme.menubar_background);
-    ctx.scene.fill(.{ .x = if (dir < 0) cx - 6 else cx + 1.5, .y = cy - 5, .w = 5, .h = 1.5 }, color);
-    ctx.scene.fill(.{ .x = if (dir < 0) cx - 6 else cx + 4.5, .y = cy - 5, .w = 1.5, .h = 5 }, color);
+    ctx.icon(if (dir < 0) .undo else .redo, cx, cy, 16, color);
 }
 
 fn drawIcon(ctx: *const ui.Ctx, icon: Icon, cx: f32, cy: f32, color: Color) void {
@@ -226,6 +199,6 @@ fn drawIcon(ctx: *const ui.Ctx, icon: Icon, cx: f32, cy: f32, color: Color) void
         },
         .undo => curved(ctx, cx, cy, -1, color),
         .redo => curved(ctx, cx, cy, 1, color),
-        .find => drawMagnifier(ctx, cx - 1, cy - 1, color),
+        .find => drawMagnifier(ctx, cx, cy, color),
     }
 }

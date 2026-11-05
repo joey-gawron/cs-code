@@ -10,6 +10,7 @@ const c = @import("c");
 const fontconfig = @import("fontconfig.zig");
 const line_index = @import("line_index.zig");
 const atlas_mod = @import("../gpu/atlas.zig");
+const icons = @import("../gpu/icons.zig");
 const scene_mod = @import("../gpu/scene.zig");
 
 const Allocator = std.mem.Allocator;
@@ -158,6 +159,8 @@ pub const TextSystem = struct {
     /// Set when the atlas ran out of room this frame; the app resets it and redraws.
     atlas_full: bool = false,
     glyphs: std.AutoHashMapUnmanaged(GlyphKey, ?GlyphEntry) = .empty,
+    /// Vector icons rasterized per device size (icons.zig), dropped with the glyphs.
+    icon_regions: std.AutoHashMapUnmanaged(struct { icons.Shape, u32 }, atlas_mod.Region) = .empty,
     fallbacks: std.AutoHashMapUnmanaged(struct { FontId, u21 }, FontId) = .empty,
     hb_buffer: *c.hb_buffer_t,
     raster_buf: std.ArrayList(u8) = .empty,
@@ -187,6 +190,7 @@ pub const TextSystem = struct {
         }
         self.faces.deinit(self.gpa);
         self.glyphs.deinit(self.gpa);
+        self.icon_regions.deinit(self.gpa);
         self.fallbacks.deinit(self.gpa);
         self.advances.deinit(self.gpa);
         self.raster_buf.deinit(self.gpa);
@@ -278,6 +282,7 @@ pub const TextSystem = struct {
     /// Forget rasterized glyphs (the atlas texture was recreated).
     pub fn resetGlyphs(self: *TextSystem) void {
         self.glyphs.clearRetainingCapacity();
+        self.icon_regions.clearRetainingCapacity();
         self.atlas_full = false;
         self.atlas_generation = self.atlas.generation;
     }
@@ -287,6 +292,7 @@ pub const TextSystem = struct {
         self.scale = scale;
         for (self.faces.items) |*face| self.applySize(face);
         self.glyphs.clearRetainingCapacity();
+        self.icon_regions.clearRetainingCapacity();
         self.advances.clearRetainingCapacity();
         self.clearLineCache();
     }
@@ -512,9 +518,31 @@ pub const TextSystem = struct {
         return pen;
     }
 
+    /// The atlas region of `shape` rasterized at `size` device pixels square, or null when the atlas is full.
+    pub fn iconRegion(self: *TextSystem, which: icons.Shape, size: u32) ?atlas_mod.Region {
+        if (size == 0 or size > icons.max_size) return null;
+        if (self.atlas_generation != self.atlas.generation) {
+            self.glyphs.clearRetainingCapacity();
+            self.icon_regions.clearRetainingCapacity();
+            self.atlas_generation = self.atlas.generation;
+        }
+        if (self.icon_regions.get(.{ which, size })) |r| return r;
+        if (self.atlas_full) return null;
+        var buf: [icons.max_size * icons.max_size]u8 = undefined;
+        icons.rasterize(which, size, &buf);
+        const region = self.atlas.reserve(size, size) orelse {
+            self.atlas_full = true;
+            return null;
+        };
+        self.atlas.upload(region, buf[0 .. size * size], size);
+        self.icon_regions.put(self.gpa, .{ which, size }, region) catch {};
+        return region;
+    }
+
     fn glyphEntry(self: *TextSystem, font_id: FontId, glyph: u32, subpixel: u8) ?GlyphEntry {
         if (self.atlas_generation != self.atlas.generation) {
             self.glyphs.clearRetainingCapacity();
+            self.icon_regions.clearRetainingCapacity();
             self.atlas_generation = self.atlas.generation;
         }
         const key: GlyphKey = .{ .font = font_id, .glyph = glyph, .subpixel = subpixel };
