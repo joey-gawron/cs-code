@@ -250,14 +250,11 @@ internal sealed class SemanticTokensFeature : ISettingsAware, IThemeAware, IDisp
         {
             if (resolver.Resolve(legend.TokenTypes[type], ModifierNames(legend, modifiers), language) is not { } s) return null;
             IBrush? fg = s.Foreground is { } f ? new ImmutableSolidColorBrush(Color.FromArgb(f.A, f.R, f.G, f.B)) : null;
-            TextDecorationCollection? decorations = null;
-            if (s.Underline == true || s.Strikethrough == true)
-            {
-                decorations = [];
-                if (s.Underline == true) decorations.Add(new TextDecoration { Location = TextDecorationLocation.Underline });
-                if (s.Strikethrough == true) decorations.Add(new TextDecoration { Location = TextDecorationLocation.Strikethrough });
-            }
             var setsDecorations = s.Underline is not null || s.Strikethrough is not null;
+            // An explicit false still sets (clears) the decorations: AvaloniaEdit throws on a null collection.
+            TextDecorationCollection decorations = [];
+            if (s.Underline == true) decorations.Add(new TextDecoration { Location = TextDecorationLocation.Underline });
+            if (s.Strikethrough == true) decorations.Add(new TextDecoration { Location = TextDecorationLocation.Strikethrough });
             return element =>
             {
                 var p = element.TextRunProperties;

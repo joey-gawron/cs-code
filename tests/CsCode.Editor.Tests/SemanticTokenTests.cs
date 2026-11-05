@@ -264,6 +264,28 @@ public class SemanticTokenTests
     }
 
     [AvaloniaFact]
+    public async Task A_rule_that_turns_underline_and_strikethrough_off_still_lays_the_line_out()
+    {
+        using var host = ViewHost.Create();
+        await host.Factory.Themes.SetCurrentAsync("vscode.dark-plus");
+        // a fontStyle of "bold" sets underline and strikethrough to false: nothing to draw, but the flags are still set
+        // the grammar underlines everything, so the element already carries decorations when the semantic style clears them
+        var rules = new Dictionary<string, TokenColorRule> { ["class"] = new(["class"], "#FF0000", null, "bold") };
+        using var theme = host.Factory.Themes.Register(host.Factory.Themes.Current with
+        {
+            Id = "test.no-underline", Label = "No underline", SemanticTokenColors = rules,
+            TokenColors = [new(["source", "entity.name.type", "storage.type", "keyword"], "#00FF00", null, "underline")],
+        });
+        await host.Factory.Themes.SetCurrentAsync("test.no-underline");
+        host.Factory.Services.Features.Register<ISemanticTokensProvider>(DocumentSelector.All, new FakeSemantic(Legend, _ => Encode((0, 6, 6, 0, 0))));
+        var (_, view, _) = await host.OpenAsync(Code, "a.cs");
+        var feature = view.Feature<SemanticTokensFeature>()!;
+        await ViewHost.WaitFor(() => feature.TokenCount == 1, "tokens applied");
+        ViewHost.Pump();
+        Assert.Equal(Color.Parse("#FF0000"), ForegroundAt(view, 6)); // building the visual line used to throw an ArgumentNullException
+    }
+
+    [AvaloniaFact]
     public async Task A_stale_answer_is_dropped_and_a_provider_change_asks_again()
     {
         using var host = ViewHost.Create();
