@@ -45,7 +45,10 @@ bar in Insert mode and an underline in Replace and Operator-pending mode.
   turns vimrc loading off. Errors are listed, never fatal.
 * **Language keys**: `gd` definition, `gD` declaration, `gi` implementation (nvim-lspconfig's convention, replacing Vim's own `gi`), `gr` references,
   `K`/`gh` hover, `]d`/`[d` next/previous problem, `g.` quick fix; a vimrc or settings binding of the same keys wins.
+* **Spelling keys** (CsCode's spell checker, docs/SPELLCHECK.md §6): `]s`/`[s` next/previous misspelt word (with a count; need `spell`,
+  `vim.spell` on by default, else `E756`), `z=` suggestions, `zg` add the word to the user dictionary, `zw` flag it (`zG`/`zW` act the same).
 * **Mouse**: a selection made with the mouse becomes Visual mode; a click in Visual mode ends it.
+* **Multi-cursor** works with Vim on: see [Multi-cursor](#multi-cursor).
 
 ## Integration: the adapter in the shell
 
@@ -135,6 +138,39 @@ IntelliSense and snippets in Insert mode, mouse selection, a cross-check of 68 t
 and the Neovim-blessed expectations, a 300-editor open/edit/close retention test, view eviction with history kept, registers across restarts and
 `vim.vimrc.path`, typing latency on vs off and `:g` over 20k lines in slices.
 
+## Multi-cursor
+
+The editor's multi-cursor (docs/EDITOR.md §7b) stays on with Vim, modelled on VSCodeVim's multi-cursor mode. The engine is unchanged: it runs
+every key at its one cursor, the editor's primary caret, and the adapter (`VimIntegration.MultiCursor.cs`) places the other carets around it
+through the editor's modal surface (`AllowMultipleCarets`, `HoldCarets`, `SetCarets`, `EditAtCarets`, `EditLinesAtCarets`). The other carets are
+drawn in the mode's caret shape (blocks in Normal mode).
+
+**Making carets.** Add Next Occurrence (⌘D in the VS Code keymap on macOS, Shift+Alt+. in the Visual Studio keymap; Ctrl+D is Vim's scroll in
+Normal and Visual mode, as in VSCodeVim, so use `gb` there), VSCodeVim's **`gb`** (Normal and Visual mode: the word at the cursor, then each next
+occurrence), Select All Occurrences (Ctrl+Shift+L / Shift+Alt+;), Insert Cursor Above/Below (Ctrl+Alt+Up/Down, ⌥⌘↑/↓) and Alt+Click (or the
+modifier `editor.multiCursorModifier` names). Carets that select text (Add Next Occurrence, `gb`, Select All Occurrences) put Vim in Visual mode
+at the primary, as VSCodeVim enters its multi-cursor Visual mode.
+
+**What acts at every caret:**
+
+| Mode | Keys |
+|---|---|
+| Normal | `i a I A o O` enter Insert mode at every caret, each placed as Vim places its cursor (`o`/`O` give the other carets' new lines their own line's indentation); the motions `h j k l w b e W B E 0 ^ $` and the arrow, Home and End keys, with a count, run at every caret by the engine's own rules (the engine runs the motion at each caret in turn, the view not scrolling meanwhile); `x` and `dd` with a count delete at every caret in the same change (a line shared by two carets, or by a caret and the primary, goes once); Esc leaves the primary alone (VSCodeVim) |
+| Visual (selections at the carets) | `c s` change every selection (Insert mode at each), `d x` delete every selection; Esc returns to Normal mode with a caret on each selection's last character; `gb` adds the next occurrence |
+| Insert | typed text through the editor's typing path (IntelliSense at the primary, auto-closing at each caret by its own context), Enter, Backspace, Delete, Tab and the arrow / Home / End keys (the key policy gives these to the editor when there are several carets, `EditorPopups.MultipleCarets`); Esc returns to Normal mode with every caret one character left, as Vim's cursor goes |
+
+A change made at every caret is **one Vim change**: the edits at the other carets are made right after the engine's key, before any other key,
+inside that key's undo group (`EditorVimBuffer.BeginEditorKey`), so the engine adopts them into its change and one `u` (or Ctrl+Z) undoes the
+whole of it, `Ctrl-R` redoes it.
+
+**Not covered** (VSCodeVim runs every command at every cursor; here the other carets are removed first, as a click removes them, and the key runs
+at the primary): every other Normal-mode command, among them the operators with a motion or text object (`dw`, `cw`, `ciw`, `y…`, `>…`), `p`/`P`,
+`r`, `~`, `J`, `.` and Ex commands; a count before `i a I A o O`; Visual-mode motions (extending every selection) and the other Visual commands
+(`y`, `p`, `>`, `~`...); Insert-mode Ctrl keys (`Ctrl-W`, `Ctrl-U`, `Ctrl-R`, `Ctrl-O`...); Replace mode. `u` runs at the primary and undoes the
+whole change wherever it was. Registers are Vim's one set (the primary's text), not one per cursor as in VSCodeVim, and `.` repeats at the primary
+only. `j`/`k` at the other carets keep no remembered column across shorter lines. While a macro is being recorded the motions are not run at the
+other carets (they collapse). Tests: `RealApp/Vim/VimMultiCursorTests`, `VimKeyPolicyTests`, `RealApp/MultiCursorTests`.
+
 ## Threading and isolation (ARCHITECTURE section 6)
 
 * The engine runs **synchronously on the caller's (UI) thread** inside `HandleKey`. Every callback into the host happens on that thread
@@ -174,6 +210,7 @@ and the Neovim-blessed expectations, a 300-editor open/edit/close retention test
 | `vim.useSystemClipboard` | `false` | unnamed register uses the host clipboard (register `+`, not the `*` selection) |
 | `vim.leader` | `"\\"` | `<leader>` in bindings (vimrc: `let mapleader=`) |
 | `vim.hlsearch` / `incsearch` / `ignorecase` / `smartcase` / `wrapscan` | `false/true/true/true/true` | VSCodeVim's defaults; plain Vim defaults apply when no settings service is used |
+| `vim.spell` | `true` | Vim's `spell`: `]s`/`[s` jump between the spell checker's issues (docs/SPELLCHECK.md §6); plain Vim's default (off) applies when no settings service is used |
 | `vim.startInInsertMode` | `false` | new engines start in Insert mode |
 | `vim.timeout` | `1000` | `timeoutlen` in ms (a boolean turns `timeout` on/off) |
 | `vim.handleKeys` | `{}` | `{"<C-c>": false}` passes that key to the editor, `true` gives it to Vim (see [Using Vim](#using-vim-in-cscode)) |
@@ -216,7 +253,7 @@ then) and turns `autoindent` on before the vimrc is applied.
 ### Not supported (documented)
 
 `:!` and `:r !` (no shell), `:read`, `\=` and `<expr>` (no expression evaluator beyond string/register arithmetic in `:let`/`:echo`), regex atoms `\%V \%# \%'m \%23l \%23c \%23v \& \z( \%C`,
-`Ex mode (gQ)`, `Ctrl-X` completion sub-modes (stubbed to the host hook), `q:` command-line window, spell, diff, quickfix, window-local options (options are per session), abbreviations,
+`Ex mode (gQ)`, `Ctrl-X` completion sub-modes (stubbed to the host hook), `q:` command-line window, Vim's own spell checker (`spelllang`, `zug`/`zuw`, spell files; the spelling keys drive CsCode's checker instead), diff, quickfix, window-local options (options are per session), abbreviations,
 the `sneak/easymotion/camelCaseMotion/argumentObjects/replaceWithRegister/targets` emulations, `:s` backwards-range prompt ("Backwards range given, OK to swap").
 
 ## Known differences from Neovim
@@ -264,6 +301,7 @@ performance and memory budgets, threading and leak tests.
   View > Split Editor Right fails the same way without Vim). `Ctrl-W h/j/k/l/w` work between groups once they exist. The adapter's split test is
   skipped with this reason.
 * `:w {file}` writes the copy as UTF-8; a dot-repeat or macro replays typed text without the editor's auto-closing (see Integration).
+* Multi-cursor covers the keys listed in [Multi-cursor](#multi-cursor); every other command collapses to the primary first.
 * A selection made with the keyboard by the editor itself (Shift+arrows when `vim.handleKeys` gives them to the editor) does not start Visual mode.
 * Engine slices are 3 ms of engine time; the editor's reaction to the atomic change of a slice comes on top (measured up to ~15 ms on a heavily
   loaded machine for a slice of `:g` over 20k lines).

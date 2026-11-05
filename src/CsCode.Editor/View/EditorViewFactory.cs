@@ -53,16 +53,24 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         // Snippets are offered through the same registry as language-server completions, so the popup merges them with the same code.
         // multi-cursor's settings (editor.multiCursorLimit, editor.multiCursorPaste), so the Settings panel lists them
         _disposables.Add(services.Config.RegisterProperties(MultiCursorController.Properties));
+        _disposables.Add(services.Config.RegisterProperties(TypingBehaviors.Properties)); // editor.useTabStops
         _disposables.Add(services.Config.RegisterProperties(Features.LinkedEditingFeature.Properties)); // editor.linkedEditing
+        _disposables.Add(services.Config.RegisterProperties(Features.ColorDecoratorFeature.Properties)); // editor.colorDecorators*, editor.defaultColorDecorators
         _disposables.Add(services.Config.RegisterProperties(LanguageRenderSettings.Properties)); // editor.codeLens*, editor.semanticHighlighting.enabled
         _disposables.Add(services.Config.RegisterProperties(Features.FormatterChoice.Properties)); // editor.defaultFormatter
         _disposables.Add(services.Config.RegisterProperties(Features.CodeActionsOnSaveParticipant.Properties)); // editor.codeActionsOnSave(Timeout)
         // the minimap's and the overview ruler's settings (editor.minimap.side, editor.overviewRulerLanes, ...)
         _disposables.Add(services.Config.RegisterProperties(View.Decorations.ScrollDecorations.Properties));
         _disposables.Add(services.Features.Register<ICompletionProvider>(DocumentSelector.All, new SnippetCompletionProvider(snippets), "cscode.snippets"));
+        // inline merge conflicts: the per-version scan, the settings, the code lens, the commands and their right-click items (docs/SOURCE-CONTROL.md)
+        MergeConflicts = new Features.MergeConflictTracker(worker);
+        _disposables.Add(Features.MergeConflictCommands.Register(this));
         if (services.Commands is { } commands)
         {
             _disposables.Add(EditorCommands.Register(this, commands));
+            // Toggle Word Wrap, font zoom, the case transforms and Duplicate Selection; the status bar's encoding / EOL / indentation commands
+            _disposables.Add(EditorTextCommands.Register(this, commands));
+            _disposables.Add(DocumentOptionCommands.Register(this, commands));
             _disposables.Add(commands.Register("editor.action.toggleMinimap", async _ =>
             {
                 await services.Config.UpdateAsync(SettingKeys.EditorMinimapEnabled, !services.Config.GetOr(SettingKeys.EditorMinimapEnabled, true)).ConfigureAwait(false);
@@ -70,6 +78,12 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
             }, new CommandMetadata("editor.action.toggleMinimap", "View: Toggle Minimap", "View")));
             // The right-click menu's items, its submenus and the clipboard keys: the shell builds menus from these, it does not know them.
             _disposables.Add(EditorMenus.Contribute(this, services.Contributions));
+            // bookmarks.* (docs/EDITOR.md §7g) and the right-click Bookmarks submenu
+            if (services.Bookmarks is { } bookmarks)
+            {
+                _disposables.Add(Bookmarks.BookmarkCommands.Register(this, commands, bookmarks));
+                _disposables.Add(Bookmarks.BookmarkCommands.Contribute(services.Contributions));
+            }
         }
         // Capability context keys (editorHasRenameProvider, ...) follow servers that come and go.
         _disposables.Add(services.Features.ProvidersChanged.Subscribe(_ => services.Ui.Post(() =>
@@ -90,6 +104,8 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
     internal TokenizationManager Tokens { get; }
     internal SnippetService Snippets { get; }
     internal EditorWorker Worker { get; }
+    /// <summary>The conflict blocks of open documents, per version (decorations, code lens and commands share one scan).</summary>
+    internal Features.MergeConflictTracker MergeConflicts { get; }
     internal bool IsDisposed => _disposed;
 
     /// <summary>The view that most recently had keyboard focus (what editor commands act on), or null.</summary>
@@ -139,6 +155,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         {
             var doc = await EditorDocument.OpenAsync(Services, uri, (u, first) => Languages.DetectLanguageId(u, first), ct).ConfigureAwait(false);
             lock (_gate) _documents[doc.Uri] = doc;
+            doc.CaretOffsets = () => CaretOffsetsOf(doc); // an auto save after a delay leaves the carets' lines alone
             doc.UriChanged.Subscribe(change =>
             {
                 lock (_gate)
@@ -161,13 +178,15 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         lock (_gate) return _documents.TryGetValue(uri, out var doc) ? doc : null;
     }
 
-    public IEditorDocument CreateUntitled(string? languageId = null)
+    public IEditorDocument CreateUntitled(string? languageId = null) => CreateUntitled(languageId, "");
+
+    public IEditorDocument CreateUntitled(string? languageId, string initialText)
     {
         EditorDocument? doc = null;
         var number = Interlocked.Increment(ref _untitledCounter);
         Services.Ui.Invoke(() =>
         {
-            doc = EditorDocument.CreateUntitled(Services, number, languageId ?? "plaintext", (u, first) => Languages.DetectLanguageId(u, first));
+            doc = EditorDocument.CreateUntitled(Services, number, languageId ?? "plaintext", (u, first) => Languages.DetectLanguageId(u, first), initialText);
             lock (_gate) _documents[doc.Uri] = doc;
             doc.UriChanged.Subscribe(change =>
             {
@@ -191,6 +210,13 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
 
     /// <summary>A diff editor over the request's two sides (<see cref="Diff.DiffEditorControl"/>). UI thread.</summary>
     public Control? CreateDiffView(Core.Scm.DiffEditorRequest request) => new Diff.DiffEditorControl(this, request);
+
+    /// <summary>A 3-way merge editor (<see cref="Diff.MergeEditorControl"/>) whose Result pane edits <paramref name="result"/>. UI thread.</summary>
+    public Control? CreateMergeView(Core.Scm.MergeEditorRequest request, IEditorDocument result) =>
+        result is EditorDocument doc ? new Diff.MergeEditorControl(this, request, doc) : null;
+
+    /// <summary>The live merge editors by id (their input panes' lenses name them).</summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<int, Diff.MergeEditorControl> MergeEditors { get; } = new();
 
     /// <summary>
     /// A read-only document over fixed text, NOT registered with the document manager (no language server sees it, no tab owns it): one side of
@@ -276,6 +302,7 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorReadonly", view.Document.IsReadOnly);
         keys.Set("resourceExtname", Path.GetExtension(view.Document.Uri.IsFile ? view.Document.Uri.LocalPath : view.Document.Uri.AbsolutePath));
         keys.Set("resourceScheme", view.Document.Uri.Scheme);
+        keys.Set(WordWrapKey, view.WordWrapEnabled);
         UpdateCapabilityKeys(view);
         EditorMenus.PrepareContextKeys(view);
     }
@@ -304,6 +331,29 @@ public sealed class EditorViewFactory : IEditorViewFactory, IDisposable
         keys.Set("editorHasDocumentSelectionFormattingProvider", formatting);
         keys.Set("editorHasCallHierarchyProvider", Has<ICallHierarchyProvider>()); // the Hierarchy window's items (docs/NAVIGATION.md)
         keys.Set("editorHasTypeHierarchyProvider", Has<ITypeHierarchyProvider>());
+    }
+
+    /// <summary>VS Code's context key: whether the focused editor wraps its lines (View &gt; Word Wrap's check mark).</summary>
+    public const string WordWrapKey = "editorWordWrap";
+
+    /// <summary>Brings <see cref="WordWrapKey"/> up to date when <paramref name="view"/> is the one commands act on (UI thread).</summary>
+    internal void UpdateWordWrapKey(CodeEditorControl view)
+    {
+        if (Services.ContextKeys is { } keys && ReferenceEquals(ActiveView, view)) keys.Set(WordWrapKey, view.WordWrapEnabled);
+    }
+
+    /// <summary>Every caret of every view of <paramref name="doc"/>, as offsets (UI thread).</summary>
+    internal IReadOnlyList<int> CaretOffsetsOf(EditorDocument doc)
+    {
+        var offsets = new List<int>();
+        foreach (var view in Views)
+        {
+            if (view.IsDisposed || !ReferenceEquals(view.Document, doc)) continue;
+            offsets.Add(view.Editor.CaretOffset);
+            if (view.MultiCursor.IsActive)
+                foreach (var s in view.Controller.Selections) offsets.Add(doc.OffsetAt(s.End));
+        }
+        return offsets;
     }
 
     /// <summary>The per-view feature components (completion, hover, diagnostics, folding…), created by the control after its core is up.</summary>

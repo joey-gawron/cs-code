@@ -55,6 +55,11 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
     internal CodeEditorControl View => _v;
     /// <summary>The breakpoint glyph margin: the code-action lightbulb never goes left of its right edge (<see cref="CodeActionFeature"/>).</summary>
     internal Control Margin => _margin;
+    /// <summary>
+    /// Glyphs another feature draws in this margin, under the breakpoints and the stop arrow (bookmarks: <see cref="BookmarkFeature"/>), as Visual
+    /// Studio's indicator margin shows both: called with the margin's width after its background is filled. The hook places its own glyphs.
+    /// </summary>
+    internal Action<DrawingContext, TextView, double>? Underlay { get; set; }
     internal bool IsFileDocument => _v.Document.Uri.IsFile;
 
     public void OnThemeChanged() => _margin.InvalidateVisual();
@@ -265,20 +270,28 @@ internal sealed class DebugFeature : IThemeAware, ISettingsAware, IDisposable
             if (textView is null || !textView.VisualLinesValid) return;
             var palette = _owner._v.Palette;
             context.FillRectangle(palette.Gutter, new Rect(0, 0, Bounds.Width, Bounds.Height));
+            _owner.Underlay?.Invoke(context, textView, Bounds.Width); // bookmarks, under the breakpoints
             var stop = _owner._v.Controller.StopLine;
             foreach (var vl in textView.VisualLines)
             {
                 var line = vl.FirstDocumentLine.LineNumber - 1;
-                var zone = LineZones.HeightOf(vl); // a code lens above the line: the glyph goes by the text
-                var top = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop) + zone - textView.VerticalOffset;
-                var height = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineBottom) - vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.LineTop) - zone;
-                var center = new Point(MarginWidth / 2, top + height / 2);
-                var radius = Math.Min(MarginWidth, height) / 2 - 3;
+                var (center, radius) = GlyphBox(textView, vl);
                 var bp = _owner.BreakpointAt(line);
                 if (bp is not null) DrawBreakpoint(context, palette, bp, center, radius);
                 else if (line == _hoverLine && _owner.IsFileDocument) context.DrawEllipse(new SolidColorBrush(((ISolidColorBrush)palette.BreakpointFill).Color, 0.35), null, center, radius, radius);
                 if (stop == line) DrawArrow(context, palette, center, radius + 2);
             }
+        }
+
+        /// <summary>
+        /// Where a line's glyph goes: centred on the text of its first row, level with its line number (which sits at the row's text top).
+        /// Not the row's middle: a row is taller than the text when a code lens opens above it, an inlay hint or a larger glyph stretches it,
+        /// and only the first row of a wrapped line carries the number.
+        /// </summary>
+        internal static (Point Center, double Radius) GlyphBox(TextView textView, VisualLine vl)
+        {
+            var middle = vl.GetTextLineVisualYPosition(vl.TextLines[0], VisualYPosition.TextMiddle) - textView.VerticalOffset;
+            return (new Point(MarginWidth / 2, middle), Math.Min(MarginWidth, textView.DefaultLineHeight) / 2 - 3);
         }
 
         private void DrawBreakpoint(DrawingContext context, EditorPalette palette, SourceBreakpoint bp, Point c, double r)

@@ -21,7 +21,8 @@ public sealed class SourceControlToolWindow(GitHost host) : IToolWindow
     public string? ToggleCommandId => GitHost.ShowScm;
     public string? AutoShowWhen => null;
 
-    public Control CreateView(IServiceProvider services) => new SourceControlView(host.CreateViewModel(), host.ReleaseViewModel, services.GetService<IContextKeyService>());
+    public Control CreateView(IServiceProvider services) => new SourceControlView(host.CreateViewModel(), host.ReleaseViewModel, services.GetService<IContextKeyService>(),
+        services.GetService<Core.Languages.ITextSpellChecker>());
 }
 
 public static class ServiceCollectionExtensions
@@ -38,6 +39,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IQuickDiffProvider>(sp => sp.GetRequiredService<GitService>());
         services.TryAddSingleton<ILineBlameProvider>(sp => sp.GetRequiredService<GitService>());
         services.TryAddSingleton(sp => new GitHost(sp, sp.GetRequiredService<GitService>()));
+        // the commits that changed a file, in the Timeline (docs/LOCAL-HISTORY.md)
+        services.AddSingleton<Core.Timeline.ITimelineProvider>(sp => new GitTimelineProvider(sp.GetRequiredService<GitService>()));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolWindow, SourceControlToolWindow>());
         return services;
     }

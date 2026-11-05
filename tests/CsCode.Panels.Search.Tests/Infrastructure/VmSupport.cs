@@ -26,6 +26,14 @@ public sealed class ManualUiDispatcher : UiDispatcherBase
         return n;
     }
 
+    /// <summary>Runs the oldest queued callback, if any (a test that times callbacks one by one).</summary>
+    public bool RunOne()
+    {
+        if (!_queue.TryDequeue(out var a)) return false;
+        a();
+        return true;
+    }
+
     /// <summary>Drains the queue until <paramref name="done"/> holds (engine threads keep posting), or fails after the timeout.</summary>
     public async Task PumpUntilAsync(Func<bool> done, int timeoutMs = 20_000)
     {

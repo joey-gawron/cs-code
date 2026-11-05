@@ -7,13 +7,14 @@ namespace CsCode.Editor.View.Decorations;
 internal enum MarkerKind : byte
 {
     None = 0,
-    // left lane: source control and breakpoints
-    Added, Modified, Deleted, Breakpoint,
+    // left lane: source control, bookmarks and breakpoints (a breakpoint wins over a bookmark on the same row, a bookmark over a change)
+    Added, Modified, Deleted, Bookmark, Breakpoint,
     // centre lane: occurrences and find
     WordHighlight, WordHighlightStrong, FindMatch,
     // right lane: diagnostics
     Info, Warning, Error,
-    // all lanes: the caret lines
+    // all lanes: merge conflict sides (VS Code draws them across the ruler), then the caret lines
+    MergeCommon, MergeCurrent, MergeIncoming,
     Cursor,
 }
 
@@ -35,7 +36,7 @@ internal sealed class OverviewRulerModel
 
     public static MarkerLane LaneOf(MarkerKind kind) => kind switch
     {
-        MarkerKind.Added or MarkerKind.Modified or MarkerKind.Deleted or MarkerKind.Breakpoint => MarkerLane.Left,
+        MarkerKind.Added or MarkerKind.Modified or MarkerKind.Deleted or MarkerKind.Bookmark or MarkerKind.Breakpoint => MarkerLane.Left,
         MarkerKind.WordHighlight or MarkerKind.WordHighlightStrong or MarkerKind.FindMatch => MarkerLane.Center,
         MarkerKind.Info or MarkerKind.Warning or MarkerKind.Error => MarkerLane.Right,
         _ => MarkerLane.Full,

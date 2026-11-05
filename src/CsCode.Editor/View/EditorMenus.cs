@@ -153,6 +153,10 @@ internal static class EditorMenus
         keys.Set(CanCutCopyKey, view.Clipboard.CanCopy);
         keys.Set(HasSurroundSnippetsKey, view.Feature<ISnippetFeature>() is { } snippets && snippets.HasSurroundSnippets);
         keys.Set("editorHasSelection", view.Editor.SelectionLength > 0);
+        // merge conflicts: the accept items show while the caret is in a block
+        if (view.Feature<MergeConflictFeature>() is { } merge) merge.UpdateContextKeys();
+        else { keys.Set(MergeConflictFeature.AtCursorKey, false); keys.Set(MergeConflictFeature.CountKey, 0); }
+        Bookmarks.BookmarkCommands.PrepareContextKeys(view, keys); // the Bookmarks submenu: Add or Remove, Enable or Disable
     }
 
     // ------------------------------------------------------------------ commands behind the items

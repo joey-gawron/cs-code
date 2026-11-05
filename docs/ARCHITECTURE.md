@@ -32,6 +32,7 @@ and a GUI/editing path that is isolated from language-server load.
    ├── CsCode.Testing (Test Explorer engine: .NET/cargo/Jest-Vitest providers, run controller; no UI) ── CsCode.Panels.Testing (tool window; docs/TESTING.md)
    ├── CsCode.Panels.Navigation (the Hierarchy window: call and type hierarchy over ILanguageFeatureRegistry; docs/NAVIGATION.md)
    ├── CsCode.Panels.Org (org mode: the org language, org.* commands, the Org Agenda window over a UI-free org engine; docs/ORG.md)
+   ├── CsCode.Panels.Timeline (local history: every save kept per file; the Timeline window over ITimelineProvider; docs/LOCAL-HISTORY.md)
    ├── CsCode.Profiling (memory monitor, soak/leak/responsiveness harness)
    └── all depend only on ↓
                           CsCode.Core
@@ -63,6 +64,8 @@ Dependency rules (enforced by project references, checked in review):
 | `LineDiff` (Core), `IFileDecorationProvider`, `IQuickDiffProvider`, `ILineBlameProvider` | **Panels.Git** (git CLI engine + Source Control window, `docs/SOURCE-CONTROL.md`) |
 | `IDiffEditorService` (diff tabs) | **Shell**, over the editor's `DiffEditorControl` (`IEditorViewFactory.CreateDiffView`) |
 | `org` language (grammar and configuration as contributions, `IFoldingRangeProvider`, `IDocumentSymbolProvider`) | **Panels.Org** (`docs/ORG.md`) |
+| `ILocalHistoryService`, `ITimelineProvider` (local history; docs/LOCAL-HISTORY.md) | **Panels.Timeline** (local history and its provider); **Panels.Git** (`GitTimelineProvider`) |
+| `ISyntaxClassificationService` (token kinds: comment / string / prose / code), `ITextSpellChecker` | **Editor** (`SyntaxClassifier`, over its token store); **SpellCheck** (`CsCode.SpellCheck`, Core only: the built-in spell checker, docs/SPELLCHECK.md) |
 
 ## 3. Language features: one registry, bridged when remote
 

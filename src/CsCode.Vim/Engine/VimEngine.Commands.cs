@@ -610,6 +610,9 @@ public sealed partial class VimEngine
                 PutCommand(c, forward: k == ']' && k2 == 'p', flags: PutFlags.FixIndent);
                 return true;
             case 's' or 'S':
+                // ]s [s (and ]S [S: CsCode reports no "rare" or "local" words, so they are the same): the spell checker's issues
+                if (!O.Spell) Error("E756: Spell checking is not enabled");
+                else Host.ExecuteCommand(k == ']' ? SpellCommands.Next : SpellCommands.Previous, [c.Count1]);
                 return true;
             case 'z':
                 return true;
@@ -723,8 +726,29 @@ public sealed partial class VimEngine
                 return;
             case 'h' or 'l' or 'H' or 'L' or 's' or 'e':
                 return;
+            // spelling (docs/SPELLCHECK.md): the spell checker's commands act at the cursor, which the editor's caret follows. zG and zW
+            // (Vim's session-only word list) act as zg and zw: CsCode has no session-only list. Undoing them (zu...) is not supported.
+            case '=':
+                Host.ExecuteCommand(SpellCommands.Suggest, null);
+                return;
+            case 'g' or 'G':
+                Host.ExecuteCommand(SpellCommands.AddWord, null);
+                return;
+            case 'w' or 'W':
+                Host.ExecuteCommand(SpellCommands.FlagWord, null);
+                return;
         }
         Beep();
+    }
+
+    /// <summary>The spell checker's command ids (cspell's where cspell has the command; CsCode.SpellCheck registers them).</summary>
+    internal static class SpellCommands
+    {
+        public const string Next = "cSpell.goToNextSpellingIssue";
+        public const string Previous = "cSpell.goToPreviousSpellingIssue";
+        public const string Suggest = "cSpell.suggestSpellingCorrections";
+        public const string AddWord = "cSpell.addWordToUserDictionary";
+        public const string FlagWord = "cscode.spellCheck.flagWord";
     }
 
     private void FoldCommandKey(int k, int count)

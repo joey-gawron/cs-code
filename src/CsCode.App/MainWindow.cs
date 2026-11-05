@@ -169,6 +169,7 @@ public sealed class MainWindow : Window, IWindowChrome
         window.AddHandler(GotFocusEvent, OnGotFocus, RoutingStrategies.Bubble, handledEventsToo: true);
         var menus = _shell.ContextMenus.Attach(window);
         var clipboard = _shell.Clipboard.Attach(window);
+        var drops = FileDrop.Attach(window); // files dropped on the window open as tabs (the Explorer takes drops on itself first)
         window.Deactivated += OnShellWindowDeactivated;
         // macOS shows the menu bar of the window that has the keyboard: a floating window gets its own (its Window menu minimises it).
         Menus.NativeMenuExport? menuBar = null;
@@ -187,9 +188,16 @@ public sealed class MainWindow : Window, IWindowChrome
             window.Deactivated -= OnShellWindowDeactivated;
             menus.Dispose();
             clipboard.Dispose();
+            drops.Dispose();
             hooks.Dispose();
         });
     }
+
+    private WindowFileDrop? _fileDrop;
+
+    /// <summary>Drops of files on the window, outside the Explorer (created with the first window that takes them).</summary>
+    internal WindowFileDrop FileDrop => _fileDrop ??= new WindowFileDrop(_shell.Well, _sp.GetRequiredService<INavigationService>(),
+        _sp.GetService<IWorkspaceService>()?.FileSystem ?? _sp.GetRequiredService<IFileSystem>(), _sp.GetService<IWorkspaceService>(), _sp.GetService<IWindowService>());
 
     // Ctrl released while another application (or window) had the keyboard: this window never sees the KeyUp that commits the switcher, so it
     // closes without switching (VS Code's and Visual Studio's switchers close the same way). Left open, the next Ctrl press and release here
@@ -634,7 +642,7 @@ public sealed class MainWindow : Window, IWindowChrome
     public bool IsExiting { get; private set; }
 
     /// <summary>An editor has changes not saved yet (what the Save prompts of a close would ask about).</summary>
-    public bool HasUnsavedChanges => _shell.Well.EditorTabs.Any(t => t.IsDirty);
+    public bool HasUnsavedChanges => _shell.Well.HasUnsavedChanges; // also a merge editor's unsaved result no editor tab shows
 
     /// <summary>
     /// The desktop session ends (macOS log out with nothing unsaved): the layout is saved, as for any close, so the next start restores the tabs,

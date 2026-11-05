@@ -108,3 +108,25 @@ sources in `tools/treesitter/manifest.json` (GitHub archives at the commits nvim
 The folder carries a NOTICE (`tools/treesitter/NOTICE`) and the full licence text of every source (and tree-sitter-elixir's NOTICE) in
 `tree-sitter/licenses/`. The build refuses any licence outside MIT, Apache-2.0, ISC, BSD-2/3-Clause, 0BSD and CC0-1.0, so no GPL/LGPL/EUPL
 grammar can be bundled. CsCode's own queries (`src/CsCode.Editor.TreeSitter/OwnQueries`) are CsCode's.
+
+## Spell checking: WeCantSpell.Hunspell (MPL-1.1) and the en_US dictionary (SCOWL)
+
+The built-in spell checker (`src/CsCode.SpellCheck`, docs/SPELLCHECK.md) uses:
+
+* **WeCantSpell.Hunspell** 7.0.1 (NuGet), by Aaron Dandy, a port of Hunspell (Németh László; MySpell by Kevin Hendricks) to .NET. Like
+  Hunspell it is offered under a tri-licence, MPL 1.1 / GPL 2.0 / LGPL 2.1 (the package's `license.txt`); **CsCode uses it under the
+  Mozilla Public License 1.1**. It is used unmodified as a binary package dependency; its source is available at
+  <https://github.com/aarondandy/WeCantSpell.Hunspell>. The MPL's copyleft covers the package's own files only; CsCode's code is not
+  affected and carries no MPL obligation beyond keeping this notice and pointing to that source.
+* **The en_US Hunspell dictionary** (`en_US.dic` + `en_US.aff`, "en_US Hunspell Dictionary Version 2020.12.07", SCOWL size 60), taken
+  unmodified from LibreOffice's dictionaries repository (<https://github.com/LibreOffice/dictionaries>, `en/`) and embedded in
+  `CsCode.SpellCheck.dll`. The word list is SCOWL's, Copyright 2000-2018 Kevin Atkinson, with permission to use, copy, modify, distribute
+  and sell it provided the copyright and permission notices appear in all copies and supporting documentation; the affix file derives from
+  Geoff Kuenning's Ispell and is under his BSD licence (Copyright 1993 Geoff Kuenning; redistributions keep the notice, conditions and
+  disclaimer); parts come from public-domain lists (Moby Words II, 12Dicts, ENABLE, Brian Kelk's UK English word list), WordNet 1.6
+  (Copyright 1997 Princeton University) and VarCon (Copyright 2000-2016 Kevin Atkinson, 2016 Benjamin Titze). The full notices are in
+  `src/CsCode.SpellCheck/Dictionaries/README_en_US.txt`, kept verbatim and embedded beside the dictionary.
+* CsCode's own software-terms list (`src/CsCode.SpellCheck/Dictionaries/software-terms.txt`) is original to CsCode.
+
+Dictionaries for other languages are not shipped: users add `.dic`/`.aff` pairs to `{UserDataDir}/dictionaries` under those dictionaries'
+own licences (`tools/spellcheck/fetch-dictionaries.sh` downloads LibreOffice's into the git-ignored `.scratch/` for development).

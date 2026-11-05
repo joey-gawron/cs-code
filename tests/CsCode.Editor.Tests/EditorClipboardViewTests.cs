@@ -357,9 +357,11 @@ public class EditorClipboardViewTests
             .OrderBy(i => i.Group, StringComparer.Ordinal).Select(i => i.Title ?? "(submenu)").ToArray();
         Assert.Equal(
         [
+            // inline merge conflicts (shown only while the caret is in a conflict block)
+            "Accept _Current Change", "Accept _Incoming Change", "Accept _Both Changes", "Compare C_hanges",
             "Quick Actions and Refactorings...", "Re_name...",
             "Pee_k Definition", "Go To _Definition", "Go To D_eclaration", "Go To _Implementation", "Find All Re_ferences",
-            "(submenu)", "Run To C_ursor", "Add _Watch", "_QuickWatch...",
+            "(submenu)", "(submenu)", "Run To C_ursor", "Add _Watch", "_QuickWatch...", // Breakpoint, then Bookmarks
             "(submenu)",
             "Cu_t", "_Copy", "Copy wit_h Formatting", "_Paste",
             "_Format Document", "Format Document _With...", "Format _Selection", "Co_mment Selection", "_Uncomment Selection",

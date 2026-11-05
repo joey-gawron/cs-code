@@ -1,5 +1,6 @@
 using System.Text;
 using Avalonia.Headless.XUnit;
+using CsCode.Core.Languages;
 using CsCode.Core.Platform;
 using CsCode.Core.Text;
 using CsCode.Editor.Documents;
@@ -282,6 +283,51 @@ public class EditorDocumentFileTests
         Assert.Equal(expected, doc.GetText());
     }
 
+    // An auto save after a delay (VS Code's isAutoSaved): the carets' lines keep their trailing whitespace, the blank lines up to the last caret
+    // stay, and no final newline goes in under a caret at the very end.
+    [Theory]
+    [InlineData("a  \nb  \nc", new[] { 1 }, false, true, false, false, "a\nb  \nc")]
+    [InlineData("a\n\n\n\n", new[] { 2 }, false, false, false, true, "a\n\n\n")]
+    [InlineData("a\n\n\n\n", new int[0], false, false, false, true, "a\n")]
+    [InlineData("a\nb", new[] { 1 }, true, false, true, false, "a\nb")]
+    [InlineData("a\nb", new[] { 0 }, false, false, true, false, "a\nb\n")]
+    public void Save_edit_computation_for_an_auto_save_after_a_delay(string text, int[] caretLines, bool caretAtEnd, bool trim, bool finalNewline, bool trimFinal, string expected)
+    {
+        var ui = new ThreadAffinityUiThread();
+        var doc = new EditorDocument(new Uri("file:///x.txt"), "plaintext", EditorDocument.CreateBuffer(text, ui), ui);
+        var edits = SaveEdits.Compute(doc.Snapshot(), trim, finalNewline, trimFinal, "\n", new SaveEdits.CaretGuard(caretLines.ToHashSet(), caretAtEnd));
+        Assert.True(doc.ApplyEdits(edits));
+        Assert.Equal(expected, doc.GetText());
+    }
+
+    [AvaloniaFact]
+    public async Task An_auto_save_after_a_delay_skips_format_on_save_and_never_asks_for_an_untitled_name()
+    {
+        using var host = TestHost.Create();
+        host.Config.Set(EditorSettingKeys.FormatOnSave, true);
+        var formatter = new FakeFormattingProvider((_, _) => Task.FromResult<IReadOnlyList<TextEdit>?>([new TextEdit(TextRange.At(0, 0), "// formatted\n")]));
+        using var registration = host.Services.Features.Register<IDocumentFormattingProvider>(DocumentSelector.All, formatter);
+        host.Dir.WriteFile("f.txt", "x\n");
+        var doc = await Open(host, host.FileUri("f.txt"));
+        doc.ApplyEdits([new TextEdit(TextRange.At(0, 0), "y")]);
+
+        await doc.SaveAsync(DocumentSaveReason.AfterDelay, CancellationToken.None);
+        Assert.Equal("yx\n", File.ReadAllText(host.Dir.Combine("f.txt")));
+        Assert.Equal(0, formatter.DocumentCalls);
+        Assert.False(doc.IsDirty);
+        doc.ApplyEdits([new TextEdit(TextRange.At(0, 0), "z")]);
+        await doc.SaveAsync(DocumentSaveReason.FocusOut, CancellationToken.None); // the other auto saves format, as in VS Code
+        Assert.Equal("// formatted\nzyx\n", File.ReadAllText(host.Dir.Combine("f.txt")));
+        doc.Dispose();
+
+        var untitled = EditorDocument.CreateUntitled(host.Services, 1, "plaintext", DetectByExtension);
+        untitled.ApplyEdits([new TextEdit(TextRange.At(0, 0), "new")]);
+        await untitled.SaveAsync(DocumentSaveReason.AfterDelay, CancellationToken.None);
+        Assert.True(untitled.IsDirty);
+        Assert.True(untitled.IsUntitled);
+        untitled.Dispose();
+    }
+
     // ---- external changes ----
 
     [AvaloniaFact]
@@ -413,6 +459,44 @@ public class EditorDocumentFileTests
         Assert.Null(host.Documents.Get(old));
         Assert.Same(doc, host.Documents.Get(target));
         Assert.Equal(["closed " + old, "opened " + target], events);
+        doc.Dispose();
+    }
+
+    // The Explorer's rename and move (docs/SHELL.md): the open document follows its file without being closed or saved.
+    [AvaloniaFact]
+    public async Task A_moved_file_keeps_its_document_with_unsaved_changes_and_undo_and_is_watched_at_its_new_path()
+    {
+        using var host = TestHost.Create();
+        host.Dir.WriteFile("a.txt", "on disk\n");
+        var doc = await Open(host, host.FileUri("a.txt"));
+        doc.ApplyEdits([TextEdit.Insert(TextPosition.Zero, "unsaved ")]);
+        var old = doc.Uri;
+        var events = new List<string>();
+        host.Documents.Closed.Subscribe(e => events.Add("closed " + e.Document.Uri));
+        host.Documents.Opened.Subscribe(e => events.Add("opened " + e.Document.Uri));
+        Directory.CreateDirectory(host.Dir.Combine("sub"));
+        File.Move(host.Dir.Combine("a.txt"), host.Dir.Combine("sub", "b.cs"));
+        var target = new Uri(host.Dir.Combine("sub", "b.cs"));
+
+        await doc.RelocateAsync(target);
+
+        Assert.Equal(target, doc.Uri);
+        Assert.Equal("csharp", doc.LanguageId); // detected again from the new name, as after Save As
+        Assert.True(doc.IsDirty);
+        Assert.True(doc.CanUndo);
+        Assert.Equal("unsaved on disk\n", doc.GetText());
+        Assert.Equal("on disk\n", File.ReadAllText(target.LocalPath)); // nothing written
+        Assert.Null(host.Documents.Get(old));
+        Assert.Same(doc, host.Documents.Get(target));
+        Assert.Equal(["closed " + old, "opened " + target], events);
+        await Task.Delay(300);
+        Assert.Empty(host.Window.Messages); // the move itself is no change on disk
+
+        // the new path is watched: a change there meets the unsaved changes
+        host.Window.MessageActionResponses.Enqueue("Keep my changes");
+        File.WriteAllText(target.LocalPath, "changed elsewhere\n");
+        await TestHost.WaitUntil(() => host.Window.Messages.Count == 1, "the changed-on-disk question for the new path");
+        Assert.Contains("'b.cs' has changed on disk", host.Window.Messages[0].Message);
         doc.Dispose();
     }
 

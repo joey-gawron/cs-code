@@ -82,6 +82,15 @@ internal sealed class LineTokenStore
         lock (_gate) return line >= 0 && line < _lines.Count ? _lines[line] : null;
     }
 
+    /// <summary>
+    /// The current row of every line (null = not tokenised), for readers off the UI thread (<see cref="SyntaxClassifier"/>): one copy of the
+    /// references under one lock. Rows are never changed in place (a publish replaces them), so the copy stays consistent.
+    /// </summary>
+    public int[]?[] CopyRows()
+    {
+        lock (_gate) return _lines.ToArray();
+    }
+
     /// <summary>True when every line in [first, last] has tokens (stale or not).</summary>
     public bool HasTokens(int first, int last)
     {

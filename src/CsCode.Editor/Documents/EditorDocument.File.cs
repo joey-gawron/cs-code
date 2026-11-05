@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace CsCode.Editor.Documents;
 
 // File half of EditorDocument: load, atomic save, reload, external-change handling, encoding/EOL state.
-public sealed partial class EditorDocument
+public sealed partial class EditorDocument : IRelocatableDocument
 {
     private const int MaxSaveParticipantRetries = 3;
 
@@ -26,6 +26,7 @@ public sealed partial class EditorDocument
     private readonly object _stateGate = new();
     private bool _recheckExternal;
     private bool _externalRunning;
+    private volatile bool _externalChangePending;
     private Func<Uri, string?, string>? _detectLanguage;
     private readonly Emitter<(Uri Old, Uri New)> _uriChanged = new();
 
@@ -41,7 +42,19 @@ public sealed partial class EditorDocument
     /// <summary>User-facing reason for large-file mode (for the status bar / info banner), null otherwise.</summary>
     public string? LargeFileReason { get; private set; }
 
-    /// <summary>Fires after Save As changed <see cref="Uri"/> (the factory re-keys its table).</summary>
+    /// <summary>
+    /// True while the "changed on disk and you have unsaved changes" question waits for an answer. A save meanwhile would wait for the answer
+    /// (the check holds the file's lock) and then overwrite what the user may be about to reload, so auto save leaves the document alone.
+    /// </summary>
+    public bool IsExternalChangePending => _externalChangePending;
+
+    /// <summary>
+    /// The offsets of the carets in the views of this document (UI thread; set by the view factory): an auto save after a delay
+    /// (<see cref="DocumentSaveReason.AfterDelay"/>) leaves their lines alone, as VS Code does, so the space just typed is not trimmed away.
+    /// </summary>
+    internal Func<IReadOnlyList<int>>? CaretOffsets { get; set; }
+
+    /// <summary>Fires after Save As or a move (<see cref="RelocateAsync"/>) changed <see cref="Uri"/> (the factory re-keys its table).</summary>
     internal IEventSource<(Uri Old, Uri New)> UriChanged => _uriChanged;
 
     // ---- construction from disk / as untitled ----
@@ -74,11 +87,14 @@ public sealed partial class EditorDocument
         return doc;
     }
 
-    /// <summary>A new empty "Untitled-N" buffer; registered with the document manager. Must be called on the UI thread.</summary>
-    internal static EditorDocument CreateUntitled(EditorServices svc, int number, string languageId, Func<Uri, string?, string> detectLanguage)
+    /// <summary>
+    /// A new "Untitled-N" buffer, empty or holding <paramref name="initialText"/> (not an undo step: the document starts unmodified); registered with
+    /// the document manager. Must be called on the UI thread.
+    /// </summary>
+    internal static EditorDocument CreateUntitled(EditorServices svc, int number, string languageId, Func<Uri, string?, string> detectLanguage, string initialText = "")
     {
         var settings = FileSettings.Read(svc.Config, languageId);
-        var doc = new EditorDocument(new Uri($"untitled:Untitled-{number}"), languageId, CreateBuffer(string.Empty, svc.Ui), svc.Ui, settings.UndoLimit)
+        var doc = new EditorDocument(new Uri($"untitled:Untitled-{number}"), languageId, CreateBuffer(initialText, svc.Ui), svc.Ui, settings.UndoLimit)
         {
             _svc = svc,
             _detectLanguage = detectLanguage,
@@ -170,11 +186,18 @@ public sealed partial class EditorDocument
 
     // ---- save ----
 
-    public async Task SaveAsync(CancellationToken ct = default)
+    public Task SaveAsync(CancellationToken ct = default) => SaveAsync(DocumentSaveReason.Manual, ct);
+
+    /// <summary>
+    /// Saves for <paramref name="reason"/>. An auto save after a delay skips format on save and leaves the lines that hold a caret alone (trailing
+    /// whitespace, final newlines), as VS Code's save participants do; an untitled document is saved (Save As) only when the user asked.
+    /// </summary>
+    public async Task SaveAsync(DocumentSaveReason reason, CancellationToken ct)
     {
         if (_svc is null) throw new InvalidOperationException("Document is not attached to a file system.");
         if (IsUntitled)
         {
+            if (reason != DocumentSaveReason.Manual) return; // an auto save never asks for a name
             // Untitled: ask for a name; a cancelled dialog leaves the document dirty and untouched.
             var target = _svc.Window is null
                 ? null
@@ -183,14 +206,14 @@ public sealed partial class EditorDocument
             await SaveAsAsync(target, ct).ConfigureAwait(false);
             return;
         }
-        await SaveToAsync(Uri, ct).ConfigureAwait(false);
+        await SaveToAsync(Uri, reason, ct).ConfigureAwait(false);
     }
 
     /// <summary>Writes to <paramref name="target"/> and makes it the document's identity (re-registers with the document manager).</summary>
     public async Task SaveAsAsync(Uri target, CancellationToken ct = default)
     {
         if (_svc is null) throw new InvalidOperationException("Document is not attached to a file system.");
-        await SaveToAsync(target, ct).ConfigureAwait(false);
+        await SaveToAsync(target, DocumentSaveReason.Manual, ct).ConfigureAwait(false);
         if (target == Uri) return;
         await OnUi(() =>
         {
@@ -206,7 +229,44 @@ public sealed partial class EditorDocument
         StartWatching();
     }
 
-    private async Task SaveToAsync(Uri target, CancellationToken ct)
+    /// <summary>
+    /// The file was moved to <paramref name="target"/> (the Explorer's rename or move): it becomes the document's identity as after Save As, but
+    /// nothing is written, so unsaved changes stay unsaved and the undo history stays. What the file is known to hold on disk is kept (a move does
+    /// not change it), so the watch on the new path sees no external change.
+    /// </summary>
+    public async Task RelocateAsync(Uri target, CancellationToken ct = default)
+    {
+        if (_svc is null || IsUntitled) throw new InvalidOperationException("Only a document backed by a file can follow it to a new path.");
+        if (target == Uri) return;
+        await _ioGate.WaitAsync(ct).ConfigureAwait(false); // not in the middle of a save or reload of the old path
+        try
+        {
+            var stat = await _svc.FileSystem.StatAsync(target, ct).ConfigureAwait(false);
+            await OnUi(() =>
+            {
+                var old = Uri;
+                _registration?.Dispose(); // Closed for the old identity (LSP didClose)
+                Uri = target;
+                if (stat is not null)
+                    lock (_stateGate)
+                    {
+                        _lastKnownStat = stat;
+                        _isReadOnly = stat.IsReadOnly;
+                    }
+                if (!_languageExplicit && _detectLanguage is { } detect && !IsLargeFile) ApplyLanguageId(detect(target, GetLineText(0)));
+                _registration = _svc.Documents.Register(this); // Opened for the new one
+                _uriChanged.Fire((old, target));
+                return 0;
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            _ioGate.Release();
+        }
+        StartWatching();
+    }
+
+    private async Task SaveToAsync(Uri target, DocumentSaveReason reason, CancellationToken ct)
     {
         var svc = _svc!;
         await _ioGate.WaitAsync(ct).ConfigureAwait(false);
@@ -214,8 +274,9 @@ public sealed partial class EditorDocument
         {
             var settings = FileSettings.Read(svc.Config, LanguageId);
             var ec = target.IsFile ? await svc.EditorConfig.ResolveAsync(target, ct).ConfigureAwait(false) : EditorConfigProperties.None;
-            await FormatOnSaveAsync(settings, ec, ct).ConfigureAwait(false);
-            DocumentSnapshot snap = await ApplySaveParticipantsAsync(settings, ec, ct).ConfigureAwait(false);
+            // VS Code: no format on save for an auto save after a delay (it would reformat the code under the user's hands while they type)
+            if (reason != DocumentSaveReason.AfterDelay) await FormatOnSaveAsync(settings, ec, ct).ConfigureAwait(false);
+            DocumentSnapshot snap = await ApplySaveParticipantsAsync(settings, ec, reason == DocumentSaveReason.AfterDelay, ct).ConfigureAwait(false);
 
             var eol = ec.EolString ?? _eol;
             var encoding = FileEncoding.FromSettingName(ec.Charset) is { } charset && target != Uri ? charset : _encoding;
@@ -229,11 +290,13 @@ public sealed partial class EditorDocument
             await OnUi(() =>
             {
                 lock (_stateGate) _lastKnownStat = stat;
+                var changed = !ReferenceEquals(_encoding, encoding) || _eol != eol;
                 _encoding = encoding;
                 _eol = eol;
                 _editorConfig = ec;
                 // Edits typed while the write was in flight stay dirty: only mark the file original if nothing changed since the snapshot.
                 if (Version == snap.Version) MarkSaved();
+                if (changed) FireOptionsChanged();
                 return 0;
             }).ConfigureAwait(false);
             _saved.Fire(this);
@@ -294,8 +357,9 @@ public sealed partial class EditorDocument
             return;
         }
         if (providers.Count == 0) return;
-        var tabSize = ec.EffectiveIndentSize ?? svc.Config.GetOr("editor.tabSize", LanguageId, 4);
-        var insertSpaces = ec.IndentStyle is { } style ? style == "space" : svc.Config.GetOr("editor.insertSpaces", LanguageId, true);
+        // the indentation chosen for this document (status bar) first, as the views indent
+        var tabSize = _indentation?.TabSize ?? ec.EffectiveIndentSize ?? svc.Config.GetOr("editor.tabSize", LanguageId, 4);
+        var insertSpaces = _indentation?.InsertSpaces ?? (ec.IndentStyle is { } style ? style == "space" : svc.Config.GetOr("editor.insertSpaces", LanguageId, true));
         var options = new FormattingOptions(tabSize, insertSpaces);
         var versionBefore = Version;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -320,7 +384,7 @@ public sealed partial class EditorDocument
         }
     }
 
-    private async Task<DocumentSnapshot> ApplySaveParticipantsAsync(FileSettings settings, EditorConfigProperties ec, CancellationToken ct)
+    private async Task<DocumentSnapshot> ApplySaveParticipantsAsync(FileSettings settings, EditorConfigProperties ec, bool guardCarets, CancellationToken ct)
     {
         var trim = ec.TrimTrailingWhitespace ?? settings.TrimTrailingWhitespace;
         var finalNewline = ec.InsertFinalNewline ?? settings.InsertFinalNewline;
@@ -330,12 +394,27 @@ public sealed partial class EditorDocument
         for (var attempt = 0; attempt < MaxSaveParticipantRetries; attempt++)
         {
             var snap = Snapshot();
-            var edits = await _svc!.Io.Run(() => SaveEdits.Compute(snap, trim, finalNewline, trimFinal, eol), ct).ConfigureAwait(false);
+            var guard = guardCarets ? await OnUi(CaretGuard).ConfigureAwait(false) : null;
+            var edits = await _svc!.Io.Run(() => SaveEdits.Compute(snap, trim, finalNewline, trimFinal, eol, guard), ct).ConfigureAwait(false);
             if (edits.Count == 0) return snap;
             var applied = await OnUi(() => Version == snap.Version && ApplyEdits(edits)).ConfigureAwait(false);
             if (applied) return Snapshot();
         }
         return Snapshot(); // the user is typing fast: save what is there without participants
+    }
+
+    /// <summary>The lines that hold a caret and whether one is at the very end (UI thread): what an auto save after a delay must not edit.</summary>
+    private SaveEdits.CaretGuard CaretGuard()
+    {
+        var lines = new HashSet<int>();
+        var atEnd = false;
+        foreach (var offset in CaretOffsets?.Invoke() ?? [])
+        {
+            var clamped = Math.Clamp(offset, 0, _text.TextLength);
+            lines.Add(_text.GetLineByOffset(clamped).LineNumber - 1);
+            atEnd |= clamped == _text.TextLength;
+        }
+        return new SaveEdits.CaretGuard(lines, atEnd);
     }
 
     // ---- reload / external change ----
@@ -396,10 +475,12 @@ public sealed partial class EditorDocument
                     _diskHash = plan.Hash;
                     _lastKnownStat = stat;
                 }
+                var changed = !ReferenceEquals(_encoding, plan.Encoding) || _eol != plan.Eol;
                 _encoding = plan.Encoding;
                 _eol = plan.Eol;
                 _editorConfig = ec;
                 _isReadOnly = stat.IsReadOnly;
+                if (changed) FireOptionsChanged(); // Reopen with Encoding, or the file changed its line endings outside
                 return true;
             }).ConfigureAwait(false);
             if (done) return;
@@ -549,12 +630,21 @@ public sealed partial class EditorDocument
         }
 
         // Dirty + changed on disk: the user decides.
-        var choice = svc.Window is null
-            ? null
-            : await svc.Window.ShowMessageAsync(
-                MessageSeverity.Warning,
-                $"'{Path.GetFileName(Uri.LocalPath)}' has changed on disk and you have unsaved changes.",
-                [new MessageAction("Reload"), new MessageAction("Keep my changes", IsCloseAffordance: true)]).ConfigureAwait(false);
+        string? choice;
+        _externalChangePending = true;
+        try
+        {
+            choice = svc.Window is null
+                ? null
+                : await svc.Window.ShowMessageAsync(
+                    MessageSeverity.Warning,
+                    $"'{Path.GetFileName(Uri.LocalPath)}' has changed on disk and you have unsaved changes.",
+                    [new MessageAction("Reload"), new MessageAction("Keep my changes", IsCloseAffordance: true)]).ConfigureAwait(false);
+        }
+        finally
+        {
+            _externalChangePending = false;
+        }
         if (choice == "Reload") await ApplyDiskContentAsync(bytes, stat, null, CancellationToken.None).ConfigureAwait(false);
         else
             lock (_stateGate)
@@ -565,22 +655,6 @@ public sealed partial class EditorDocument
             }
     }
 
-    /// <summary>Changes the file's line-ending style: rewrites the buffer's terminators as ONE undoable edit (the file becomes dirty).</summary>
-    public void SetEndOfLine(string eol)
-    {
-        if (eol is not ("\n" or "\r\n" or "\r")) throw new ArgumentException("eol must be \\n, \\r\\n or \\r", nameof(eol));
-        _ui.Invoke(() =>
-        {
-            _eol = eol;
-            var text = _text.Text;
-            var normalized = TextFileCodec.NormalizeEol(text, eol);
-            if (!ReferenceEquals(normalized, text)) RunAtomic(() => _text.Replace(0, text.Length, normalized));
-        });
-    }
-
-    /// <summary>Encoding used for the next save ("Save with Encoding"). Does not touch the buffer.</summary>
-    internal void SetEncoding(FileEncoding encoding) => _encoding = encoding;
-
     private void DisposeFileState()
     {
         _watch?.Dispose();
@@ -588,13 +662,17 @@ public sealed partial class EditorDocument
         _registration?.Dispose();
         _registration = null;
         _uriChanged.Clear();
+        _optionsChanged.Clear();
     }
 }
 
 /// <summary>Pure computation of the edits that "trim trailing whitespace" / "insert final newline" / "trim final newlines" make on save.</summary>
 internal static class SaveEdits
 {
-    public static IReadOnlyList<TextEdit> Compute(DocumentSnapshot snap, bool trimTrailingWhitespace, bool insertFinalNewline, bool trimFinalNewlines, string eol)
+    /// <summary>What an auto save after a delay leaves alone: the lines that hold a caret, and the end of the text when a caret is there.</summary>
+    public sealed record CaretGuard(IReadOnlySet<int> Lines, bool AtEnd);
+
+    public static IReadOnlyList<TextEdit> Compute(DocumentSnapshot snap, bool trimTrailingWhitespace, bool insertFinalNewline, bool trimFinalNewlines, string eol, CaretGuard? guard = null)
     {
         var edits = new List<TextEdit>();
         var lineCount = snap.LineCount;
@@ -603,6 +681,7 @@ internal static class SaveEdits
         {
             for (var line = 0; line < lineCount; line++)
             {
+                if (guard is not null && guard.Lines.Contains(line)) continue; // VS Code: the space just typed before the caret stays
                 var text = snap.GetLineText(line);
                 var end = text.Length;
                 while (end > 0 && text[end - 1] is ' ' or '\t') end--;
@@ -615,11 +694,15 @@ internal static class SaveEdits
             // "a\n\n\n" → "a\n": keep the last non-empty line and ONE terminator, drop the blank lines after it.
             var lastContent = lineCount - 1;
             while (lastContent >= 0 && snap.LineContentLength(lastContent) == 0) lastContent--;
-            if (lastContent >= 0 && lastContent + 1 < lineCount - 1)
-                edits.Add(new TextEdit(new TextRange(new TextPosition(lastContent + 1, 0), new TextPosition(lineCount - 1, 0)), string.Empty));
+            // VS Code keeps the blank lines up to the last caret's on an auto save after a delay
+            var from = guard is { Lines.Count: > 0 } ? Math.Max(lastContent + 1, guard.Lines.Max() + 1) : lastContent + 1;
+            if (lastContent >= 0 && from < lineCount - 1)
+                edits.Add(new TextEdit(new TextRange(new TextPosition(from, 0), new TextPosition(lineCount - 1, 0)), string.Empty));
         }
 
-        if (insertFinalNewline && snap.Length > 0)
+        // (not with a caret at the very end on an auto save after a delay: the newline would push the caret onto a line of its own while the
+        // user types; the next save without one there adds it)
+        if (insertFinalNewline && snap.Length > 0 && guard is not { AtEnd: true })
         {
             var lastLine = lineCount - 1;
             if (snap.LineContentLength(lastLine) > 0)

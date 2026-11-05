@@ -74,6 +74,15 @@ public sealed class FakeEditorDocument : IEditorDocument
         return SaveAsync(ct);
     }
 
+    /// <summary>The reason of every save the shell made for a reason (auto save: <see cref="SaveAsync(DocumentSaveReason, CancellationToken)"/>).</summary>
+    public List<DocumentSaveReason> SaveReasons { get; } = new();
+
+    public Task SaveAsync(DocumentSaveReason reason, CancellationToken ct)
+    {
+        SaveReasons.Add(reason);
+        return SaveAsync(ct);
+    }
+
     public Task ReloadAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 

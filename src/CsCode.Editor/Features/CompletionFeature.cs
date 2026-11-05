@@ -538,7 +538,16 @@ internal sealed class CompletionFeature : ICompletionFeature, IThemeAware, ISett
         var endAnchor = doc.Buffer.CreateAnchor(end);
         endAnchor.MovementType = AnchorMovementType.AfterInsertion;
 
-        if (item.InsertTextFormat == InsertTextFormat.Snippet)
+        if (item.InsertTextFormat == InsertTextFormat.Snippet && _v.MultiCursor.IsActive && additional.Count == 0 && _v.Feature<SnippetFeature>() is { } multiSnippets)
+        {
+            // several carets: the snippet replaces the same prefix and suffix around each caret (VS Code's rule), all of it ONE undo step, and its
+            // session has a tab-stop instance per caret
+            var prefix = caretEnd - start;
+            var suffix = end - caretEnd;
+            var buffer = doc.Buffer;
+            _ = multiSnippets.InsertAtCaretsAsync(text, c => (Math.Max(buffer.GetLineByOffset(c.Start).Offset, c.Start - prefix), Math.Min(buffer.GetLineByOffset(c.End).EndOffset, c.End + suffix)));
+        }
+        else if (item.InsertTextFormat == InsertTextFormat.Snippet)
         {
             // remove the typed word (plus any additional edits) in one step, then let the snippet session own the insertion
             var edits = new List<TextEdit>(additional) { TextEdit.Delete(mainRange) };

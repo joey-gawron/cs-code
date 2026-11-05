@@ -328,6 +328,8 @@ public sealed record LangArgs
     public CodeAction? CodeAction { get; init; }
     public CodeLens? CodeLens { get; init; }
     public HierarchyItem? HierarchyItem { get; init; }
+    /// <summary>The colour whose presentations are asked for (<see cref="LangOps.ColorPresentations"/>).</summary>
+    public ColorInformation? Color { get; init; }
     /// <summary>Which earlier result an item to resolve came from (the server resolves its own original instance; see <see cref="OriginToken"/>).</summary>
     public OriginToken? Origin { get; init; }
 }
@@ -350,6 +352,8 @@ public static class LangOps
         DocumentColors = "documentColors", LinkedEditing = "linkedEditing", PrepareCallHierarchy = "prepareCallHierarchy",
         IncomingCalls = "incomingCalls", OutgoingCalls = "outgoingCalls", PrepareTypeHierarchy = "prepareTypeHierarchy",
         Supertypes = "supertypes", Subtypes = "subtypes";
+    /// <summary><see cref="IDocumentColorProvider.ProvideColorPresentationsAsync"/> (the colour picker; an older server answers null).</summary>
+    public const string ColorPresentations = "colorPresentations";
 }
 
 public sealed record WillSaveParams(Uri Uri, DocumentSaveReason Reason);

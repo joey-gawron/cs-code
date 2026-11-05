@@ -23,10 +23,11 @@ dedicated I/O thread, `FswFileWatcher`, `InMemoryConfiguration`, `EditorConfigRe
 `DiagnosticService`), so the module runs and is testable on its own. Nothing ever references another module's concrete types.
 
 Contract additions (additive only — no existing member was renamed or removed): `IEditorViewFactory.DisposeView`; `IEditorViewController.GetViewState`,
-`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
+`RestoreViewState`, `GetBreadcrumbsAsync`, `IsFocused`; `IEditorViewFactory.CreateUntitled(languageId, initialText)` (§7h); the `EditorViewState` record; the clipboard members (§7a); the macro hooks `TextInput`,
 `ReplayText`, `ReplayKey`, `OpenUndoGroup`, `StartNewUndoStep` (below); `SetSelections` (multi-cursor, §7b; `Selections` lists the primary
 first, then the other carets in document order). The later additions are default interface members, so other implementations keep
-compiling. **No change was made to CsCode.Core.**
+compiling. Multi-cursor's second round added `EditorViewState.Carets` (an init-only property) with its `EditorCaretState` record, and the
+modal surface's multi-caret members (§7b, "Vim"). **No change was made to CsCode.Core.**
 
 **Modal editing surface (for the shell's Vim adapter).** `CodeEditorControl.Modal` (`EditorModalSurface`, created on first use, disposed with the
 view) is a Vim-free hook surface: the typing path (`TypeText` = `TextArea.PerformTextInput`), `CaretShape` (block / underline / outline / thin
@@ -125,6 +126,10 @@ view components (renderers, margins,        parsing + code colouring for hovers 
   unchanged; parsing and queries run on the engine's own syntax lane, sliced and cancellable; any failure falls back to TextMate. The tree also gives Expand Selection,
   folding and an outline when no language server does. `CodeEditorControl.SyntaxEngine` tells which engine colours a view. Design, isolation and limits:
   `docs/TREE-SITTER.md` (evaluation: `docs/TREE-SITTER-EVALUATION.md`).
+* **Token kinds for other modules** (spell): `TextMate/SyntaxClassifier.cs` implements Core's `ISyntaxClassificationService` over the token store
+  (registered by `AddCsCodeEditor`): a capture copies the row references (`LineTokenStore.CopyRows`, one lock), each interned scope stack is
+  reduced once to Code / Comment / String / Text / Ignored (`SyntaxScopeRules`), and `TokenizationManager.TokenRowsChanged` (raised where the
+  views' redraw is) says which lines got tokens. The spell checker reads comments and strings through it (docs/SPELLCHECK.md §2).
 
 ## 3. What is implemented
 
@@ -171,6 +176,11 @@ Numbers refer to the brief's MUST list.
 
 18. **Overview ruler and minimap** (marks for problems, find matches, occurrences, source-control changes, breakpoints and the carets on the
     scrollbar; a token-coloured minimap with a draggable slider, drawn off the UI thread): see §7f.
+
+19. **Bookmarks** (Visual Studio's; toggle, next / previous across files and in the document, clear, list, a glyph in the indicator margin and
+    a mark on the overview ruler, kept through edits, renames and restarts): see §7g.
+20. **Colour decorators and the colour picker** (a swatch in front of every colour a colour provider or the built-in CSS colour finder reports;
+    the picker writes the chosen presentation live, one undo step, Escape reverts): see §7i.
 
 SHOULD items done: breadcrumbs (`GetBreadcrumbsAsync`, cached per document version and per set of symbol providers: a language server that starts after the file was opened is asked at the next request, without an edit), Ctrl+Click on http(s) URLs (through `IWindowService.OpenExternalAsync`), inlay hints (anchored, capped at 1000, setting-gated), accessibility names on the editor, popups and margin.
 
@@ -275,6 +285,12 @@ AvaloniaEdit 12.0.0 (`Avalonia.AvaloniaEdit`):
 * `TextView.Redraw(offset, length)` **also drops the line before the range**: it compares the range start with each line's end *including the
   delimiter* inclusively, so a range starting at a line's first character takes the previous line too. The colorizer starts its row redraw one
   character into the first line (`TokenRedrawTests`).
+* **An inline object hangs below the text**: `InlineObjectRun.Baseline` is `TextBlock.GetBaselineOffset(element)` and only NaN means "use the
+  height", but Avalonia's default is 0, so the object's top sat on the baseline and its whole height went below it. Every inlay hint made its row
+  taller, and the gutter glyphs, centred on the row, drifted below their line numbers (most visibly on a wrapped Python line with a type hint).
+  An inlay hint is now a box one text line high with its `BaselineOffset` set to the text's baseline (`A_hint_keeps_its_row_the_height_of_the_text`).
+  Whatever else stretches a row, the breakpoint and test glyphs sit on the text of the line's first row (`VisualYPosition.TextMiddle`), level
+  with the number that `TextTop` places (`The_glyph_sits_level_with_the_line_number_on_a_wrapped_line_whose_first_row_is_stretched`).
 
 TextMateSharp 2.0.3:
 
@@ -315,12 +331,15 @@ settings alone, so a project's `.editorconfig` could make it say "Spaces: 4" whi
 `editor.formatOnSave/OnType/OnPaste`, `editor.emptySelectionClipboard`, `editor.selectionClipboard`, `editor.autoIndentOnPaste`, `editor.autoIndent`, `editor.hover.delay`, `editor.inlayHints.enabled`, `workbench.colorTheme`, `files.encoding`, `files.eol`, `files.insertFinalNewline`, `files.trimFinalNewlines`, `files.trimTrailingWhitespace`, `files.associations`, and the module's own `cscode.editor.undoLimit` (default 1000 groups),
 `cscode.editor.maxFileSizeBytes` (200 MB), `cscode.editor.largeFileLongLineChars` (20,000), `cscode.editor.largeFileThresholdBytes` (5 MB),
 `editor.syntaxEngine` (`auto`; the old `editor.experimental.treeSitter` is read as an alias; see docs/TREE-SITTER.md), and
-`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) (§7b; the factory registers both, so the Settings panel lists them),
+`editor.multiCursorLimit` (10,000) / `editor.multiCursorPaste` (`spread`) / `editor.multiCursorModifier` (`alt`) and `editor.useTabStops` (true)
+(§7b; the factory registers them, so the Settings panel lists them),
 `editor.linkedEditing` (off, VS Code's default; §7d; registered by the factory too),
 `editor.codeLens` (true), `editor.codeLensFontSize` (0 = 90 % of the editor's), `editor.codeLensFontFamily` ("" = the editor's) and
 `editor.semanticHighlighting.enabled` (`configuredByTheme`) (§7e; registered by the factory too),
 and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`, `.renderCharacters` (true, VS Code's default), `.maxColumn`, `.showSlider`, `.scale`,
-`editor.overviewRulerLanes`, `editor.overviewRulerBorder`, `editor.hideCursorInOverviewRuler`, `debug.showBreakpointsInOverviewRuler` (§7f).
+`editor.overviewRulerLanes`, `editor.overviewRulerBorder`, `editor.hideCursorInOverviewRuler`, `debug.showBreakpointsInOverviewRuler` (§7f),
+and the colour decorators' `editor.colorDecorators` (true), `editor.colorDecoratorsLimit` (500), `editor.colorDecoratorsActivatedOn`
+(`clickAndHover`) and `editor.defaultColorDecorators` (`auto`) (§7i; registered by the factory too).
 
 **Commands** (VS Code ids): `editor.action.commentLine`, `addCommentLine`, `removeCommentLine`, `blockComment`, `moveLinesUpAction`, `moveLinesDownAction`, `copyLinesUpAction`, `copyLinesDownAction`, `deleteLines`, `indentLines`, `outdentLines`, `joinLines`, `transposeLetters`, `trimTrailingWhitespace`,
 `sortLinesAscending/Descending`, `smartSelect.expand/shrink`, `selectAll`, `undo`, `redo`, `actions.find`, `editor.action.showHover` (at the caret),
@@ -329,7 +348,52 @@ and the minimap's and overview ruler's `editor.minimap.enabled` (true), `.side`,
 multi-cursor's `editor.action.addSelectionToNextFindMatch`, `moveSelectionToNextFindMatch`, `selectHighlights`, `insertCursorAbove`, `insertCursorBelow`, `cursorUndo`, `removeSecondaryCursors` (§7b),
 the peek's `editor.action.peekDefinition`, `peekDeclaration`, `peekTypeDefinition`, `peekImplementation`, `referenceSearch.trigger` (Peek References), `closeReferenceSearch` (§7c)
 and `editor.action.linkedEditing` (Start Linked Editing, §7d),
-and `editor.action.toggleMinimap` (View: Toggle Minimap, §7f).
+and `editor.action.toggleMinimap` (View: Toggle Minimap, §7f),
+and the bookmarks' `bookmarks.toggle`, `toggleEnabled`, `toggleAllEnabled`, `jumpToNext`, `jumpToPrevious`, `jumpToNextInDocument`,
+`jumpToPreviousInDocument`, `clear`, `clearFromAllFiles`, `list`, `showWindow` (§7g),
+and `editor.action.showOrFocusStandaloneColorPicker` (Show or Focus Standalone Color Picker, §7i),
+and the everyday commands below (`View/EditorTextCommands.cs`, `View/DocumentOptionCommands.cs`; VS Code's ids and palette titles): `editor.action.toggleWordWrap`,
+`fontZoomIn`, `fontZoomOut`, `fontZoomReset`, `transformToUppercase`, `transformToLowercase`, `transformToTitlecase`, `transformToSnakecase`, `transformToCamelcase`,
+`transformToKebabcase`, `transformToPascalcase`, `duplicateSelection`, `workbench.action.editor.changeEncoding`, `workbench.action.editor.changeEOL`,
+`changeEditorIndentation` (the status bar's indentation picker, not in the palette), `editor.action.indentUsingSpaces`, `indentUsingTabs`, `changeTabDisplaySize`,
+`detectIndentation`, `indentationToSpaces`, `indentationToTabs`.
+
+**Word wrap and font zoom.** View: Toggle Word Wrap (Alt+Z / ⌥Z in both presets, View > Word Wrap, checked through VS Code's `editorWordWrap`
+context key) flips wrapping for the active view only and never writes `editor.wordWrap`; the choice is kept in the view state
+(`EditorViewState.WordWrap`, additive), so a view the shell recreates keeps it, and a change of `editor.wordWrap` ends it (a restored choice the
+setting now agrees with is dropped). Editor Font Zoom In / Out / Reset (Ctrl/⌘+=, Ctrl/⌘+Shift+=, Ctrl/⌘+NumPad+; Ctrl/⌘+- and NumPad-; Ctrl/⌘+0
+and NumPad0; the Visual Studio preset keeps Ctrl+- for Navigate Backward off the Mac) share the Ctrl+wheel zoom (`editor.mouseWheelZoom`): one
+`CodeEditorControl.ZoomFont`, per view, ±1 px between 6 and 72, not persisted, kept across settings changes as an offset from `editor.fontSize`
+(a settings change used to drop the wheel's zoom).
+
+**Case and duplicate** (`Editing/TextTransforms.cs`, pure): Transform to Uppercase / Lowercase / Title Case / Snake Case / Camel Case / Kebab Case /
+Pascal Case use VS Code's own rules (its regular expressions ported, so `parseHTMLString` becomes `parse_html_string` and `foo.bar_baz` becomes
+`Foo.BarBaz`; upper / lower case follow the current culture as VS Code's locale case does). They change every selection and, at an empty caret, the
+word it touches (`editor.wordSeparators`, VS Code's default); carets in one word change it once. Duplicate Selection puts each selection's text again
+right after it and selects the copy, and an empty caret's line below it (several carets on one line duplicate it once), the caret moving to the copy.
+Every caret of multi-cursor (§7b), ONE undo step, read-only documents untouched; selections over 150K characters are computed on the editor worker
+from a snapshot and dropped if the text changed meanwhile. Keys only where a preset has one: Visual Studio's Make Uppercase, Ctrl+Shift+U (⌘⇧U);
+its Make Lowercase (Ctrl+U) is Cursor Undo and its Duplicate (Ctrl+D) is Copy Line Down in that preset, and VS Code binds none of them.
+
+**Encoding, line endings and indentation** (the status bar's items, docs/SHELL.md): Change File Encoding offers Reopen with Encoding and Save with
+Encoding (an untitled document: Save only), then VS Code's encoding list (`FileEncoding.Choices`: its ids and labels, 39 encodings, the code pages
+through `CodePagesEncodingProvider`; `files.encoding` accepts the same ids now). Reopen decodes the file again (a dirty document asks before its
+changes are discarded); Save sets the encoding and saves through the shell's save (its will-save participants) when the document is the active
+one. Change End of Line Sequence (LF / CRLF; `EditorDocument.ChangeEndOfLineAsync`) computes the new text on the IO lane and applies it as one change
+whose offset map moves each line ending on its own, so the caret, selections and folds stay where they were; ONE undo step that also gives back
+`EndOfLine` (an undo marker), and the document is dirty. The indentation picker offers Indent Using Spaces / Tabs and Change Tab Display Size (a tab
+size 1-8, VS Code's "Configured / Current Tab Size" hints), Detect Indentation from Content (VS Code's guesser ported: `Editing/IndentationOperations.cs`)
+and Convert Indentation to Spaces / Tabs (VS Code's: each tab of the leading whitespace to tab-size spaces, each run of tab-size spaces to a tab; one
+undo step). The choices are the document's own (`EditorDocument.IndentationOverride`, VS Code's per-model options): over the settings and its
+`.editorconfig`, followed by every view of the document, Tab and Enter, format on save and the status bar, for as long as the document is open.
+`EditorDocument.OptionsChanged` reports encoding, line-ending and indentation changes.
+
+**Saving for auto save** (the shell's `files.autoSave`, docs/SHELL.md): `IEditorDocument.SaveAsync(DocumentSaveReason, CancellationToken)` (additive,
+Core). After a delay (`AfterDelay`) the save skips `editor.formatOnSave` and leaves the lines that hold a caret alone, as VS Code's save
+participants do: no trailing whitespace trimmed there, no blank line removed up to the last caret, no final newline added under a caret at the very
+end (it would push the caret onto a line of its own while the user types); `editor.codeActionsOnSave`'s `always` kinds run on focus or window
+changes (`FocusOut`) but not after a delay, as in VS Code. An untitled document is never saved by an auto save (no Save As dialog).
+`EditorDocument.IsExternalChangePending` is true while its "changed on disk" question waits.
 
 ### 7a. Clipboard and the right-click menu
 
@@ -415,17 +479,20 @@ change event (one LSP `didChange`, one snapshot) and ONE undo step.
 | **Move to Next Occurrence** (`moveSelectionToNextFindMatch`) | The primary selection jumps to the next occurrence instead of adding one. |
 | **Select All Occurrences** (`selectHighlights`) | Every occurrence of the selection (or of the word at the caret, whole word and case) becomes a selection, the one at the old primary staying primary. Searches a snapshot in 64K chunks; above 4M characters on a worker (dropped if the text changed meanwhile). |
 | **Insert Cursor Above / Below** (`insertCursorAbove` / `insertCursorBelow`) | A caret on the line above / below each caret at the same visual column (tabs expanded; the column is kept across shorter lines); the new outermost one is primary, so repeating extends the column. |
-| **Alt+Click** (Option+Click on macOS) | Adds a caret at the click, or removes the caret clicked on. AvaloniaEdit's own Alt+press (the start of its box selection) is let through: a release within 3 px of the press is a click, anything further is a drag and the box selection (Linux) or stream selection (macOS, where AvaloniaEdit's box wants Ctrl+Option) stands. |
+| **Alt+Click** (Option+Click on macOS) | `editor.multiCursorModifier` (VS Code's): `alt` (the default) or `ctrlCmd`, which makes Ctrl+Click (⌘+Click on macOS) add carets and moves Go to Definition, Open Link, a document link and an inlay hint's location to Alt+Click (Option+Click), with the link underline under Alt and the inlay hint's tooltip saying so. Adds a caret at the click, or removes the caret clicked on. AvaloniaEdit's own Alt+press (the start of its box selection) is let through: a release within 3 px of the press is a click, anything further is a drag and the box selection (Linux) or stream selection (macOS, where AvaloniaEdit's box wants Ctrl+Option) stands. |
 | **Cursor Undo** (`cursorUndo`) | Back to the carets before the last caret command (the ones above and Alt+Click), up to 50 states; states from before an edit are dropped. |
 | **Escape** / `removeSecondaryCursors` | Back to the primary alone, after the completion list, parameter hints and a snippet session have had their Escape. |
-| Typing, Backspace / Delete (Ctrl / Option for a word; Shift+Backspace is Backspace), Enter, Tab / Shift+Tab | At every caret: each selection replaced; Backspace and Delete take a CRLF or a surrogate pair as one character; word deletes that reach over other carets merge; Enter gives each new line the language's indentation (onEnterRules, brackets: `{|}` splits) and drops the blanks after the caret, as the single-caret Enter does; Tab inserts spaces to the next tab stop (or a tab), or indents the lines of a multi-line selection, Shift+Tab outdents. A typed run is one undo step (continued while nothing else happens, as single-caret typing). |
-| Arrows, Home / End, Ctrl+Left/Right (Option on macOS), ⌘←/⌘→ on macOS, Shift for selection | Every caret moves; Left/Right collapse a selection to its side; Up/Down keep a visual column, the first line's Up goes to its start and the last line's Down to its end; Home is smart (first non-blank, then column 0). Carets that meet merge. Up/Down move by document lines (not wrapped rows). |
+| Typing, Backspace / Delete (Ctrl / Option for a word; Shift+Backspace is Backspace), Enter, Tab / Shift+Tab | At every caret: each selection replaced; **auto-closing, over-typing and auto-surround at every caret** (`TypingBehaviors.TypedBatch`): each caret decides from its own context exactly as a single caret there would (the language's pairs and their `notIn`, the token under that caret, the character after it, whether the closer after it was auto-inserted, its selection), so with `(` typed at `foo|` and `foo|bar` the first gets `()` and the second a plain `(` (VS Code applies a pair only when every caret allows it; here a caret whose context refuses it types the plain character while the others get theirs); the closers inserted at every caret are tracked (up to 20,000), over-typed and deleted with their opener by Backspace; a lone closing bracket typed at every caret is pulled back to its block's indentation in the same undo step. **Backspace in leading whitespace deletes back to the previous indentation stop** (`editor.useTabStops`, VS Code's, default true: `        |` loses four spaces, `      |` two), for one caret (`TypingBehaviors`) and at every caret; Backspace and Delete take a CRLF or a surrogate pair as one character; word deletes that reach over other carets merge; Enter gives each new line the language's indentation (onEnterRules, brackets: `{|}` splits) and drops the blanks after the caret, as the single-caret Enter does; Tab inserts spaces to the next tab stop (or a tab), or indents the lines of a multi-line selection, Shift+Tab outdents. A typed run is one undo step (continued while nothing else happens, as single-caret typing). |
+| Arrows, Home / End, Ctrl+Left/Right (Option on macOS), ⌘←/⌘→ on macOS, Shift for selection | Every caret moves; Left/Right collapse a selection to its side; Up/Down keep a visual column, the first line's Up goes to its start and the last line's Down to its end; Home is smart (first non-blank, then column 0). Carets that meet merge. **With word wrap Up/Down move every caret by visual rows**, as the single caret does: the rows are AvaloniaEdit's own layout of each caret's line (`TextView.GetOrConstructVisualLine`; a line too short to wrap is one row without being laid out), the column is kept within the row, and a caret never lands on a wrap point's far side. |
 | **Undo / Redo** | An edit's undo step carries two markers (`EditorDocument.AddUndoMarker`): undo puts back the carets from before it, redo the carets after it, applied when the buffer's update ends. Only for edits with at most 1,000 carets (a snapshot per step); above that undo leaves AvaloniaEdit's caret alone. The markers hold the controller weakly, so history never keeps a view alive. |
 | **Clipboard** | §7a: copy joins the selections with line breaks, paste spreads one line per caret, cut keeps a caret at each. |
-| **Completion** | Typing at several carets triggers completion and signature help at the primary (the typing path's `Typed` event); accepting a plain completion replaces the same prefix and suffix around every caret (VS Code's rule), in one step. A snippet completion, Insert Snippet, Format, the line commands (move / copy / comment lines) act at the primary, and the caret move that follows collapses the others. |
+| **Completion** | Typing at several carets triggers completion and signature help at the primary (the typing path's `Typed` event); accepting a plain completion replaces the same prefix and suffix around every caret (VS Code's rule), in one step; a snippet completion does the same with the snippet (below). Format and code actions still act at the primary, and the caret move that follows collapses the others. |
+| **Snippets** | Insert Snippet (`editor.action.insertSnippet`, the Insert Snippet... / Surround With... pickers) and a snippet completion go in at every caret as ONE undo step, each copy resolved for its own caret (`TM_SELECTED_TEXT`, the line, the word, the line's indentation; `$CLIPBOARD` spread one line per caret when the counts match, as a paste is). The session holds one instance per caret (`SnippetFeature.InsertAtCaretsAsync`): Tab / Shift+Tab select that stop in every instance at once, so typing fills them all; each instance keeps its own mirrors and transforms (updated right after the carets' batch, joined to the typed run's undo step: `MultiCursorController.BatchApplied`); a choice goes into every instance; `$0` ends the session with the carets there; the first Escape ends the session, the second the carets. |
+| **Line commands** | Move Line Up/Down, Copy Line Up/Down, Delete Line, Toggle / Add / Remove Line Comment, Indent / Outdent Line act on the lines of every caret (`MultiCaretLineCommands`, one batch and undo step, the carets restored by undo): the carets' lines form blocks (a selection's lines; carets on one line share it; for move, copy and delete adjacent blocks join, so a column of carets moves as one block, and a block at the document's edge stays); each block gets the single-selection command's edits and every caret keeps its column on its line wherever it went (copies: on the lower copy going down, the upper going up; Delete Line: one caret per block where the block was). Toggle Block Comment, Join Lines, Sort, Transpose and the others still act at the primary. |
+| **View state** | `GetViewState` keeps every caret (`EditorViewState.Carets`: the primary first, each with its anchor and active end); `RestoreViewState` brings them all back, so a tab whose view the shell destroyed and recreated has its carets. The session files (docs/SESSIONS.md) store the primary's selection only. |
 | **Edits from elsewhere** | A language server's edit, another view of the document, undo of an older step: the carets follow all the changes of the buffer's update at once when it ends (`ChangeSequenceMapper`: the same offsets as following each change in turn, but by binary search when the changes run back to front, as a batch and its redo are applied, or front to back, as AvaloniaEdit's undo replays one, so O(carets × log changes); other orders go change by change), then the primary is taken from AvaloniaEdit and carets that met merge. An undo that restores its carets maps nothing. Following each change as it came made undo of a 10,000-caret step take seconds (one change per caret, each moving every caret). |
 | **Collapsing** | Anything else that moves the primary (a click, Page Down, Ctrl+Home, Ctrl+A, Go to Definition, Find Next, `SetSelection`) collapses the others to it, as in VS Code. |
-| **Vim** | While a modal layer is attached (`EditorModalSurface.Attach`, so whenever Vim mode is on, which is the default) multi-cursor is off: attaching collapses the carets, the commands say "Multiple cursors are not available while Vim mode is on" in the status bar and add nothing, Alt+Click adds nothing. Turn Vim off (`vim.enable: false` or Toggle Vim Mode) to use it. |
+| **Vim** | Attaching a modal layer (`EditorModalSurface.Attach`) collapses the carets, and multi-cursor stays off under a layer that does not handle carets ("Multiple cursors are not available while Vim mode is on"). The shell's Vim adapter does (`EditorModalSurface.AllowMultipleCarets`): the commands and Alt+Click add carets with Vim on, the editing keys it passes through act at every caret, and it places the carets around the engine's cursor with `HoldCarets` (moving the primary does not collapse the others), `Carets` / `SetCarets` / `PlaceCaret`, `EditAtCarets` (one edit per caret) and `EditLinesAtCarets`; the other carets are drawn in the layer's caret shape (Vim's block in Normal mode). What each Vim key does with several carets: docs/VIM.md, "Multi-cursor". |
 | **Macros** | Recorded as what they are: the keys (replayed through `ReplayKey`, which reaches the controller's handler), typed text (`ReplayText`, through `TextEntering`) and the commands. Alt+Click is a mouse gesture and is not recorded. |
 | **Read-only documents** | Carets can be added and moved; typing and the editing keys do nothing (and never edit at the primary alone). |
 | **Limits** | `editor.multiCursorLimit` (default 10,000, VS Code's id and default): the carets nearest the primary are kept and the status bar says "The number of cursors has been limited to N.". A keystroke costs O(carets × log document) plus each caret's own line; nothing per caret scans the document. Drawing visits only the carets in the visible lines (binary search). Measured: typing a character at 10,000 carets is one change event and one undo step, and its undo and redo move the carets along their 10,000 changes at once (`MultiCursorViewTests`). |
@@ -444,9 +511,13 @@ Ctrl+Alt+Up/Down (⌥⌘↑/↓) and Ctrl+U (⌘U); Move to Next Occurrence has 
 `!vim.active` in both (Vim owns it). Escape and Alt+Click are the editor's own.
 
 Contract: `IEditorViewController.Selections` lists the primary first, then the other carets in document order; `SetSelections(list)` sets
-several (the first is primary; one only while Vim is on); `SetSelection` collapses them.
+several (the first is primary; one only under a modal layer that does not handle carets, §7b "Vim"); `SetSelection` collapses them.
 
-Tests: `MultiCaretModelTests` (the caret set, every edit and movement, the occurrence search across chunk seams), `ChangeSequenceMapperTests` (offsets through a batch, its undo and any other order, against change-by-change mapping), `MultiCursorViewTests`
+Tests: `MultiCaretModelTests` (the caret set, every edit and movement, the occurrence search across chunk seams), `MultiCaretEditingModelTests` (a typed
+character with a decision per caret, Backspace to indentation stops and between pairs, Up/Down by wrapped rows), `MultiCursorEditingTests` (auto-closing,
+over-typing, surround and notIn at every caret with one undo step per typed run and 10,000 carets in one change, Backspace to tab stops for one caret and many,
+wrapped Up/Down against the single caret, `editor.multiCursorModifier` with Go to Definition, the view state, a modal layer's carets and block carets),
+`MultiCursorSnippetAndLineTests` (snippets at every caret with their sessions, mirrors, completion and undo; each line command), `ChangeSequenceMapperTests` (offsets through a batch, its undo and any other order, against change-by-change mapping), `MultiCursorViewTests`
 (each command, Alt+Click and Alt+drag, typing and the keys with undo/redo of text and carets, clipboard, completion, macros' replay, edits from
 elsewhere, collapsing, Vim, read-only, the limit, 10,000 carets with their undo and redo, drawing and the blink timer), `RealApp/MultiCursorTests` (the preset keys
 through the real keyboard pipeline, `editorHasMultipleSelections`, Vim on), `KeybindingServiceTests` (both presets on Linux and macOS).
@@ -482,7 +553,7 @@ References (`NavigationFeature.FindDefinitionsAsync`, `FindReferenceLocationsAsy
   multi-cursor's, so they take Esc first when they have something to close), from the list and from the embedded editor (whose own popups and
   carets keep their Esc and Enter first); with Vim on, Esc in Normal mode calls `EditorModalSurface.ClosePeek`, which closes a peek of the
   view or of the peek the view is embedded in, while the Esc that leaves Insert, Visual or an operator only changes the mode (VS Code's Vim),
-  so `i`, typing, Esc and more edits work in the embedded editor; `CloseInfoPopups` (every Vim Esc) closes hover and parameter hints only. Enter in the list or in a read-only embedded editor, a double-click in either, or a click on the
+  so `i`, typing, Esc and more edits work in the embedded editor; `CloseInfoPopups` (every Vim Esc) closes hover, parameter hints and the colour picker (§7i), not the peek. Enter in the list or in a read-only embedded editor, a double-click in either, or a click on the
   title opens the location as Go to Definition does (this view when it is the same file, else a tab through the shell) and closes the peek. The
   ✕ button closes it. While a peek is open the context key `referenceSearchVisible` (VS Code's) is true.
 * **Lifetime**: closing the peek disposes the embedded editor (it leaves the factory's views) and releases its snapshot document; disposing the
@@ -609,6 +680,7 @@ ruler (the ruler over the vertical scrollbar), or minimap | gutter | text | rule
 | centre | find matches while the find panel is open (`editorOverviewRuler.findMatchForeground`), occurrence highlights (`wordHighlightForeground`, writes `wordHighlightStrongForeground`) |
 | right | errors, warnings, information (`editorOverviewRuler.errorForeground`, `warningForeground`, `infoForeground`; hints are not marked, as in VS Code) |
 | all | the caret lines, every caret of multi-cursor (`editorCursor.foreground`; `editor.hideCursorInOverviewRuler` hides them) |
+| all | merge conflict sides, under the caret lines (`editorOverviewRuler.currentContentForeground`, `incomingContentForeground`, `commonContentForeground`; §7j) |
 
 A mark is placed where its lines are in the scrollable height over the scrollbar's track (between its arrow buttons), from AvaloniaEdit's height
 tree, so folded lines take no room, wrapped lines their rows, and marks line up with the thumb. Laying out does one height-tree lookup per
@@ -662,21 +734,157 @@ minimap, click / drag / wheel, the slider's visibility, folding, each source of 
 theme changes, disposal, sticky scroll's insets, a 1M-line file, typing that renders nothing on the keystroke, and screenshots in the dark and
 light themes written to `.scratch/screenshots/minimap-*.png`).
 
+### 7g. Bookmarks
+
+Visual Studio's bookmarks (VS Code users know them from the Bookmarks extension): `Bookmarks/BookmarkService.cs` (Core's `IBookmarkService`,
+registered by `AddCsCodeEditor`), `Bookmarks/BookmarkCommands.cs` and, per view, `Features/BookmarkFeature.cs`. The Bookmark Window is the
+shell's (docs/SHELL.md).
+
+* **Commands** (palette category *Bookmarks*, Visual Studio's wording; Edit > Bookmarks; the editor's right-click *Bookmarks* submenu, beside
+  *Breakpoint*, with Add or Remove Bookmark and Enable or Disable Bookmark for the caret line, Next, Previous, Clear Bookmarks in Document,
+  Bookmark Window):
+  `bookmarks.toggle` (each caret's line), `bookmarks.toggleEnabled`, `bookmarks.toggleAllEnabled`, `bookmarks.jumpToNext` / `jumpToPrevious`
+  (across files, in path order then by line, wrapping; a disabled bookmark is skipped, as in Visual Studio), `jumpToNextInDocument` /
+  `jumpToPreviousInDocument`, `bookmarks.clear` (the document's), `bookmarks.clearFromAllFiles` (asks first, as Visual Studio does),
+  `bookmarks.list` (a quick pick of every bookmark: its label or line text, `file:line`, folder; picking one goes there) and
+  `bookmarks.showWindow`. They act at the caret of the view that last had the keyboard; Next, Previous, List and Clear All also work without
+  one. In that view's document the caret goes to the start of the line, scrolling only when it is off screen; another document is opened
+  through `INavigationService`. A file that no longer exists loses its bookmarks when navigation reaches it (the status bar says so) and the
+  next one is taken.
+* **Keys** (only while an editor has the keyboard): the Visual Studio keymap has Ctrl+K Ctrl+N / Ctrl+K Ctrl+P (next / previous) and
+  Ctrl+K Ctrl+W (Bookmark Window), with ⌘ on a Mac, where ⌘K ⌘K toggles. Visual Studio's Ctrl+K Ctrl+K (toggle) and Ctrl+K Ctrl+L (clear) are
+  this keymap's Indent / Outdent Lines, and ⌘K ⌘L its Toggle Outlining on a Mac, so they were left as they are: Toggle Bookmark has no key on
+  Linux and Windows, Clear All Bookmarks none anywhere (Edit > Bookmarks, the palette and the right-click menu have both). The VS Code keymap
+  has the Bookmarks extension's Ctrl+Alt+K / L / J (toggle, next, previous; ⌥⌘K / L / J).
+* **The glyph**: a ribbon in `bookmarks.iconForeground` (#157EFB by default; an outline when disabled) on the line's first visual row, level
+  with its line number (the row's `VisualYPosition.TextTop`, one default line high), also when the line wraps or carries a code lens. With a
+  debugger composed it is drawn in the breakpoint margin, under the breakpoints and the stop arrow: the margin calls `DebugFeature.Underlay`
+  right after filling its background (that hook is the only change to the margin). Without one, and in large-file mode (which keeps
+  bookmarks: they are not a language feature), the feature adds a margin of its own, as wide, that takes no width while the document has no
+  bookmark. A click in the margin never toggles a bookmark: it stays the breakpoint's. Only documents the document manager knows (files,
+  untitled buffers) have bookmarks; the sides of a diff do not.
+* **The overview ruler** marks them in the left lane (Visual Studio's marks column) in `bookmarks.overviewRuler` (the extension's colour id and
+  default, #157EFB88), under a breakpoint and over a source-control change on the same row; the minimap does not show them.
+* **Edits**: the service follows every change of an open document (`IDocumentManager.Changed`, so also a tab without a live view) the way the
+  editor moves breakpoints (`BreakpointShift`): lines added or removed above move a bookmark, a deleted line takes its bookmark with it, a
+  joined line keeps the bookmark of the line whose text survives. A keystroke in a document without bookmarks costs one set lookup, one
+  without a line break one call that returns at once.
+* **Persistence**: per workspace in `IStateStorage` (key `bookmarks`: URI, line, label, enabled), written 400 ms after the last change on a
+  pool thread and at exit (the shell disposes the service before its last state flush), through `IWorkspaceStateScope`, so a folder switch
+  never writes one folder's bookmarks into another's; read off the UI thread when the service starts and when another folder opens. Lines are
+  kept while a file is closed; when it opens again a bookmark past its end moves to its last line (one per line). An untitled buffer's
+  bookmarks are never saved and go when it closes; Save As carries a document's bookmarks to its new name. At most 10,000 are kept.
+* **Files**: as an `IFileOperationParticipant` (registered by the shell after the remote module, `AddBookmarkFileTracking`), a rename or
+  move done in CsCode (Explorer, workspace edits) moves the bookmarks of the file, or of every file under a folder, and a delete removes them.
+
+Tests: `BookmarkServiceTests` (toggling, the order, Next / Previous, edits, one write per burst of typing, the round trip through the
+workspace state, a file that shrank, renames and deletes of files and folders, untitled buffers, another folder, a closed document not
+retained), `BookmarkViewTests` (the commands at one and several carets, the glyph's pixels in its own margin and in the breakpoint margin, a
+click that stays the breakpoint's, a wrapped line, the ruler, Next / Previous across files, a file that is gone, List, Clear All, Save As,
+large-file mode, the right-click submenu's items, a closed view not retained); Platform's `BookmarkKeysTests` (both keymaps, Linux and Mac);
+the shell's `BookmarksWindowTests` and `RealApp/BookmarkRealAppTests` (the real keymap and menus, a restart, an Explorer rename and delete).
+
+### 7h. What the search editor uses
+
+The search editor (CsCode.Panels.Search, docs/PANELS-SEARCH.md "Search editor") is an ordinary editor tab over a `search-result` document; the editor
+gives it four things. **The `search-result` language** (`.code-search`), built in with a TextMate grammar of CsCode's own
+(`Languages/Grammars/search-result.tmLanguage.json`, embedded like the own language configurations; TextMateSharp.Grammars has no search-result
+grammar) using VS Code's scope names. **Match highlights** (`MatchHighlightFeature`): the ranges `IMatchHighlightProvider`s report, asked off the UI
+thread once the text has been still for 80 ms (merged, sorted and capped at 50,000 there, an answer for older text dropped), moved with the edits until
+the next answer (a range an edit touches goes), painted on the visible lines only with `searchEditor.findMatchBackground` (VS Code's default: the
+find-match highlight at 66 %); a document no provider serves costs a flag test per edit. **Double-clicks** (`DoubleClickFeature`): a plain left
+double-click is offered to the document's `IDoubleClickHandler`s before AvaloniaEdit selects the word; one that takes it gets the caret at the click and
+no selection. **Untitled buffers with text**: `IEditorViewFactory.CreateUntitled(languageId, initialText)` (the text is not an undo step; the document
+starts unmodified). Tests: `SearchResultEditorTests` (the grammar's scopes, highlights following edits and asked again, no requests for other
+documents, the shifting rules, a double-click taken and one left to the word selection).
+
+### 7i. Colour decorators and the colour picker
+
+`Features/ColorDecoratorFeature.cs` (one per view, not in large-file mode), with `ColorPickerSession`, `ColorPickerWidget`, `DefaultColorProvider`
+and the pure `ColorFormats`: VS Code's colour decorators and colour picker.
+
+* **Asking.** Every `IDocumentColorProvider` of the document (a language server's `textDocument/documentColor`: vscode-css-language-server for
+  CSS, SCSS and Less, ...) is asked 500 ms after the text stops changing, at once when a provider comes or goes or a setting changes, off the
+  UI thread with a 5 s deadline, latest wins (a newer request cancels the older one). Each provider's answer is placed when it arrives and
+  replaces that provider's colours only, so a slow or hung provider neither delays the others nor makes its earlier swatches flicker away; an
+  answer for older text is dropped (the next request is already scheduled). A keystroke costs one timer change.
+* **Drawing.** A swatch in front of each colour, with VS Code's metrics: a square of 0.8 em (the editor's font size, Ctrl+wheel zoom included)
+  with a 0.1 em border (`#eee` in dark themes, black in light ones), 0.2 em from the text on each side, its bottom on the text's baseline (the
+  line keeps its height); a translucent colour shows over a white and grey checkerboard. It is an inline object of no document length anchored
+  to the colour's start: typing before it moves it, typing right in front of the colour leaves it in front of the colour, a colour deleted whole
+  loses it, and the swatches follow every edit until the next answer replaces them. The caret has one stop on each side and never two for one
+  offset: coming from the left it stops before the swatch (where a click or typing puts it) and the next key goes past the colour's first
+  character; coming from the right it stops after the swatch; Left from a swatch at a line start goes to the line above. At most
+  `editor.colorDecoratorsLimit` swatches are kept (default 500, the first in the document); values above 10,000 are read as 10,000 (VS Code
+  allows 1,000,000; the cap bounds the anchors a view holds). A colour two providers report at one place is drawn once.
+* **The built-in provider** (`editor.defaultColorDecorators`: `auto`, the default, `always`, `never`; VS Code's default document colour
+  provider): finds `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb()` / `rgba()` and `hsl()` / `hsla()` (commas or spaces, CSS Color 4's
+  `/ alpha`, percentages, `deg`) in any file, never inside a word (`a#fff`, `&#123;`, `#abc-def`, `#region` are not colours). `auto` uses it
+  only for documents no registered provider serves (CSS without its server, a TypeScript theme file, Markdown...), `always` beside the
+  servers (a colour a server reports too is drawn once, the server's). It scans the document's immutable snapshot on the editor worker in
+  slices of about 6 ms, at most 10,000 colours; its presentations are `rgb()` / `rgba()`, `hsl()` / `hsla()` and hex (an upper-case hex stays
+  upper case).
+* **Opening the picker.** A click on a swatch (it never moves the caret), the pointer resting on a swatch or on the colour's text for 300 ms
+  (`editor.colorDecoratorsActivatedOn`: `clickAndHover`, the default, `hover` or `click`; the editor's hover stays away while a picker the
+  pointer opened is up: over a colour the picker is the hover), or **Show or Focus Standalone Color Picker**
+  (`editor.action.showOrFocusStandaloneColorPicker`, Command Palette; no default key, as in VS Code). The command focuses an open picker, else
+  opens it for the colour at the caret, else over the selection or the caret (VS Code's standalone picker: the picked colour's presentation is
+  written there; a selected colour starts the picker at that colour). The picker sits under the colour's line (above when there is no room)
+  on the view's widget layer, follows scrolling, and shows a header with the new colour and the current presentation's text (a click cycles
+  through the presentations: rgb, hsl, hex for CSS) beside the original colour (a click goes back to it), and under it a saturation/value
+  square, an alpha strip and a hue strip, each dragged with the pointer. Colours: `editorWidget.background` / `editorWidget.border`.
+* **Editing.** Each pick asks the colour's provider for the new colour's presentations (`ProvideColorPresentationsAsync`, LSP
+  `textDocument/colorPresentation`) off the UI thread with a 3 s deadline. Latest wins: while one request is out, further picks only change
+  what is asked next (a drag asks for the colour under the pointer when the previous answer lands), and an answer for older text is never
+  applied. The chosen presentation (when the picker opens, the one written like the colour: the same label, else the same function or a hex,
+  VS Code's guess) is applied at once: its text edit (else its label over the colour's range) and its additional edits; the picker follows the
+  colour's new range and the swatch shows the new colour. All the edits of one opening are ONE undo step (the first opens a step, the others
+  continue it through `EditorDocument.BeginUndoGroup(continueLast: true)`; a save in between starts a new step, which is counted). **Escape**
+  (in the picker, or in the text while it is open) undoes them and closes it; **Enter**, a click in the text or on another swatch keep them;
+  an edit from anywhere else (another view of the document, a language server, an undo) closes it and keeps what it applied. A picker the
+  hover opened does not take the keyboard and closes 300 ms after the pointer left it and its swatch, unless it was used; typing in the text
+  closes it.
+* `editor.colorDecorators: false` (per language too) removes the swatches and closes the picker; the four settings are read live, per
+  language, and registered by the factory so the Settings panel lists them.
+
+Tests: `ColorFormatsTests` (detection, presentations, VS Code's guess, HSV and HSL), `ColorDecoratorViewTests` (swatches at the colours'
+offsets following edits, their metrics and pixels in a screenshot written to `.scratch/screenshots/editor-color-picker.png`, the caret's stops,
+an answer for older text dropped, the limit live, the setting live and per language, hung and throwing providers beside a good one, large-file
+mode, the built-in provider with `auto` / `always` / `never` and its sliced, bounded scan, the picker by click, hover and command, picks through
+the square and strips applied as one undo step, Escape and Enter, presentations cycled and the original colour, additional edits, latest-wins
+requests, an edit from elsewhere, a provider without presentations, and `LeakAssert` over the view, the feature, the picker and a swatch),
+`FeatureProviderTests.Color_presentations…` and `ThreadingTests` (LSP), `ProtocolCodecTests` and `BridgeThreadingTests` (remote).
+
 **Large-file mode**: above `cscode.editor.largeFileThresholdBytes` (default 5 MB) or with a line longer than 20,000 characters the document's language is forced to `plaintext`, and its views get no tokenisation, folding, squiggles, bracket matching or any other language feature (just text); files over 200 MB are refused with a clear `FileTooLargeException` message.
+
+### 7j. Merge conflicts and the merge editor
+
+Conflict blocks (`<<<<<<<` / `|||||||` / `=======` / `>>>>>>>`) in any document are found once per version on the editor worker
+(`MergeConflictTracker`: a chunked pass over the rope with no text materialised when there is no `<<<<<<<`), tinted with VS Code's `merge.*`
+colours and marked on the overview ruler (`MergeConflictFeature`), offered "Accept Current Change | Accept Incoming Change | Accept Both
+Changes | Compare Changes" as code lens through `ILanguageFeatureRegistry` (so §7e draws them), and resolved by the `merge-conflict.*` commands
+and the right-click items shown while the caret is in a block (`mergeConflictAtCursor`), each in one undo step. The 3-way merge editor
+(`Diff/MergeEditorControl`, `IEditorViewFactory.CreateMergeView`) shows Incoming and Current as read-only panes over the file's own document
+as Result, with checkbox lenses per conflict. Settings `merge-conflict.codeLens.enabled`, `merge-conflict.decorators.enabled`. Design,
+commands, threading and limits: docs/SOURCE-CONTROL.md ("Merge conflicts in the editor", "Merge editor"). Tests: `MergeConflictViewTests`,
+`MergeEditorViewTests`.
 
 ## 8. Known gaps (honest list)
 
 Not done, or done only in part — none of this is faked:
 
-* **Multi-cursor** (§7b) is off while Vim mode is on (the default). With several carets, auto-closing brackets and quotes, auto-surround and
-  over-typing are not applied (plain text is typed at each caret); snippets, the line commands (move / copy / comment / indent lines through
-  the commands), Format and code actions act at the primary only and collapse the others; Up/Down move by document lines when words wrap; the
-  carets are not kept in the view state (a recreated view has one); `editor.multiCursorModifier` (Ctrl+Click to add carets) is not read;
-  Backspace in leading spaces deletes one space, not one indentation unit. Rectangular selection is AvaloniaEdit's own (Alt+drag; Ctrl+Option+drag
-  on macOS) and its rows act as carets for the clipboard (§7a).
+* **Multi-cursor** (§7b): Format, code actions, Toggle Block Comment, Join Lines, Sort Lines and Transpose act at the primary only and collapse
+  the others. Auto-closing decides per caret, where VS Code applies a pair only when every caret allows it (§7b). With word wrap, a caret right at
+  a wrap point is on the row that starts there (no "end of the row above" position, which AvaloniaEdit's single caret has), and Up/Down over a
+  long line far off screen lays that line out once. The session files keep the primary's selection only (the in-memory view state keeps every
+  caret). With Vim on, only some keys act at every caret (docs/VIM.md, "Multi-cursor"). Rectangular selection is AvaloniaEdit's own (Alt+drag;
+  Ctrl+Option+drag on macOS) and its rows act as carets for the clipboard (§7a); with `editor.multiCursorModifier: ctrlCmd`, Alt+drag still
+  starts it on Linux and Windows.
 * **Code lens** (§7e): no keyboard access to a lens (VS Code's "Show CodeLens Commands For Current Line" is not implemented); a lens on an
   empty line is not shown (§5); split views of one document ask (and resolve) separately; lenses
   and semantic tokens are not `IMemoryTrimmable` (both are bounded and die with the view).
+* **Merge conflicts** (§7j): the merge-conflict lenses come from a provider asked for every document (it answers from the shared per-version
+  scan, nothing when there are no markers); the merge editor's gaps are listed in docs/SOURCE-CONTROL.md, "What is left".
 * **Semantic highlighting** (§7e): only the first full provider and the first range provider are used (VS Code also picks one); custom token
   types and modifiers declared by a server's VS Code extension (`semanticTokenTypes` / `semanticTokenScopes` contributions) are not known beyond
   the few super-types listed in §7e; `editor.semanticTokenColorCustomizations` is not read.
@@ -691,7 +899,30 @@ Not done, or done only in part — none of this is faked:
   text (it marks whole rows) are not read; the ruler has three fixed lanes (`editor.overviewRulerLanes` 1 and 2 are drawn as 3) and does
   not mark selection highlights, bracket matches or the debugger's stop line; `editor.scrollbar.scrollByPage` is not read (a track press
   always jumps). Sticky scroll is (`editor.stickyScroll.enabled`, off by default; docs/TREE-SITTER.md §5).
+* **Bookmarks** (§7g): undo that brings a deleted line back does not bring its bookmark back (breakpoints neither); a file renamed or
+  deleted outside CsCode keeps its bookmarks under the old path until navigation finds it gone; no bookmark folders (Visual Studio's Bookmark
+  Window has them) and no inline rename there (an input box); a label shows in the Bookmark Window and the list, not in the editor (the
+  margin's tooltip stays the breakpoint's); the minimap does not mark them; with the VS Code keymap, Ctrl+Alt+K / L / J are AltGr+K / L / J
+  on some keyboard layouts (as with the extension in VS Code).
+* **Colour decorators** (§7i): the picker has no keyboard control of the colour (VS Code's arrow keys on the square and strips) and no
+  insert / close buttons; over a colour the picker takes the hover's place instead of sharing one popup with it as VS Code does (a diagnostic
+  on the colour shows once the pointer rests beside it); the standalone picker writes the colour as it is picked (VS Code writes it on Enter);
+  `editor.colorDecoratorsActivatedOn` also governs resting on the colour's text (VS Code's hover there follows `editor.hover.enabled`,
+  which is not read); with Vim on, the keys Vim takes do not close a picker the pointer opened (Vim's Escape does, through
+  `EditorModalSurface.CloseInfoPopups`; it closes when the pointer leaves); a provider without presentations (a
+  server that does not implement `colorPresentation`) gets a picker that shows the colour and edits nothing; split views of one document ask
+  separately; colours are not `IMemoryTrimmable` (bounded, and they die with the view). As with a focused editor (§1), a picker that has the
+  keyboard when the shell destroys its view keeps the view reachable until focus moves; the shell moves it first. The remote server's
+  dispatch of `colorPresentations` is covered by the codec and threading tests only, not end to end.
 * `editor.cursorStyle`, `editor.cursorBlinking` and `editor.smoothScrolling` are not applied (AvaloniaEdit offers no equivalent). Font ligatures are on by default (`editor.fontLigatures`; VS Code defaults to off, but the bundled Fira Code is chosen for them, and they keep one glyph per character): `false` turns them off. AvaloniaEdit 12 has no font-feature setting, so `EditorFontFeatures`, a line transformer, then gives each element's run properties `-liga, -calt` (reaching the private `VisualLineElement.TextRunProperties` setter by reflection; `CodeFontTests` fails if an upgrade removes it). `true` (the default) leaves the font's own ligatures (Fira Code's keep one glyph per character, so carets stay on columns) and a string is VS Code's CSS feature list (`"'ss01', 'zero'"`). The code panels follow the same setting through `ui:CodeFontFeatures`. `editor.wordWrap` supports on/off only. Drag-and-drop of text is AvaloniaEdit's own behaviour; bidirectional text and IME composition were not tested.
+* **Everyday commands** (§7): Toggle Word Wrap is per view (VS Code's is per document, across its editors) and, like the font zoom, is not kept
+  by saved sessions (only by the in-memory view state); the zoom steps are the wheel's 1 px (VS Code's editor zoom is global, in 10 % steps).
+  Change End of Line Sequence with several carets keeps only one (multi-cursor follows the whole-text change); on a document without line breaks
+  it changes only the line ending new lines get (nothing to mark dirty); undone inside a held undo group (macro playback) it does not give back
+  `EndOfLine`; a `.editorconfig` `end_of_line` still wins at save. Reopen with Encoding has no "Guessed from content" entry. The indentation chosen
+  for a document is not saved with it (closing the document forgets it) and `editor.detectIndentation` (guessing on open) is not read: only
+  the command guesses. There is no Edit > Advanced menu, so the case commands are in the Command Palette (and on Ctrl+Shift+U in Visual Studio's
+  preset).
 * **Typing allocation**: the TextMate colorizer allocates per token on the edited line (§6). A single pre-merged element list would cut it; not done.
 * The `previousLineText` guard of `onEnterRules` (which Core's `OnEnterRule` record cannot carry) is handled editor-side through `ExtendedLanguageConfiguration`/`EnterRuleEx`; the Core record is unchanged.
 * `UndoStackScrubber` is reflection against AvaloniaEdit 12.0.0's private layout; `PerfMemoryTests` will fail loudly if an upgrade changes it (use `RetentionPath` to find the new culprit).
@@ -704,6 +935,7 @@ Not done, or done only in part — none of this is faked:
 
 * `EditorDocumentFuzzTests` (oracle comparison), `EditorDocumentFileTests` (encodings, EOL, atomic save, watcher, conflicts, large files), `LanguageServiceTests`, `ThemeTests` (real Dark+/Monokai/TypeScript/Python/C# JSON), `TextMateTests` (golden scopes), `SnippetEngineTests`, `EditingOperationsTests`, `EditorConfigTests`.
 * Language rendering: `CodeLensViewTests`, `SemanticTokenTests` (§7e).
+* Colour decorators and the picker: `ColorDecoratorViewTests`, `ColorFormatsTests` (§7i).
 * View tests: `EditorViewTests`, `CompletionViewTests`, `DiagnosticsHoverTests`, `SignatureActionsNavigationTests`, `BracketsHighlightsDebugTests`, `ShouldHaveFeatureTests`, `MultiCursorViewTests` (and the pure `MultiCaretModelTests`), `ScrollDecorationsViewTests` (and the pure `ScrollDecorationsModelTests`).
 * Hostile/perf/leak: `HostileProviderTests`, `BlockingDetectorTests`, `KeystrokeAllocationTests`, `PerfMemoryTests` (opens 1/10/50 MB files, tokeniser memory, 500× open/close, 500× recreate, popups open). Leak failures print the chain of strong references (`RetentionPath`).
 * Typing cost (perf-typing): `TextAreaWatermarkBindingTests` (bytes per keystroke in 0.5–6 MB documents, the watermark unbound), `FoldRedrawFilterTests` (visual lines built per keystroke inside an expanded fold; folding, a folded region edited while collapsed, a multi-change update), `CachedLineNumberMarginTests` (no number laid out while typing, the stock margin's exact pixels), `TokenRedrawTests` (the line above the caret is not rebuilt; a line built before the next layout is redrawn), `FoldingMarginLeakTests.Typing_keeps_the_markers…`.

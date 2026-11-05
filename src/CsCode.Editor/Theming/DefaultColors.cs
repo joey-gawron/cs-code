@@ -103,6 +103,7 @@ public static class DefaultColors
         Def("editor.findMatchBackground", "#515C6A", "#A8AC94");
         Def("editor.findMatchHighlightBackground", "#EA5C0055", "#EA5C0055");
         Def("editor.findRangeHighlightBackground", "#3A3D4166", "#B4B4B44D");
+        Alpha("searchEditor.findMatchBackground", "editor.findMatchHighlightBackground", 0.66); // the search editor's matches (VS Code's default)
         Def("editor.hoverHighlightBackground", "#264F7840", "#ADD6FF26");
         Def("editor.lineHighlightBackground", "#FFFFFF0A", "#0000000A", "", "");
         Def("editor.lineHighlightBorder", "#282828", "#EEEEEE", "#F38518", "#0F4A85");
@@ -191,6 +192,18 @@ public static class DefaultColors
         Def("diffEditor.removedTextBackground", "#FF000033", "#FF000033");
         Def("diffEditor.insertedLineBackground", "#9BB95533", "#9BB95533");
         Def("diffEditor.removedLineBackground", "#FF000033", "#FF000033");
+        // merge conflicts (VS Code's editorColors: headers #40C8AE / #40A6FF at 50 %, #606060 at 40 %; contents at 40 % of their header;
+        // high contrast: no tint, merge.border outlines the marker lines and colours the ruler)
+        Def("merge.currentHeaderBackground", "#40C8AE80", "#40C8AE80", "", "");
+        Alpha("merge.currentContentBackground", "merge.currentHeaderBackground", 0.4);
+        Def("merge.incomingHeaderBackground", "#40A6FF80", "#40A6FF80", "", "");
+        Alpha("merge.incomingContentBackground", "merge.incomingHeaderBackground", 0.4);
+        Def("merge.commonHeaderBackground", "#60606066", "#60606066", "", "");
+        Alpha("merge.commonContentBackground", "merge.commonHeaderBackground", 0.4);
+        Def("merge.border", "", "", "#C3DF6F", "#007ACC");
+        Chain("editorOverviewRuler.currentContentForeground", new Themed("merge.currentHeaderBackground"), L("#40C8AE80", "#40C8AE80", "#C3DF6F", "#007ACC"));
+        Chain("editorOverviewRuler.incomingContentForeground", new Themed("merge.incomingHeaderBackground"), L("#40A6FF80", "#40A6FF80", "#C3DF6F", "#007ACC"));
+        Chain("editorOverviewRuler.commonContentForeground", new Themed("merge.commonHeaderBackground"), L("#60606066", "#60606066", "#C3DF6F", "#007ACC"));
         Alias("minimap.background", "editor.background");
         Def("minimap.selectionHighlight", "#264F78", "#ADD6FF");
         Def("minimap.findMatchHighlight", "#D18616", "#D18616");
@@ -214,6 +227,10 @@ public static class DefaultColors
         Def("debugIcon.breakpointCurrentStackframeForeground", "#FFCC00", "#BE8700");
         Def("debugIcon.breakpointStackframeForeground", "#89D185", "#57A64A");
         Def("debugToolBar.background", "#333333", "#F3F3F3");
+
+        // ---- bookmarks (docs/EDITOR.md §7g): the Bookmarks extension's overview ruler colour id and default; the glyph in its gutter icon's blue ----
+        Def("bookmarks.iconForeground", "#157EFB", "#157EFB", "#6FC3DF", "#0F4A85");
+        Def("bookmarks.overviewRuler", "#157EFB88", "#157EFB88", "#6FC3DF", "#0F4A85");
 
         // ---- workbench: lists, trees, inputs, buttons ----
         Def("list.activeSelectionBackground", "#04395E", "#0060C0", "#000000", "#0F4A85");

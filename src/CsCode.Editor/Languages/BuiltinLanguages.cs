@@ -49,6 +49,8 @@ internal static class BuiltinLanguages
     /// none (Python's does not). Language stage 1; later stages add their languages' files there.
     /// </summary>
     internal const string OwnSnippetPrefix = "CsCode.Editor.Snippets.Builtin.";
+    /// <summary>Resource names of CsCode's own TextMate grammars (<c>Languages/Grammars/*.tmLanguage.json</c>): for languages TextMateSharp.Grammars has none for.</summary>
+    internal const string OwnGrammarPrefix = "CsCode.Editor.Languages.Grammars.";
 
     private static readonly Assembly Asm = typeof(RegistryOptions).Assembly;
     private static readonly Assembly OwnAsm = typeof(BuiltinLanguages).Assembly;
@@ -58,6 +60,7 @@ internal static class BuiltinLanguages
 
     public static Stream? Open(string resourceName) =>
         resourceName.StartsWith(OwnConfigurationPrefix, StringComparison.Ordinal) || resourceName.StartsWith(OwnSnippetPrefix, StringComparison.Ordinal)
+        || resourceName.StartsWith(OwnGrammarPrefix, StringComparison.Ordinal)
             ? OwnAsm.GetManifestResourceStream(resourceName)
             : Asm.GetManifestResourceStream(resourceName);
 
@@ -121,6 +124,14 @@ internal static class BuiltinLanguages
         ("gas", "GNU Assembler", [".s"], [], "gas"),
         ("csv", "CSV", [".csv"], [], "csv"),
         ("jsonl", "JSON Lines", [".jsonl", ".ndjson"], [], "jsonl"),
+        // the search editor's results (VS Code's built-in search-result language; its grammar is CsCode's own, below)
+        ("search-result", "Search Result", [".code-search"], [], null),
+    ];
+
+    // CsCode's own TextMate grammars (Languages/Grammars, embedded in this assembly) for languages TextMateSharp.Grammars embeds none for.
+    private static readonly (string LanguageId, string ScopeName, string File)[] OwnGrammars =
+    [
+        ("search-result", "text.searchResult", "search-result.tmLanguage.json"),
     ];
 
     // Extensions the bundled (older) manifests omit.
@@ -185,6 +196,10 @@ internal static class BuiltinLanguages
                     if (Asm.GetManifestResourceInfo(res) is not null) snippets.Add(new BuiltinSnippetFile(lang.GetString()!, res));
                 }
         }
+
+        foreach (var (languageId, scopeName, file) in OwnGrammars)
+            if (OwnAsm.GetManifestResourceInfo(OwnGrammarPrefix + file) is not null && grammars.All(g => g.ScopeName != scopeName))
+                grammars.Add(new BuiltinGrammar(languageId, scopeName, OwnGrammarPrefix + file, null));
 
         foreach (var res in OwnAsm.GetManifestResourceNames().Where(n => n.StartsWith(OwnSnippetPrefix, StringComparison.Ordinal) && n.EndsWith(".json", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
             snippets.Add(new BuiltinSnippetFile(res[OwnSnippetPrefix.Length..^".json".Length], res));

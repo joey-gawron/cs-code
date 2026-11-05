@@ -99,4 +99,21 @@ public interface INavigationService
     IReadOnlyList<IEditorDocument> OpenDocuments { get; }
     /// <summary>Apply a workspace edit (open docs edited in-editor as one undo group; closed files edited on disk).</summary>
     ValueTask<bool> ApplyWorkspaceEditAsync(Languages.WorkspaceEdit edit, string? label = null, CancellationToken ct = default);
+
+    // ---- additive members (search editor; the defaults keep other implementations compiling) ----
+
+    /// <summary>
+    /// Opens a new untitled editor holding <see cref="UntitledEditorOptions.Text"/> (the search editor's "Search: query" tab). Null when the host
+    /// cannot open untitled editors (the default).
+    /// </summary>
+    ValueTask<IEditorDocument?> OpenUntitledAsync(UntitledEditorOptions options, CancellationToken ct = default) => ValueTask.FromResult<IEditorDocument?>(null);
+
+    /// <summary>Opens <paramref name="uri"/> in the editor group beside the active one (VS Code's "open to the side"). Default: <see cref="OpenAsync"/>.</summary>
+    ValueTask<IEditorDocument?> OpenToSideAsync(Uri uri, TextRange? selection = null, CancellationToken ct = default) => OpenAsync(uri, selection, ct: ct);
+
+    /// <summary>
+    /// Retitles the tab of an open untitled document ("Search: new query") and what its Save As proposes; a null title gives the tab its own name
+    /// back. Does nothing when no tab shows the document (the default).
+    /// </summary>
+    void SetEditorTitle(Uri document, string? title, Uri? suggestedSaveUri = null) { }
 }

@@ -43,6 +43,27 @@ public interface IEditorViewFactory
 
     /// <summary>A diff editor view for <paramref name="request"/> (disposable; the shell disposes it with its tab), or null when not supported. UI thread.</summary>
     Control? CreateDiffView(Core.Scm.DiffEditorRequest request) => null;
+
+    // ---- additive members (merge editor; the default keeps other implementations compiling) ----
+
+    /// <summary>
+    /// A 3-way merge editor for <paramref name="request"/> whose Result pane edits <paramref name="result"/> (the file's open document, from
+    /// <see cref="OpenDocumentAsync"/>; the caller keeps it open while the view lives), or null when not supported. Disposable. UI thread.
+    /// </summary>
+    Control? CreateMergeView(Core.Scm.MergeEditorRequest request, IEditorDocument result) => null;
+
+    // ---- additive member (search editor; the default keeps other implementations compiling) ----
+
+    /// <summary>
+    /// New "Untitled-N" buffer holding <paramref name="initialText"/> (the search editor's header): the text is not an undo step and the document
+    /// starts unmodified. The default inserts it as an edit.
+    /// </summary>
+    IEditorDocument CreateUntitled(string? languageId, string initialText)
+    {
+        var doc = CreateUntitled(languageId);
+        if (initialText.Length > 0) doc.ApplyEdits([TextEdit.Insert(TextPosition.Zero, initialText)]);
+        return doc;
+    }
 }
 
 /// <summary>Imperative handle on one editor view (menu/command/navigation code drives the editor through this).</summary>
@@ -174,4 +195,19 @@ public sealed record EditorViewState(
     int DocumentVersion)
 {
     public static readonly EditorViewState Initial = new(TextPosition.Zero, TextPosition.Zero, TextPosition.Zero, 0, 0, [], 0);
+
+    /// <summary>
+    /// Toggle Word Wrap's choice for the view (additive): true / false wraps or not whatever <c>editor.wordWrap</c> says; null follows the setting.
+    /// A restored choice that the setting now agrees with is dropped (the setting changed meanwhile).
+    /// </summary>
+    public bool? WordWrap { get; init; }
+
+    /// <summary>
+    /// Every caret of a view with several (multi-cursor), the primary first, then the others in document order; null with one caret (the
+    /// selection above is then the whole story). <see cref="IEditorViewController.RestoreViewState"/> brings them all back.
+    /// </summary>
+    public IReadOnlyList<EditorCaretState>? Carets { get; init; }
 }
+
+/// <summary>One caret of a view: its selection from <see cref="Anchor"/> (where it started) to <see cref="Active"/> (where the caret is); equal for a plain caret.</summary>
+public sealed record EditorCaretState(TextPosition Anchor, TextPosition Active);

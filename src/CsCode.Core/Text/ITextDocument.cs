@@ -43,10 +43,25 @@ public interface IEditorDocument : ITextDocument
     string EndOfLine { get; }
     void SetLanguageId(string languageId);
     Task SaveAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Saves for <paramref name="reason"/> (additive; the default saves as <see cref="SaveAsync(CancellationToken)"/> does). An auto save after a
+    /// delay skips what VS Code skips then: format on save, and edits at the lines that hold a caret.
+    /// </summary>
+    Task SaveAsync(Languages.DocumentSaveReason reason, CancellationToken ct) => SaveAsync(ct);
+
     Task SaveAsAsync(Uri target, CancellationToken ct = default);
     Task ReloadAsync(CancellationToken ct = default);
     IEventSource<IEditorDocument> Saved { get; }
     IEventSource<IEditorDocument> DirtyChanged { get; }
+
+    // ---- additive member (search editor; the default keeps other implementations compiling) ----
+
+    /// <summary>
+    /// Holds an undo group open until the result is disposed: every change meanwhile, over any number of dispatcher callbacks, is ONE undo step
+    /// (the search editor writes a search's results in many small slices). UI thread. Default: no grouping (each edit is its own step).
+    /// </summary>
+    IDisposable OpenUndoGroup() => Disposable.Empty;
 }
 
 public sealed record DocumentEvent(ITextDocument Document);

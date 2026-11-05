@@ -67,6 +67,10 @@ public sealed record EditorSettings
     public int MultiCursorLimit { get; init; } = 10_000;
     /// <summary><c>editor.multiCursorPaste</c>: "spread" (one clipboard line per caret when the counts match) or "full".</summary>
     public string MultiCursorPaste { get; init; } = "spread";
+    /// <summary><c>editor.multiCursorModifier</c>: "alt" (the default: Alt+Click adds a caret, Ctrl/⌘+Click goes to the definition) or "ctrlCmd" (the other way round).</summary>
+    public string MultiCursorModifier { get; init; } = "alt";
+    /// <summary><c>editor.useTabStops</c>: Backspace in leading whitespace deletes back to the previous indentation stop.</summary>
+    public bool UseTabStops { get; init; } = true;
 
     public bool ShowLineNumbers => LineNumbers != "off";
 
@@ -75,7 +79,16 @@ public sealed record EditorSettings
     /// <see cref="Read"/> takes them. The status bar shows this, so it never says "Spaces: 4" while the editor indents with tabs or by 2.
     /// </summary>
     public static (int TabSize, bool InsertSpaces) IndentationFor(IConfigurationService cfg, IEditorDocument document) =>
-        Indentation(cfg, document.LanguageId, (document as EditorDocument)?.EditorConfigProperties);
+        (document as EditorDocument)?.IndentationOverride is { } chosen
+            ? (chosen.TabSize, chosen.InsertSpaces) // chosen for this document (the status bar's indentation commands)
+            : Indentation(cfg, document.LanguageId, (document as EditorDocument)?.EditorConfigProperties);
+
+    /// <summary>The settings for a view of <paramref name="document"/>: <see cref="Read"/>, then the indentation chosen for the document.</summary>
+    public static EditorSettings For(IConfigurationService cfg, EditorDocument document)
+    {
+        var settings = Read(cfg, document.LanguageId, document.EditorConfigProperties);
+        return document.IndentationOverride is { } chosen ? settings with { TabSize = chosen.TabSize, InsertSpaces = chosen.InsertSpaces } : settings;
+    }
 
     private static (int TabSize, bool InsertSpaces) Indentation(IConfigurationService cfg, string? languageId, EditorConfigProperties? editorConfig)
     {
@@ -134,6 +147,8 @@ public sealed record EditorSettings
             AutoIndentOnPaste = G("editor.autoIndentOnPaste", defaults.AutoIndentOnPaste) && G("editor.autoIndent", "full") != "none",
             MultiCursorLimit = Math.Clamp(G(MultiCursorController.LimitKey, defaults.MultiCursorLimit), 1, 100_000),
             MultiCursorPaste = G(MultiCursorController.PasteKey, defaults.MultiCursorPaste) == "full" ? "full" : "spread",
+            MultiCursorModifier = G(MultiCursorController.ModifierKey, defaults.MultiCursorModifier) == "ctrlCmd" ? "ctrlCmd" : "alt",
+            UseTabStops = G(TypingBehaviors.UseTabStopsKey, defaults.UseTabStops),
         };
     }
 

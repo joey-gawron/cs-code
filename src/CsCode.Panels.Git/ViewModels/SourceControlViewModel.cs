@@ -220,13 +220,13 @@ public sealed class SourceControlViewModel : INotifyPropertyChanged, IDisposable
 
     public Task CommitAsync() => _host.CommitFromBoxAsync(amend: false);
 
-    public Task StageAsync(IReadOnlyList<ScmFileRow> rows) => Run(r => r.StageAsync([.. rows.Select(x => x.Entry.Path)]));
+    public Task StageAsync(IReadOnlyList<ScmFileRow> rows) => Run(r => _host.StageAsync(r, [.. rows.Select(x => x.Entry.Path)]));
 
     public Task UnstageAsync(IReadOnlyList<ScmFileRow> rows) => Run(r => r.UnstageAsync([.. rows.Select(x => x.Entry.Path)]));
 
     public Task DiscardAsync(IReadOnlyList<ScmFileRow> rows) => _repository is { } r ? _host.DiscardAsync(r, [.. rows.Select(x => x.Entry)]) : Task.CompletedTask;
 
-    public Task StageAllAsync() => Run(r => r.StageAllAsync());
+    public Task StageAllAsync() => Run(_host.StageAllAsync);
 
     public Task UnstageAllAsync() => Run(r => r.UnstageAllAsync());
 
@@ -250,6 +250,18 @@ public sealed class SourceControlViewModel : INotifyPropertyChanged, IDisposable
         if (_host.Commands is not { } commands) return;
         if (_repository is { } r) await commands.ExecuteAsync(id, r.Root).ConfigureAwait(true);
         else await commands.ExecuteAsync(id).ConfigureAwait(true);
+    }
+
+    /// <summary>Whether a command (the editor's merge-conflict commands, the merge editor) is registered: its menu items show only then.</summary>
+    public bool HasCommand(string id) => _host.Commands?.Has(id) == true;
+
+    /// <summary>Whether the shell has a merge editor (Resolve in Merge Editor on merge rows).</summary>
+    public bool CanOpenMergeEditor => _host.MergeEditors is not null && HasCommand(GitHost.OpenMergeEditor);
+
+    /// <summary>Runs a command on a row's file (its URI as the argument): Accept All Current / Incoming of a merge row.</summary>
+    public async Task RunFileCommandAsync(string id, ScmFileRow row)
+    {
+        if (_host.Commands is { } commands && _repository is { } r) await commands.ExecuteAsync(id, r.ToUri(row.Entry.Path)).ConfigureAwait(true);
     }
 
     private Task Run(Func<GitRepository, Task> op) => _repository is { } r ? _host.Guard(() => op(r)) : Task.CompletedTask;

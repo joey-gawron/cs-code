@@ -240,7 +240,7 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (_disposed) return;
-        if (!EditorKeys.HasCommand(e.KeyModifiers))
+        if (!EditorKeys.HasLinkModifier(e.KeyModifiers, _v.Settings.MultiCursorModifier)) // Ctrl/⌘, or Alt with editor.multiCursorModifier "ctrlCmd"
         {
             _hoverOffset = -1;
             ClearLink();
@@ -306,7 +306,7 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (_disposed || !EditorKeys.HasCommand(e.KeyModifiers)) return;
+        if (_disposed || !EditorKeys.HasLinkModifier(e.KeyModifiers, _v.Settings.MultiCursorModifier)) return;
         if (!e.GetCurrentPoint(_v.Editor).Properties.IsLeftButtonPressed) return;
         if (_docLink is { } docLink)
         {
@@ -330,7 +330,7 @@ internal sealed class NavigationFeature : INavigationFeature, IThemeAware, IDisp
 
     private void OnKeyUp(object? sender, KeyEventArgs e)
     {
-        if (!EditorKeys.IsCommandKey(e.Key)) return;
+        if (!EditorKeys.IsLinkKey(e.Key, _v.Settings.MultiCursorModifier)) return;
         _hoverOffset = -1;
         ClearLink();
     }

@@ -50,7 +50,7 @@ internal static class EditorCommands
                 new CommandMetadata(id, title, "Editor")));
 
         void Plan(string id, string title, Func<EditorDocument, TextRange, EditingContext, EditPlan?> compute) =>
-            Cmd(id, title, (view, _) => RunPlanAsync(view, factory, compute));
+            Cmd(id, title, (view, _) => MultiCaretLineCommands.TryRun(view, id) ? Task.CompletedTask : RunPlanAsync(view, factory, compute)); // several carets: the line commands act at each
 
         // ---- comments ----
         Plan("editor.action.commentLine", "Toggle Line Comment", (d, s, c) => EditingOperations.ToggleLineComment(d, s, c));
@@ -190,6 +190,8 @@ internal static class EditorCommands
         Cmd(PeekFeature.PeekReferencesCommand, "Peek References", (view, _) => view.Feature<PeekFeature>()?.PeekReferencesAsync() ?? Task.CompletedTask);
         Cmd(PeekFeature.CloseCommand, "Close Peek", (view, _) => { PeekFeature.CloseFor(view); return Task.CompletedTask; });
         Cmd(LinkedEditingFeature.StartCommand, "Start Linked Editing", (view, _) => view.Feature<LinkedEditingFeature>()?.ToggleAsync() ?? Task.CompletedTask);
+        // ---- colour picker (ColorDecoratorFeature) ----
+        Cmd(ColorDecoratorFeature.ShowPickerCommand, "Show or Focus Standalone Color Picker", (view, _) => { view.Feature<ColorDecoratorFeature>()?.ShowOrFocus(); return Task.CompletedTask; });
         Cmd(KnownCommands.Rename, "Rename Symbol", (view, _) => view.Feature<INavigationFeature>()?.RenameAsync() ?? Task.CompletedTask);
         Cmd(KnownCommands.FormatDocument, "Format Document", (view, _) => view.Feature<IFormattingFeature>()?.FormatDocumentAsync() ?? Task.CompletedTask);
         Cmd("editor.action.formatDocument.multiple", "Format Document With...", (view, _) => view.Feature<IFormattingFeature>()?.FormatDocumentWithAsync() ?? Task.CompletedTask);

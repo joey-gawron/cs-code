@@ -38,9 +38,80 @@ public sealed record FileEncoding(string Name, Encoding Encoding, byte[] Bom)
             "utf16be" => Utf16Be,
             "windows1252" or "cp1252" => Windows1252,
             "iso88591" or "latin1" => Latin1,
-            _ => null,
+            var other => FromCodePageTable(other),
         };
     }
+
+    // ---- the encodings Reopen / Save with Encoding offer (VS Code's ids, labels and order) ----
+
+    private static readonly (string Id, string Label, string Short, int CodePage)[] Table =
+    [
+        ("utf8", "UTF-8", "UTF-8", 0),
+        ("utf8bom", "UTF-8 with BOM", "UTF-8 with BOM", 0),
+        ("utf16le", "UTF-16 LE", "UTF-16 LE", 0),
+        ("utf16be", "UTF-16 BE", "UTF-16 BE", 0),
+        ("windows1252", "Western (Windows 1252)", "Windows 1252", 0),
+        ("iso88591", "Western (ISO 8859-1)", "ISO 8859-1", 0),
+        ("iso88593", "Western (ISO 8859-3)", "ISO 8859-3", 28593),
+        ("iso885915", "Western (ISO 8859-15)", "ISO 8859-15", 28605),
+        ("macroman", "Western (Mac Roman)", "Mac Roman", 10000),
+        ("cp437", "DOS (CP 437)", "CP437", 437),
+        ("windows1256", "Arabic (Windows 1256)", "Windows 1256", 1256),
+        ("iso88596", "Arabic (ISO 8859-6)", "ISO 8859-6", 28596),
+        ("windows1257", "Baltic (Windows 1257)", "Windows 1257", 1257),
+        ("iso88594", "Baltic (ISO 8859-4)", "ISO 8859-4", 28594),
+        ("windows1250", "Central European (Windows 1250)", "Windows 1250", 1250),
+        ("iso88592", "Central European (ISO 8859-2)", "ISO 8859-2", 28592),
+        ("cp852", "Central European (CP 852)", "CP 852", 852),
+        ("windows1251", "Cyrillic (Windows 1251)", "Windows 1251", 1251),
+        ("cp866", "Cyrillic (CP 866)", "CP 866", 866),
+        ("iso88595", "Cyrillic (ISO 8859-5)", "ISO 8859-5", 28595),
+        ("koi8r", "Cyrillic (KOI8-R)", "KOI8-R", 20866),
+        ("koi8u", "Cyrillic (KOI8-U)", "KOI8-U", 21866),
+        ("iso885913", "Estonian (ISO 8859-13)", "ISO 8859-13", 28603),
+        ("windows1253", "Greek (Windows 1253)", "Windows 1253", 1253),
+        ("iso88597", "Greek (ISO 8859-7)", "ISO 8859-7", 28597),
+        ("windows1255", "Hebrew (Windows 1255)", "Windows 1255", 1255),
+        ("iso88598", "Hebrew (ISO 8859-8)", "ISO 8859-8", 28598),
+        ("windows874", "Thai (Windows 874)", "Windows 874", 874),
+        ("windows1254", "Turkish (Windows 1254)", "Windows 1254", 1254),
+        ("iso88599", "Turkish (ISO 8859-9)", "ISO 8859-9", 28599),
+        ("windows1258", "Vietnamese (Windows 1258)", "Windows 1258", 1258),
+        ("gbk", "Simplified Chinese (GBK)", "GBK", 936),
+        ("gb18030", "Simplified Chinese (GB18030)", "GB18030", 54936),
+        ("cp950", "Traditional Chinese (Big5)", "Big5", 950),
+        ("shiftjis", "Japanese (Shift JIS)", "Shift JIS", 932),
+        ("eucjp", "Japanese (EUC-JP)", "EUC-JP", 51932),
+        ("euckr", "Korean (EUC-KR)", "EUC-KR", 51949),
+        ("cp865", "Nordic DOS (CP 865)", "CP 865", 865),
+        ("cp850", "Western European DOS (CP 850)", "CP 850", 850),
+    ];
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, FileEncoding?> CodePageEncodings = new();
+
+    private static FileEncoding? FromCodePageTable(string id) => CodePageEncodings.GetOrAdd(id, static key =>
+    {
+        var row = Array.FindIndex(Table, r => r.Id == key);
+        if (row < 0 || Table[row].CodePage == 0) return null;
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); // idempotent
+            return new FileEncoding(key, Encoding.GetEncoding(Table[row].CodePage), []);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return null; // a code page this runtime does not have: not offered
+        }
+    });
+
+    /// <summary>The encodings Reopen with Encoding / Save with Encoding offer: VS Code's ids and long labels, in its order (those this runtime has).</summary>
+    public static IReadOnlyList<(string Id, string Label)> Choices => ChoicesLazy.Value;
+
+    private static readonly Lazy<IReadOnlyList<(string Id, string Label)>> ChoicesLazy = new(() =>
+        Table.Where(r => FromSettingName(r.Id) is not null).Select(r => (r.Id, r.Label)).ToArray());
+
+    /// <summary>What the status bar shows for an encoding id (VS Code's short label: "UTF-8", "Windows 1252"); the id itself when unknown.</summary>
+    public static string ShortLabel(string id) => Array.Find(Table, r => r.Id == id) is { Id: not null } row ? row.Short : id.ToUpperInvariant();
 }
 
 public sealed record EolInfo(string Eol, int Lf, int CrLf, int Cr)

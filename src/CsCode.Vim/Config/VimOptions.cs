@@ -28,6 +28,8 @@ public sealed class VimOptions
     public int TimeoutLen = 1000, TTimeoutLen = 100;
     // ---- misc
     public int History = 50, MaxRegisterChars = 8_000_000;
+    /// <summary>'spell': the spelling keys ]s [s act (Vim's default: off; the <c>vim.spell</c> setting turns it on, as CsCode checks spelling by default).</summary>
+    public bool Spell;
 
     public KeywordSet Keywords { get; } = new();
 
@@ -98,6 +100,7 @@ public sealed class VimOptions
         B("wrap", "", o => o.Wrap, (o, v) => o.Wrap = v);
         B("list", "", o => o.List, (o, v) => o.List = v);
         B("foldenable", "fen", o => o.FoldEnable, (o, v) => o.FoldEnable = v);
+        B("spell", "", o => o.Spell, (o, v) => o.Spell = v);
         B("expandtab", "et", o => o.ExpandTab, (o, v) => o.ExpandTab = v);
         B("autoindent", "ai", o => o.AutoIndent, (o, v) => o.AutoIndent = v);
         B("smartindent", "si", o => o.SmartIndent, (o, v) => o.SmartIndent = v);

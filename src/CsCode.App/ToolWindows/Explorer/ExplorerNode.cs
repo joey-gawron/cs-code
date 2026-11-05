@@ -6,7 +6,7 @@ namespace CsCode.App.ToolWindows.Explorer;
 /// <summary>One file or folder in the Explorer. UI-thread object; children are loaded lazily and kept sorted (folders first).</summary>
 public sealed class ExplorerNode : ObservableObject
 {
-    private bool _isExpanded, _isLoading, _isEditing, _isCut;
+    private bool _isExpanded, _isLoading, _isEditing, _isCut, _isDropTarget;
     private string _name;
     private string _editText = "";
 
@@ -33,6 +33,8 @@ public sealed class ExplorerNode : ObservableObject
     public bool IsLoading { get => _isLoading; internal set => SetProperty(ref _isLoading, value); }
     public bool IsEditing { get => _isEditing; internal set => SetProperty(ref _isEditing, value); }
     public bool IsCut { get => _isCut; internal set => SetProperty(ref _isCut, value); }
+    /// <summary>The folder a drag over the Explorer would drop into (its row is highlighted).</summary>
+    public bool IsDropTarget { get => _isDropTarget; internal set => SetProperty(ref _isDropTarget, value); }
     public string EditText { get => _editText; set => SetProperty(ref _editText, value); }
 
     private Core.Scm.FileDecoration? _decoration;

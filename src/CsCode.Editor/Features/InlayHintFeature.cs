@@ -193,6 +193,12 @@ internal sealed class InlayHintFeature : ISettingsAware, IThemeAware, IDisposabl
                 // only a hint with something to show or follow takes the pointer; a plain one lets clicks reach the text
                 IsHitTestVisible = hint.CanResolve || hint.Tooltip is not null || hint.LabelParts?.Any(x => x.Tooltip is not null || x.Location is not null || x.Command is not null) == true,
             };
+            // AvaloniaEdit takes an inline object's baseline from TextBlock.BaselineOffset and treats only NaN as unset, but Avalonia's default
+            // is 0: the hint hung below the text and made its row taller (the glyphs and the text then drifted apart). A box one text line high
+            // on the text's baseline keeps every row the height of the text, as in VS Code.
+            var textView = owner._v.TextView;
+            border.Height = Math.Max(1, textView.DefaultLineHeight - 2);
+            TextBlock.SetBaselineOffset(border, textView.DefaultBaseline - 1);
             if (border.IsHitTestVisible) owner.Hook(border, placed);
             return new InlineObjectElement(0, border);
         }
@@ -216,7 +222,7 @@ internal sealed class InlayHintFeature : ISettingsAware, IThemeAware, IDisposabl
         };
         border.PointerPressed += async (_, e) =>
         {
-            if (!e.GetCurrentPoint(border).Properties.IsLeftButtonPressed || !EditorKeys.HasCommand(e.KeyModifiers)) return;
+            if (!e.GetCurrentPoint(border).Properties.IsLeftButtonPressed || !EditorKeys.HasLinkModifier(e.KeyModifiers, _v.Settings.MultiCursorModifier)) return;
             e.Handled = true; // never moves the caret
             var index = (e.Source as Control)?.Tag is int i ? i : -1;
             var hint = await ResolveAsync(placed).ConfigureAwait(true);
@@ -246,10 +252,10 @@ internal sealed class InlayHintFeature : ISettingsAware, IThemeAware, IDisposabl
     private static InlayHintLabelPart? PartAt(object? source, InlayHint hint) =>
         source is Control { Tag: int index } && hint.LabelParts is { } parts && index >= 0 && index < parts.Count ? parts[index] : null;
 
-    private static string? TooltipOf(InlayHint hint, InlayHintLabelPart? part)
+    private string? TooltipOf(InlayHint hint, InlayHintLabelPart? part)
     {
         var text = (part?.Tooltip ?? hint.Tooltip)?.Value;
-        var link = part?.Location is { } l ? $"{(OperatingSystem.IsMacOS() ? "⌘" : "Ctrl")}+click to go to {Path.GetFileName(l.Uri.IsFile ? l.Uri.LocalPath : l.Uri.AbsolutePath)}:{l.Range.Start.Line + 1}" : null;
+        var link = part?.Location is { } l ? $"{EditorKeys.LinkModifierLabel(_v.Settings.MultiCursorModifier)}+click to go to {Path.GetFileName(l.Uri.IsFile ? l.Uri.LocalPath : l.Uri.AbsolutePath)}:{l.Range.Start.Line + 1}" : null;
         return text is null ? link : link is null ? text : text + "\n\n" + link;
     }
 

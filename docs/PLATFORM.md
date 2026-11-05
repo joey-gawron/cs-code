@@ -161,7 +161,8 @@ Built-in defaults (all in `BuiltInSettings.All`; every key in `SettingKeys` has 
 | `editor.bracketPairColorization.enabled` / `editor.renderWhitespace` / `editor.suggestOnTriggerCharacters` | `true` / `"selection"` / `true` |
 | `editor.quickSuggestions` | `{"other":"on","comments":"off","strings":"off"}` |
 | `cscode.editor.largeFileThresholdBytes` | `5242880` (5 MB) |
-| `files.autoSave` | `"off"` |
+| `files.autoSave` | `"off"` (or `"afterDelay"`, `"onFocusChange"`, `"onWindowChange"`; read live and per language by the shell's auto save, docs/SHELL.md) |
+| `files.autoSaveDelay` | `1000` (ms after the last edit, for `"afterDelay"`) |
 | `files.exclude` | `**/.git`, `**/.svn`, `**/.hg`, `**/CVS`, `**/.DS_Store`, `**/Thumbs.db` → `true`; on macOS also `**/._*`, `**/.Spotlight-V100`, `**/.fseventsd`, `**/.Trashes`, `**/.TemporaryItems`, `**/.DocumentRevisions-V100` |
 | `files.watcherExclude` | `**/.git/objects/**`, `**/.git/subtree-cache/**`, `**/.hg/store/**`, `**/node_modules/**`, `**/bin/**`, `**/obj/**` → `true` (`WatchExclusion.DefaultExcludes`; Cargo's `target/` is left out by its `CACHEDIR.TAG`, see File watching); on macOS also the five volume folders above, as `**/<name>/**` |
 | `workbench.colorTheme` / `workbench.startupEditor` | `"Visual Studio Dark"` / `"welcomePage"` |
@@ -189,6 +190,9 @@ Later entries win; `{"command":"-foo"}` removes **earlier** entries of that comm
   Ctrl+Q and Ctrl+Shift+P palette (Quick Launch opens the palette), Ctrl+T and Ctrl+, go to all, Ctrl+P quick open, Ctrl+Shift+F find in files, Ctrl+F / Ctrl+H / Ctrl+G, Ctrl+S / Ctrl+Shift+S (save all),
   Ctrl+Tab MRU, Ctrl+F4 close, Ctrl+Alt+L explorer, Ctrl+Alt+O output, Ctrl+\ Ctrl+E error list, Ctrl+\` terminal, Alt+Up/Down move lines, Ctrl+D duplicate, Ctrl+L delete line, folding chords, multi-caret Shift+Alt+. / Shift+Alt+; / Ctrl+Alt+Up/Down / Ctrl+U (docs/EDITOR.md §7b).
   VS Code preset: the VS Code defaults for the same feature set (e.g. Shift+Alt+F format — Ctrl+Shift+I on Linux, Ctrl+Shift+K delete line, Ctrl+Shift+E/U/M views, Ctrl+K S save all, Ctrl+D / Ctrl+K Ctrl+D / Ctrl+Shift+L / Ctrl+Alt+Up/Down / Ctrl+U multi-cursor, Shift+F12 peek references and Shift+Alt+F12 find all references, Shift+Alt+H call hierarchy).
+  Both presets, in the editor (docs/EDITOR.md §7): Alt+Z Toggle Word Wrap, Ctrl+= / Ctrl+Shift+= / Ctrl+NumPad+ font zoom in, Ctrl+- / Ctrl+NumPad- zoom out, Ctrl+0 /
+  Ctrl+NumPad0 reset (Cmd on a Mac). Visual Studio's preset keeps Ctrl+- for Navigate Backward off the Mac (zoom out is Ctrl+NumPad- there) and adds
+  Ctrl+Shift+U Make Uppercase; its Make Lowercase (Ctrl+U) stays Cursor Undo and its Duplicate (Ctrl+D) stays Copy Line Down.
   Both presets: Vim's window commands with Vim off, only while an editor has the keyboard (`editorTextFocus && !vim.active`; the terminal keeps Ctrl+W, and with Vim on
   the engine's own Ctrl-W does the same through the shell): Ctrl+W then `v` split right, `s`/`S` split down, `h`/`j`/`k`/`l` focus the group left / below / above / right,
   `w` next group (wraps), `W`/`p` previous group, `o` close the editors of the other groups (`:only`), `c`/`q` close the editor (with the save prompt), `n` a new untitled editor

@@ -90,8 +90,9 @@ public sealed class LanguageConfigurationTests : IDisposable
     public void Only_plain_text_and_languages_without_a_published_configuration_fall_back_to_the_defaults()
     {
         var none = BuiltinLanguageSupport.Languages.Where(l => l.Configuration == LanguageConfigurationOrigin.None).Select(l => l.Id).Order().ToArray();
-        // plain text has nothing to configure; BibTeX, Julia Markdown and Log come from VS Code packages that ship no configuration for them
-        Assert.Equal(["bibtex", "juliamarkdown", "log", "plaintext"], none);
+        // plain text has nothing to configure; BibTeX, Julia Markdown and Log come from VS Code packages that ship no configuration for them;
+        // VS Code's search-result language (the search editor) has none either
+        Assert.Equal(["bibtex", "juliamarkdown", "log", "plaintext", "search-result"], none);
     }
 
     [Fact]

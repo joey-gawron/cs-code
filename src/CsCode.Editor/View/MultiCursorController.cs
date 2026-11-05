@@ -25,7 +25,8 @@ namespace CsCode.Editor.View;
 /// <para>
 /// Lifetime of the extra carets: they follow edits made elsewhere (another view, a language server's edit) through the buffer's change events;
 /// anything else that moves the primary caret (a click, Page Down, Go to Definition, a snippet) collapses them to the primary, as in VS Code.
-/// Escape collapses them too. While a modal layer (Vim) is attached the feature is off: the commands do nothing and no carets are added.
+/// Escape collapses them too. Under a modal layer the feature is off unless the layer handles several carets itself (the Vim adapter does:
+/// <see cref="EditorModalSurface.AllowMultipleCarets"/>, <see cref="HoldCarets"/>).
 /// </para>
 /// <para>
 /// Cost: nothing while there is one caret (each handler returns at once). With n carets a keystroke is O(n log document) plus each caret's own
@@ -45,6 +46,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
 
     internal const string LimitKey = "editor.multiCursorLimit";
     internal const string PasteKey = "editor.multiCursorPaste";
+    internal const string ModifierKey = "editor.multiCursorModifier";
 
     /// <summary>The settings this feature reads (VS Code's own ids), registered by the factory so the Settings panel lists them.</summary>
     internal static IReadOnlyList<ConfigurationProperty> Properties { get; } =
@@ -55,6 +57,9 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         new(PasteKey, JsonSerializer.SerializeToElement("spread"),
             "Pasting with several cursors: spread puts one line of the clipboard at each cursor when the line count equals the cursor count; full pastes the whole text at every cursor.",
             JsonDocument.Parse("""{"type":"string","enum":["spread","full"]}""").RootElement.Clone()),
+        new(ModifierKey, JsonSerializer.SerializeToElement("alt"),
+            "The modifier that adds a caret with the mouse: alt (Alt+Click, Option+Click on macOS) or ctrlCmd (Ctrl+Click, ⌘+Click on macOS). Go to Definition and Open Link take the other one.",
+            JsonDocument.Parse("""{"type":"string","enum":["ctrlCmd","alt"]}""").RootElement.Clone()),
     ];
 
     private readonly CodeEditorControl _v;
@@ -90,8 +95,11 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         var buffer = view.Document.Buffer;
         view.TextView.BackgroundRenderers.Add(_selectionRenderer);
         view.TextView.BackgroundRenderers.Add(_caretRenderer);
-        // Registered before TypingBehaviors, the completion list and the snippet session (this component is created first), so with several
-        // carets these handlers see a key first; with one caret they return at once and those features run as before.
+        // Registered before TypingBehaviors, the completion list and the snippet session (this component is created first). TextEntering is a
+        // CLR event, so with several carets typing reaches this component first. Avalonia calls one element's tunnelling KeyDown handlers in
+        // the REVERSE order of registration, so the later features see a key first: they step aside while several carets exist (TypingBehaviors'
+        // Backspace) or keep the keys they own (the completion list, parameter hints and a snippet session; PopupWantsKey here). With one
+        // caret these handlers return at once and those features run as before.
         area.AddHandler(InputElement.KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         area.AddHandler(InputElement.PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel);
         area.AddHandler(InputElement.PointerReleasedEvent, OnPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
@@ -141,19 +149,44 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     /// <summary>How many times the carets were moved along changes made elsewhere (at the end of a document update, or earlier when something reads them).</summary>
     internal int FollowCount { get; private set; }
 
-    private bool Enabled => !_disposed && !_v.IsDisposed && !_v.ModalAttached;
+    /// <summary>Off while a modal layer is attached, unless the layer handles several carets itself (<see cref="EditorModalSurface.AllowMultipleCarets"/>).</summary>
+    private bool Enabled => !_disposed && !_v.IsDisposed && (!_v.ModalAttached || _v.ModalAllowsMultipleCarets);
+
+    private int _hold;
+
+    /// <summary>
+    /// While the result is not disposed, moves of the primary caret by someone else do not collapse the other carets: a modal layer (Vim) moving
+    /// its cursor as part of a command it runs at every caret, which places the other carets itself.
+    /// </summary>
+    internal IDisposable HoldCarets()
+    {
+        _hold++;
+        var released = false;
+        return Disposable.Create(() =>
+        {
+            if (released) return;
+            released = true;
+            _hold--;
+        });
+    }
 
     private int Limit => _v.Settings.MultiCursorLimit;
 
-    /// <summary>AvaloniaEdit's caret and selection as a caret range (a box selection counts as its caret).</summary>
+    /// <summary>
+    /// AvaloniaEdit's caret and selection as a caret range (a box selection counts as its caret). A selection's ends are its own: a modal layer
+    /// may put the caret inside it (Vim's Visual mode keeps the caret ON the last selected character).
+    /// </summary>
     private CaretRange PrimaryFromEditor()
     {
         var area = _v.TextArea;
         var caret = area.Caret.Offset;
         if (area.Selection is SimpleSelection { IsEmpty: false } s)
         {
-            var anchor = _v.Document.Buffer.GetOffset(s.StartPosition.Location);
-            return new CaretRange(anchor, caret);
+            var buffer = _v.Document.Buffer;
+            var anchor = buffer.GetOffset(s.StartPosition.Location);
+            var end = buffer.GetOffset(s.EndPosition.Location);
+            // the caret at the selection's start: it runs backwards from its end (Vim draws a backward Visual selection this way)
+            return caret == anchor && caret != end ? new CaretRange(end, anchor) : new CaretRange(anchor, end);
         }
         return CaretRange.At(caret);
     }
@@ -229,7 +262,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     private void OnPrimaryMoved(object? sender, EventArgs e)
     {
         // A move of the primary that is not ours and not the buffer's own (its edits move the caret along): a click, Page Down, a command...
-        if (_internal || _inUpdate || _applying || _set is null || _altClick is not null) return;
+        if (_internal || _inUpdate || _applying || _set is null || _altClick is not null || _hold > 0) return;
         Collapse();
     }
 
@@ -290,13 +323,39 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     /// Applies a batch as ONE undo step and makes its carets current. Typed characters (<paramref name="typing"/>) continue the previous typed
     /// batch's undo step while nothing else happened in between, as single-caret typing does. Undo restores the carets from before, redo those after.
     /// </summary>
-    internal void ApplyBatch(CaretSet before, CaretEditBatch batch, bool typing = false)
+    internal void ApplyBatch(CaretSet before, CaretEditBatch batch, bool typing = false) =>
+        ApplyCore(before, batch.Edits, () => CaretSet.Create(batch.Carets, batch.Primary, Limit), typing);
+
+    /// <summary>
+    /// Line commands at every caret (move / copy / delete / comment / indent lines): <paramref name="edits"/> in offsets of the current text, as
+    /// ONE batch and undo step; the carets after it are known as line/column positions of the new text (a moved line keeps its column), so
+    /// they are made offsets once the edits are applied. <paramref name="after"/>: anchor and active of each caret, the primary at <paramref name="primary"/>.
+    /// </summary>
+    internal void ApplyLineEdits(CaretSet before, IReadOnlyList<OffsetEdit> edits, IReadOnlyList<(TextPosition Anchor, TextPosition Active)> after, int primary)
+    {
+        var sorted = edits.Where(e => !e.IsNoOp).OrderBy(e => e.Start).ThenBy(e => e.End).ToArray();
+        ApplyCore(before, sorted, () =>
+        {
+            var doc = _v.Document;
+            var carets = after.Select(p => new CaretRange(doc.OffsetAt(doc.Validate(p.Anchor)), doc.OffsetAt(doc.Validate(p.Active)))).ToArray();
+            return CaretSet.Create(carets, primary, Limit);
+        }, typing: false);
+    }
+
+    private void ApplyCore(CaretSet before, OffsetEdit[] edits, Func<CaretSet> carets, bool typing)
     {
         var doc = _v.Document;
         if (doc.IsReadOnly || _disposed) return;
-        var after = CaretSet.Create(batch.Carets, batch.Primary, Limit);
-        var record = before.Count <= UndoSnapshotLimit && after.Count <= UndoSnapshotLimit;
         var continues = typing && _typingRun is { } run && run.Version == doc.Version && ReferenceEquals(run.Set, _set);
+        if (edits.Length == 0)
+        {
+            // nothing to edit (closers over-typed at every caret): the carets move, and no empty undo step is made; a typed run goes on
+            SetCarets(carets());
+            _typingRun = continues && IsActive ? (doc.Version, _set!) : null;
+            return;
+        }
+        var record = before.Count <= UndoSnapshotLimit;
+        CaretSet after;
         _applying = true;
         try
         {
@@ -304,7 +363,9 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
             try
             {
                 if (record && !continues) doc.AddUndoMarker(StartMarker(before));
-                MultiCaretOperations.Apply(doc.Buffer, batch.Edits);
+                MultiCaretOperations.Apply(doc.Buffer, edits);
+                after = carets();
+                record &= after.Count <= UndoSnapshotLimit;
                 if (record)
                 {
                     if (continues && _lastEndMarker is { } previous) previous.Carets = null; // the run's last marker restores its final carets
@@ -325,7 +386,19 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         }
         SetCarets(after);
         _typingRun = typing && IsActive ? (doc.Version, _set!) : null;
+        _batchApplied.Fire(typing); // a snippet session brings its mirrors up to date (joining the typed run's step)
     }
+
+    private readonly Emitter<bool> _batchApplied = new();
+
+    /// <summary>
+    /// Raised after a batch was applied and its carets made current (argument: it was typing). Features that must not edit the buffer while a
+    /// batch is applied (a snippet's mirrors) do their follow-up edits here, through <see cref="ApplyMapped(IReadOnlyList{OffsetEdit}, bool, bool)"/>.
+    /// </summary>
+    internal IEventSource<bool> BatchApplied => _batchApplied;
+
+    /// <summary>True while a batch of this controller is being applied to the buffer (inside its one change event).</summary>
+    internal bool IsApplyingBatch => _applying;
 
     private Action<bool> StartMarker(CaretSet before)
     {
@@ -354,11 +427,18 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         if (!IsActive) return;   // ... which may have collapsed the carets
         before = Current;
         var newline = text is "\n" or "\r" or "\r\n";
-        var batch = newline
-            ? MultiCaretOperations.Enter(_v.Document.Buffer, before, _v.GetEditingContext())
-            : MultiCaretOperations.Type(before, text);
-        ApplyBatch(before, batch, typing: !newline);
-        if (!newline) _v.Feature<TypingBehaviors>()?.NotifyTyped(text); // completion and signature help follow the primary
+        if (newline)
+        {
+            ApplyBatch(before, MultiCaretOperations.Enter(_v.Document.Buffer, before, _v.GetEditingContext()));
+            return;
+        }
+        // each caret auto-closes, over-types or surrounds as a single caret there would (TypingBehaviors decides per caret)
+        var typing = _v.Feature<TypingBehaviors>();
+        AutoCloseDecision[]? decisions = null;
+        var batch = typing?.TypedBatch(before, text, out decisions) ?? MultiCaretOperations.Type(before, text);
+        ApplyBatch(before, batch, typing: true);
+        typing?.AfterTypedBatch(this, text, decisions, batch.Carets); // closers to over-type later; a lone closer re-indented (same undo step)
+        typing?.NotifyTyped(text); // completion and signature help follow the primary
     }
 
     /// <summary>Replaces [caret − before, caret + after] around every caret with <paramref name="text"/> (a completion accepted with several carets).</summary>
@@ -382,6 +462,16 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         var offsets = edits.Select(e => new OffsetEdit(doc.OffsetAt(e.Range.Start), doc.OffsetAt(e.Range.End), e.NewText)).ToArray();
         var set = Current;
         ApplyBatch(set, MultiCaretOperations.Mapped(set, offsets, keepSelections));
+    }
+
+    /// <summary>
+    /// Edits in offsets of the current text that the carets follow (<see cref="MultiCaretOperations.Mapped"/>); with <paramref name="typing"/>
+    /// they join the typed run's undo step (a lone closer re-indented, snippet mirrors updated after typing at several carets).
+    /// </summary>
+    internal void ApplyMapped(IReadOnlyList<OffsetEdit> edits, bool keepSelections, bool typing)
+    {
+        var set = Current;
+        ApplyBatch(set, MultiCaretOperations.Mapped(set, edits, keepSelections), typing);
     }
 
     /// <summary>A paste with several carets: one line (or copied piece) per caret when the counts match (<c>editor.multiCursorPaste</c> "spread"), else all of it at each.</summary>
@@ -471,7 +561,9 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
                 Move(MultiCaretOperations.MoveHorizontal(buffer, set, forward: e.Key == Key.Right, word, shift));
                 break;
             case Key.Up or Key.Down when plain:
-                Move(MultiCaretOperations.MoveVertical(buffer, set, down: e.Key == Key.Down, shift, _v.Settings.TabSize));
+                Move(_v.Editor.WordWrap
+                    ? MultiCaretOperations.MoveVertical(buffer, set, down: e.Key == Key.Down, shift, _v.Settings.TabSize, RowStarts) // by wrapped rows, as one caret moves
+                    : MultiCaretOperations.MoveVertical(buffer, set, down: e.Key == Key.Down, shift, _v.Settings.TabSize));
                 break;
             case Key.Home when plain:
                 Move(MultiCaretOperations.MoveHome(buffer, set, shift));
@@ -480,7 +572,8 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
                 Move(MultiCaretOperations.MoveEnd(buffer, set, shift));
                 break;
             case Key.Back when (plain || (word && !shift)) && !readOnly: // Shift+Backspace is Backspace (AvaloniaEdit would delete at the primary alone)
-                ApplyBatch(set, MultiCaretOperations.Backspace(buffer, set, word));
+                // as one caret: an auto-inserted pair goes with its opener, leading whitespace back to the previous indentation stop
+                ApplyBatch(set, MultiCaretOperations.Backspace(buffer, set, word, _v.Settings.TabSize, _v.Settings.UseTabStops, _v.Feature<TypingBehaviors>()?.AutoClosedPairPredicate()));
                 break;
             case Key.Delete when (plain || word) && !shift && !readOnly:
                 ApplyBatch(set, MultiCaretOperations.Delete(buffer, set, word));
@@ -510,7 +603,36 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         return _v.Feature<SnippetFeature>()?.IsActive == true && key is Key.Tab or Key.Escape;
     }
 
-    private void Move(CaretSet moved)
+    /// <summary>
+    /// Where each wrapped row of <paramref name="line"/> starts (document offsets), from AvaloniaEdit's own layout of the line, so the carets
+    /// move by the rows the single caret moves by. A line too short to wrap is one row without laying it out; a line off screen is laid out
+    /// (AvaloniaEdit's caret does the same for its one line).
+    /// </summary>
+    private IReadOnlyList<int> RowStarts(DocumentLine line)
+    {
+        var tv = _v.TextView;
+        var cell = tv.WideSpaceWidth;
+        var width = tv.Bounds.Width;
+        if (width <= 0 || cell <= 0) return [line.Offset];
+        // twice the tab-expanded length: wide (CJK) characters take two cells
+        var expanded = MultiCaretOperations.VisualColumn(_v.Document.Buffer, line, line.EndOffset, Math.Max(1, _v.Settings.TabSize));
+        if (expanded * 2 < width / cell) return [line.Offset];
+        var visual = tv.GetVisualLine(line.LineNumber) ?? tv.GetOrConstructVisualLine(line);
+        if (visual.TextLines.Count <= 1) return [line.Offset];
+        var starts = new List<int>(visual.TextLines.Count);
+        var first = visual.FirstDocumentLine.Offset;
+        foreach (var row in visual.TextLines)
+        {
+            var offset = first + visual.GetRelativeOffset(visual.GetTextLineVisualStartColumn(row));
+            if (offset < line.Offset || offset > line.EndOffset) continue; // a fold joined other lines to this visual line
+            if (starts.Count == 0 && offset > line.Offset) starts.Add(line.Offset);
+            if (starts.Count == 0 || offset > starts[^1]) starts.Add(offset);
+        }
+        return starts.Count == 0 ? [line.Offset] : starts;
+    }
+
+    /// <summary>The carets move to <paramref name="moved"/> (a key, a snippet's next tab stop): a typed run ends.</summary>
+    internal void Move(CaretSet moved)
     {
         _typingRun = null;
         SetCarets(moved);
@@ -521,7 +643,8 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _altClick = null;
-        if (!Enabled || e.KeyModifiers != KeyModifiers.Alt || e.ClickCount != 1) return;
+        // editor.multiCursorModifier: Alt+Click (Option on macOS) by default, Ctrl+Click (⌘ on macOS) with "ctrlCmd"
+        if (!Enabled || e.KeyModifiers != EditorKeys.AddCaretModifier(_v.Settings.MultiCursorModifier) || e.ClickCount != 1) return;
         var point = e.GetCurrentPoint(_v.TextView);
         if (!point.Properties.IsLeftButtonPressed || !new Rect(_v.TextView.Bounds.Size).Contains(point.Position)) return;
         // AvaloniaEdit starts a box selection on Alt+press (Alt+drag keeps working): remember the carets, and decide at the release whether this
@@ -572,7 +695,7 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
     private bool CheckEnabled()
     {
         if (Enabled) return true;
-        if (_v.ModalAttached) FeatureSupport.Status(_v, "Multiple cursors are not available while Vim mode is on");
+        if (_v.ModalAttached && !_v.ModalAllowsMultipleCarets) FeatureSupport.Status(_v, "Multiple cursors are not available while Vim mode is on");
         return false;
     }
 
@@ -733,6 +856,28 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
 
     private TextRange RangeOf(CaretRange c) => new(_v.PositionOf(c.Start), _v.PositionOf(c.End));
 
+    /// <summary>The carets for a view state (<see cref="EditorViewState.Carets"/>): the primary first, then the others in document order, with their direction.</summary>
+    internal IReadOnlyList<EditorCaretState> CaretStates()
+    {
+        var set = Current;
+        var list = new List<EditorCaretState>(set.Count) { StateOf(set.Primary) };
+        for (var i = 0; i < set.Count; i++)
+            if (i != set.PrimaryIndex) list.Add(StateOf(set[i]));
+        return list;
+    }
+
+    private EditorCaretState StateOf(CaretRange c) => new(_v.PositionOf(c.Anchor), _v.PositionOf(c.Active));
+
+    /// <summary>A recreated view gets the carets of its view state back (positions clamped to the text, which may have changed meanwhile).</summary>
+    internal void RestoreCarets(IReadOnlyList<EditorCaretState> carets)
+    {
+        if (_disposed || carets.Count == 0) return;
+        var doc = _v.Document;
+        var ranges = carets.Select(c => new CaretRange(doc.OffsetAt(doc.Validate(c.Anchor)), doc.OffsetAt(doc.Validate(c.Active)))).ToArray();
+        if (!Enabled) ranges = [ranges[0]];
+        SetCarets(CaretSet.Create(ranges, 0, Limit), reveal: false);
+    }
+
     /// <summary>Sets several selections at once (the first is the primary); the controller's <c>SetSelections</c>.</summary>
     internal void SetSelections(IReadOnlyList<TextRange> selections, bool reveal)
     {
@@ -829,12 +974,18 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
             if (to <= from) return;
             var brush = owner._v.Palette.Caret;
             var doc = textView.Document;
+            var modal = owner._v.ModalAttached ? owner._v.Modal : null; // a modal layer's caret shape (Vim's block in Normal mode) at every caret
             for (var i = from; i < to; i++)
             {
                 if (i == set.PrimaryIndex) continue;
                 var location = doc.GetLocation(set[i].Active);
                 if (textView.GetVisualLine(location.Line) is null) continue; // folded away
                 var pos = new AvaloniaEdit.TextViewPosition(location);
+                if (modal is not null && modal.DrawsShapedCaret)
+                {
+                    modal.DrawCaretShape(textView, context, pos);
+                    continue;
+                }
                 var top = textView.GetVisualPosition(pos, VisualYPosition.LineTop) - textView.ScrollOffset;
                 var bottom = textView.GetVisualPosition(pos, VisualYPosition.LineBottom) - textView.ScrollOffset;
                 context.FillRectangle(brush, new Rect(top.X, top.Y, 2, Math.Max(1, bottom.Y - top.Y)));
@@ -855,5 +1006,6 @@ internal sealed class MultiCursorController : IDisposable, IThemeAware
         _pendingRestore = null;
         _lastEndMarker = null;
         _typingRun = null;
+        _batchApplied.Clear();
     }
 }

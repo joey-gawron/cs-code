@@ -70,6 +70,8 @@ public sealed class ShellController : IDisposable
     public MenuModel Menus { get; private set; } = null!;
     public LayoutPersistence Layout { get; private set; } = null!;
     public ShellStatusItems StatusItems { get; private set; } = null!;
+    /// <summary><c>files.autoSave</c> (null in a composition without settings).</summary>
+    public AutoSave? AutoSave { get; private set; }
     /// <summary>The Vim adapter (null when the composition has no Vim module or no real editor): sees keys before the key bindings.</summary>
     public Vim.VimIntegration? Vim { get; private set; }
     public IShellKeyInterceptor? KeyInterceptor => Vim;
@@ -142,6 +144,7 @@ public sealed class ShellController : IDisposable
 
         if (_sp.GetService<ActiveSelectionProvider>() is { } selection) _disposables.Add(selection.Track(well));
         if (_sp.GetService<DiffEditorService>() is { } diffs) _disposables.Add(diffs.Start(well, commands, keys));
+        if (_sp.GetService<MergeEditorService>() is { } merges) _disposables.Add(merges.Start(well, commands, keys));
 
         Layout = new LayoutPersistence(Factory, Tools, well, _ui, state, Tools.Tools.Select(t => t.Spec.Id).Except(DefaultLayoutTools));
 
@@ -157,6 +160,9 @@ public sealed class ShellController : IDisposable
 
         // CMake (docs/C-CPP.md): the cmake.* commands, the configure / build / launch-target status bar items, configure on open, clangd's build directory.
         if (_sp.GetService<CsCode.Build.CMake.CMakeHost>() is { } cmake) _disposables.Add(cmake.Start());
+
+        // The spell checker (docs/SPELLCHECK.md): cSpell diagnostics, quick fixes, the cSpell.* commands and its status bar item.
+        if (_sp.GetService<CsCode.SpellCheck.SpellCheckHost>() is { } spell) _disposables.Add(spell.Start());
 
         Keyboard = new KeyboardPipeline(_sp.GetRequiredService<IKeybindingService>(), commands, _ui, _sp.GetRequiredService<IStatusBarService>(), window, context: keys);
         _disposables.Add(Keyboard);
@@ -217,6 +223,16 @@ public sealed class ShellController : IDisposable
             _sp.GetService<ILanguageService>(), _sp.GetService<IDiagnosticService>(), debug, _sp.GetService<IMemoryMonitor>(), _sp.GetService<ILanguageServerManager>());
         _disposables.Add(StatusItems);
 
+        // files.autoSave (docs/SHELL.md, "Auto save"): saves through the well; follows the keyboard focus and the activation of every shell window.
+        if (config is not null)
+        {
+            AutoSave = new AutoSave(well, config, _ui, _time, window,
+                _sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() is { } logs ? Microsoft.Extensions.Logging.LoggerFactoryExtensions.CreateLogger<AutoSave>(logs) : null,
+                () => IsClosing);
+            _disposables.Add(AutoSave);
+            _windowHooks.Add(AutoSave.AttachWindow);
+        }
+
         // Tool windows that declare AutoShowWhen (debug panes) follow their context key.
         _disposables.Add(keys.Changed.Subscribe(_ => _ui.PostCoalesced("tools.autoshow", EvaluateAutoShow)));
 
@@ -230,6 +246,9 @@ public sealed class ShellController : IDisposable
                 new ConfigurationProperty(Startup.AppSession.KeepRunningSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "macOS, without background mode: closing the window leaves CsCode running in the Dock, as Mac apps do (a click on the Dock icon, New Window or opening a file brings a new window; ⌘Q quits). false: closing the window quits."),
                 .. ToolbarView.Groups.Select(g => new ConfigurationProperty(g.SettingKey, System.Text.Json.JsonSerializer.SerializeToElement(true),
                     $"Show the {g.Title} toolbar (View > Toolbars).")),
+                // Explorer drag and drop (VS Code's keys)
+                new ConfigurationProperty(ToolWindows.Explorer.ExplorerViewModel.ConfirmDragAndDropSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "Controls whether the Explorer should ask for confirmation to move files and folders via drag and drop."),
+                new ConfigurationProperty(ToolWindows.Explorer.ExplorerViewModel.EnableUndoSetting, System.Text.Json.JsonSerializer.SerializeToElement(true), "Controls whether the Explorer supports undoing its last drag and drop (⌘Z, Ctrl+Z elsewhere, while it has the keyboard)."),
             ]));
 
         // UI stall watchdog: Debug builds, or whenever the setting is > 0.

@@ -23,9 +23,11 @@ using CsCode.Panels.NewProject;
 using CsCode.Panels.Search;
 using CsCode.Panels.Testing;
 using CsCode.Panels.Terminal;
+using CsCode.Panels.Timeline;
 using CsCode.Platform;
 using CsCode.Profiling;
 using CsCode.Remote;
+using CsCode.SpellCheck;
 using CsCode.Ui;
 using CsCode.Vim;
 using CsCode.Ui.Threading;
@@ -70,8 +72,11 @@ public static class AppServices
         services.AddCsCodeGit(); // source control: git status, Source Control window, Explorer decorations, gutter markers, blame
         services.AddCsCodeNewProject(); // File > New > Project...: the New Project page and its generators (docs/NEW-PROJECT.md)
         services.AddCsCodeOrg(); // org mode: the org language, org.* commands and keys, the Org Agenda window (docs/ORG.md)
+        services.AddCsCodeSpellCheck(); // the built-in spell checker: cSpell diagnostics, quick fixes, commands, status bar (docs/SPELLCHECK.md)
         services.AddCsCodeRemote(); // after AddCsCodeLsp: with cscode.languageHost = process it redirects the language-server manager to a child process
         services.AddCodeActionsOnSave(); // after AddCsCodeRemote (see there): editor.codeActionsOnSave, the first will-save participant
+        services.AddCsCodeTimeline(); // after AddCsCodeRemote (see there): local history (save hook, renames follow) and the Timeline window (docs/LOCAL-HISTORY.md)
+        services.AddBookmarkFileTracking(); // after AddCsCodeRemote: bookmarks follow a file renamed, moved or deleted in CsCode
         configure?.Invoke(services); // dev/test host: replace anything above
         AddChildProcessTracking(services); // last: wraps whichever memory monitor ended up registered
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
@@ -136,11 +141,15 @@ public static class AppServices
         // Diff editor tabs (Source Control, Compare with Saved / Clipboard / Selected); the well is resolved on first use.
         services.AddSingleton(sp => new DiffEditorService(sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<IEditorViewFactory>(), () => sp.GetRequiredService<DocumentWell>()));
         services.AddSingleton<Core.Scm.IDiffEditorService>(sp => sp.GetRequiredService<DiffEditorService>());
+        // 3-way merge editor tabs (Source Control's Resolve in Merge Editor, docs/SOURCE-CONTROL.md)
+        services.AddSingleton(sp => new MergeEditorService(sp.GetRequiredService<IUiDispatcher>(), sp.GetRequiredService<IEditorViewFactory>(), () => sp.GetRequiredService<DocumentWell>()));
+        services.AddSingleton<Core.Scm.IMergeEditorService>(sp => sp.GetRequiredService<MergeEditorService>());
 
         services.AddSingleton<IToolWindow, ExplorerToolWindow>();
         services.AddSingleton<IToolWindow, OutputToolWindow>();
         services.AddSingleton<IToolWindow, ErrorListToolWindow>();
         services.AddSingleton<IToolWindow, FindResultsToolWindow>();
+        services.AddSingleton<IToolWindow, ToolWindows.Bookmarks.BookmarksToolWindow>(); // the Bookmark Window (the bookmarks are the editor's)
         services.AddSingleton(sp => new ToolWindowManager(sp.GetRequiredService<ShellDockFactory>(), sp.GetServices<IToolWindow>(), sp));
         // Panels bring their views to the front through this (Find in Files, Settings, Keyboard Shortcuts); document-location windows open as tabs.
         services.AddSingleton<ShellViewActivator>();

@@ -13,10 +13,15 @@ inline blame, and a diff editor that the rest of the app (Compare with Saved / C
 | Diff editor | `src/CsCode.Editor/Diff/` | `DiffModel`, `UnifiedDiff`, `DiffEditorControl`, renderers |
 | Gutter markers, inline blame | `src/CsCode.Editor/Features/QuickDiffFeature.cs`, `InlineBlameFeature.cs` | editor features over the Core providers |
 | Shell glue | `src/CsCode.App/Services/DiffEditorService.cs`, Explorer (`ExplorerNode.Decoration`) | diff tabs, `textCompareEditorVisible`, Next/Previous Change, decorations on rows |
+| Conflict parser, 3-way merge | `src/CsCode.Core/Text/MergeConflicts.cs`, `ThreeWayMerge.cs`; contracts `src/CsCode.Core/Scm/MergeEditorContracts.cs` | conflict blocks and their resolutions; the merge model behind the merge editor (over `LineDiff`); `IMergeEditorService`, `MergeEditorRequest` |
+| Inline conflicts | `src/CsCode.Editor/Features/MergeConflictTracker.cs`, `MergeConflictFeature.cs`, `MergeConflictCommands.cs` | per-version scan, tint and ruler marks, code lens, `merge-conflict.*` commands, right-click items |
+| Merge editor | `src/CsCode.Editor/Diff/MergeEditorControl.cs`, `src/CsCode.App/Services/MergeEditorService.cs`, `src/CsCode.Panels.Git/GitHost.Merge.cs` | the 3-way editor, its tab, Resolve in Merge Editor, staging with the marker check |
 
 DI: `services.AddCsCodeGit()` (in `AppServices.Build`) registers `GitService` (also as the three providers), `GitHost` and the
 `SourceControlToolWindow`. The shell registers `DiffEditorService` as `IDiffEditorService` and starts it from `ShellController` (commands and
 the context key). Everything is optional: without the module the Explorer shows no decorations and the editor no markers.
+The shell also registers `MergeEditorService` as `IMergeEditorService` and starts it from `ShellController` (Complete Merge, Next / Previous
+Conflict, `isMergeEditor`); the editor's inline conflict support needs nothing from DI (the view factory registers it).
 
 ## Finding git and repositories
 
@@ -110,6 +115,9 @@ Visual Studio's Git Changes / VS Code's Source Control view in one:
   `git.commit` when `scmInputFocus`), **Amend** (fills the box with the last message; an empty message amends with `--no-edit`). With nothing staged
   the button says **Commit All** and asks *"There are no staged changes to commit. Stage all your changes and commit them directly?"* (Yes /
   Always (sets `git.enableSmartCommit`) / Cancel). The message goes through stdin (`commit -F - --cleanup=strip`).
+* Spelling in the commit box (docs/SPELLCHECK.md): with the spell checker composed (`ITextSpellChecker`), misspelt words are underlined 300 ms after
+  typing stops (`Views/CommitMessageSpelling.cs`, a layer over the plain text box; language id `scminput`), and right-clicking one offers its
+  replacements and Add to User Dictionary with Cut / Copy / Paste (`CommitMessageSpellingTests`).
 * One virtualised list: **Merge Changes**, **Staged Changes**, **Changes** group rows (count badge; Unstage All, Discard All, Stage All buttons) and
   file rows (name in the git colour, folder dimmed, letter; Open File, Discard, Stage/Unstage buttons). Click opens the change in the diff editor,
   double-click opens the file. Keys: Enter (open changes), Space (stage/unstage), Delete (discard). Context menu: Open Changes, Open File,
@@ -118,10 +126,18 @@ Visual Studio's Git Changes / VS Code's Source Control view in one:
   the file, a file deleted on disk index ↔ empty; a conflicted file opens as a file. Revisions are read with `git cat-file --filters`, i.e. as
   checkout would write them (core.autocrlf, `.gitattributes` eol), so they compare line by line with the file.
 * **Discard** asks first; for untracked files it says they will be DELETED (`git clean -f`), tracked files are restored from the index (`git checkout`).
+  When local history is composed (`ILocalHistoryService`, docs/LOCAL-HISTORY.md), each file is first kept as an "Undo Discard" entry (at most
+  5 s), so the Timeline can restore what was discarded, untracked files included.
 * Pull, push (a branch without upstream is published to `origin`, else the first remote, with `-u`), fetch (`--prune`) and sync (pull then push,
   confirmed unless `git.confirmSync` is off) run under a cancellable progress notification; the window shows them as busy. Any git failure shows
   *"Git: <git's own message>"* with a Show Output action and is logged in the **Git** output channel. Refusals printed on stdout ("nothing to
   commit") are used when stderr is empty.
+
+## Timeline (Git History)
+
+`GitTimelineProvider` (`Engine/GitTimeline.cs`, registered by `AddCsCodeGit` as a Core `ITimelineProvider`) lists the commits that changed a
+file in the Timeline window, merged by time with its local history: `git log --follow`, paged without git's `--skip` (wrong with `--follow` past
+a rename), each version read under the path it had in that commit. Details: docs/LOCAL-HISTORY.md, "Git History".
 
 ## Status bar
 
@@ -200,6 +216,105 @@ Windows-1252, Shift-JIS, ...) and the index keeps its UTF-8 BOM, or its lack of 
 
 The last two are contributed to the Explorer's `explorer/context` menu (group `3_compare`).
 
+## Merge conflicts in the editor
+
+VS Code's built-in merge-conflict support, in the editor module: it works on any document with conflict markers, git or not (the diff and
+merge editors' read-only panes excepted).
+
+* **Parsing** (`MergeConflictParser`, Core): VS Code's rules. A block starts at a line beginning with `<<<<<<<`, may hold common-ancestor
+  sections (`|||||||`, diff3 and zdiff3; several are kept), splits at a line that is exactly `=======` and ends at a line beginning with
+  `>>>>>>>`; a block without a splitter is not a conflict; a start marker inside an open block stops the scan (blocks before it are kept).
+  `\n`, `\r\n` and `\r` lines; a footer on the last line without a terminator. Resolving keeps the current content, the incoming content, or
+  both (current first); the common ancestors and markers go. Git's `conflict-marker-size` other than 7 is not recognised (nor by VS Code).
+* **Per version, off the UI thread** (`MergeConflictTracker`): one scan per document version on the editor worker, from the version's
+  snapshot, shared by every view's decorations, the code lens and the commands (in-flight scans are shared too; only the latest version of
+  each document is kept, in a weak table). A document without `<<<<<<<` anywhere costs one pass over its rope in 64 K chunks through a pooled
+  buffer, no text materialised; only a document with markers is materialised (once per version) and parsed. Large-file mode has none of it.
+* **Decorations** (`MergeConflictFeature`, per view): 250 ms after the text stops changing the blocks are asked for; an answer for an older
+  version is dropped. Whole lines are tinted with VS Code's colours: `merge.currentHeaderBackground` / `currentContentBackground`,
+  `merge.commonHeaderBackground` / `commonContentBackground`, `merge.incomingContentBackground` / `incomingHeaderBackground` (the splitter is not
+  tinted); " (Current Change)" and " (Incoming Change)" follow the marker lines in `descriptionForeground`; high-contrast themes outline the
+  marker lines in `merge.border`. The overview ruler marks each side across all its lanes (`editorOverviewRuler.currentContentForeground`,
+  `incomingContentForeground`, `commonContentForeground`). Between scans the shown lines follow line insertions and deletions, so the tint does
+  not jump while typing. Defaults (VS Code's) are in the theme defaults table: headers `#40C8AE` / `#40A6FF` at 50 %, `#606060` at 40 %,
+  contents at 40 % of their header; in high contrast no tint, `merge.border` `#C3DF6F` / `#007ACC`, which also colours the ruler.
+* **Code lens**: "Accept Current Change | Accept Incoming Change | Accept Both Changes | Compare Changes" above each block. It is an
+  `ICodeLensProvider` registered in `ILanguageFeatureRegistry` for every document, not an editor-side lens source: the editor's code lens
+  (§7e of docs/EDITOR.md) then draws it with everything it already does (zones that never make the text jump, the stable first line, hover
+  and click, folding, `editor.codeLens`, which hides these lenses as it does in VS Code), and lenses of other providers on the same line merge
+  into one line. A second zone source would need a second `LineZones` on the view, whose generator must be first on the line, and its own
+  hover, click and scroll keeping. The cost of asking every document is the tracker's scan above, shared with the decorations. A lens names
+  its block by URI and start line (`["known-conflict", uri, line]`), so it acts on that block whatever the caret; a block that has moved since
+  says so.
+* **Commands** (category "Merge Conflict", VS Code's ids): `merge-conflict.accept.current`, `.incoming`, `.both` (the block at the caret, or
+  the lens's), `.selection` (the side the caret is in: the `<<<<<<<` line counts as current, the `>>>>>>>` line as incoming; in the ancestors
+  or on the splitter it says so), `merge-conflict.accept.all-current`, `.all-incoming`, `.all-both` (every block of the active document; with
+  file URIs as arguments, every block of those files: open documents in their editor, others on disk through
+  `INavigationService.ApplyWorkspaceEdit`), `merge-conflict.next` / `.previous` (the caret to the next / previous block's start, wrapping),
+  `merge-conflict.compare` (the diff editor: the whole file with every block taken as current, against the whole file with every block taken
+  as incoming, at the block: VS Code's comparison). Each accept is ONE undo step (Accept All too). A command waits for the scan of the current
+  version, so it never acts on stale offsets; outside a block it warns "Editor cursor is not within a merge conflict"; no blocks: "No merge
+  conflicts found in this file". No default keys (VS Code has none).
+* **Right-click**: Accept Current Change, Accept Incoming Change, Accept Both Changes, Compare Changes at the top of the editor's menu while
+  the caret is in a block (context key `mergeConflictAtCursor`; `mergeConflictsCount` holds the number of blocks), set when the view gets the
+  keyboard, when its menu opens and as the caret moves.
+* **Settings**: `merge-conflict.codeLens.enabled` (true), `merge-conflict.decorators.enabled` (true: tint, labels and ruler marks).
+
+## Merge conflicts in the Source Control window
+
+* Conflicted files are listed under **Merge Changes** (letter `!`). Staging one (`git add`) marks it resolved; when its text on disk still has a
+  conflict marker line (VS Code's check: `<<<<<<< `, `=======`, `>>>>>>> `), staging asks first: *"Are you sure you want to stage c.txt with
+  merge conflicts?"* (*"... stage 2 files with merge conflicts?"*), Yes / Cancel. The check covers the row buttons, Space, the context menu,
+  `git.stage` and Stage All (`git.stageAll` stages conflicted files too, so it asks when one still has markers). Unsaved edits are not
+  looked at: what is staged is the file on disk.
+* A merge row's context menu adds **Resolve in Merge Editor** (when the shell has one), **Accept All Current** and **Accept All Incoming** (the
+  editor's commands with the file's URI: an open document is edited in its editor, a closed file on disk).
+
+## Merge editor
+
+**Resolve in Merge Editor** (`git.openMergeEditor`; a merge row's menu, the palette on the active file, or the lens "Resolve in Merge
+Editor" that the git module adds after the editor's own lenses above a conflicted file's first block) opens a 3-way merge editor tab
+(`view:merge:<uri>`, titled *Merging: c.txt*; opening it again activates it).
+
+* **Inputs**: base, current and incoming are the index stages 1, 2 and 3 (`git cat-file --filters :N:path` through the engine's runner, i.e.
+  `git show :N:path` as checkout would write it, so line endings match the file); a missing stage (a file added on both sides) is empty; a side
+  deleted (or binary) says so and opens nothing. The sides are named after the file's markers (`HEAD`, `topic`).
+* **The merge** (`ThreeWayMerge`, Core, over `LineDiff`, on the editor worker): each side is diffed against the base; changes of either side
+  that overlap or touch (git's rule: adjacent lines conflict) form a region; a region changed on one side, or the same way on both, merges by
+  itself; changed differently on both, it is a conflict. Lines keep their own terminators (a line-ending change is a change; the result keeps
+  each line's ending). Taking current (incoming) everywhere gives git's `merge-file --ours` (`--theirs`) text; conflicts are those of git's
+  `diff3` style: git's default style also joins conflicts that are at most three lines apart, and refines conflicting lines the two sides agree
+  on, which the merge editor does not (a union of both sides can then differ from git's `--union`).
+* **Layout**: Incoming (left) and Current (right), read-only editor views, on top; the Result below. Changed lines of a side are tinted
+  (`diffEditor.insertedLineBackground`), its conflicts `merge.incomingContentBackground` / `merge.currentContentBackground`
+  (`...HeaderBackground` once taken), and a thin line marks where a side removed lines. The panes scroll together through the conflicts'
+  boundaries (interpolated in between).
+* **The Result is the file's own document** (`IEditorViewFactory.CreateMergeView(request, document)`, additive): editable, with every editor
+  feature, shared with any editor tab of the file. When it still has conflict markers it starts as VS Code's does: the base with the merged
+  changes applied, conflicts holding their base lines (one undo step). Without markers its text is kept and each conflict is found in it by a
+  diff against that starting text, its state read from its text. Each conflict's place is held by two anchors, so edits elsewhere move it; an
+  edit inside it (typing, undo, redo, a toggle) is classified again: a side's text checks that side, both sides in either order check both,
+  the base unchecks them, anything else counts as handled by hand. Unhandled conflicts are tinted `merge.commonContentBackground` and outlined
+  in `editorWarning.foreground`; handled ones take their side's colour.
+* **Taking sides**: above each conflict in the input panes a checkbox lens, "☐ Accept Incoming" / "☑ Accept Incoming" (and Current), toggles
+  that side; taking both puts them in the order they were taken. The header's Accept Incoming / Accept Current / Accept Both act on the
+  conflict the Result's caret is in (always reachable, also where a lens cannot show: a conflict that starts on an empty line). Each change of
+  the Result is one undo step. The header counts what is left ("2 Conflicts Remaining", "No Remaining Conflicts") and steps through the
+  conflicts (↑ ↓, wrapping; the caret of the Result and the three panes go there).
+* **Complete Merge** (header button, `mergeEditor.acceptMerge`): with unhandled conflicts it asks first ("Complete with Conflicts" / Cancel);
+  then the Result is saved and the request's completion runs (git: `git add` the file, which marks it resolved) and the tab closes.
+* **Lifetime**: the tab is attached to the file's document (`DocumentWell.AttachDocument`), which keeps it open also when no editor tab shows
+  it, and the Result's unsaved changes count like an editor tab's while no editor tab shows the file (`DocumentWell.HasUnsavedChanges`,
+  `UnsavedAttachedDocuments`): the editor's own starting edit does not count (`MergeEditorControl.HasUnsavedChanges`), any change of the user's
+  does. Closing the merge editor (its close button, Close All, the Save prompts of a quit or of closing the window) then asks *Do you want to
+  save the changes you made to c.txt?* (Save / Don't Save / Cancel; an editor tab of the same file does not ask while the merge editor still
+  shows it). Closing it untouched undoes the reset (the file keeps its markers, the document is clean and is let go); a close nobody was asked
+  about (a programmatic one) keeps unsaved changes in an editor tab of the file. Session autosave and hot exit back the Result up like any
+  dirty document (under the file's URI, docs/SESSIONS.md), and the next start brings it back as **the file in an editor tab with its unsaved
+  changes**: the merge editor tab itself is not restored, and Resolve in Merge Editor on the file reads each conflict's state back from that
+  text. Commands for the active merge editor: `mergeEditor.acceptMerge` (Complete Merge), `cscode.mergeEditor.nextConflict` /
+  `previousConflict`, all with the context key `isMergeEditor`.
+
 ## Commands, keys, settings, context keys
 
 Commands (palette category "Git"): `git.refresh`, `git.commit`, `git.commitAmend`, `git.stageAll`, `git.unstageAll`, `git.cleanAll`,
@@ -220,12 +335,25 @@ three as nullable, so it keeps VS Code's defaults when the git module is absent.
 
 Context keys: `textCompareEditorVisible`, `scmInputFocus`, `resourceSelectedForCompare`, `gitOpenRepositoryCount`.
 
+Merge conflicts: commands `merge-conflict.accept.current`, `.incoming`, `.both`, `.selection`, `.all-current`, `.all-incoming`, `.all-both`,
+`merge-conflict.next`, `.previous`, `.compare` (editor, category "Merge Conflict"), `git.openMergeEditor` (git), `mergeEditor.acceptMerge`,
+`cscode.mergeEditor.nextConflict` / `previousConflict` (shell, category "Merge Editor"), `cscode.mergeEditor.toggleSide` (the input panes'
+lenses; not in the palette); settings `merge-conflict.codeLens.enabled` (true), `merge-conflict.decorators.enabled` (true), registered by the
+editor; context keys `mergeConflictAtCursor`, `mergeConflictsCount`, `isMergeEditor`; theme keys `merge.currentHeaderBackground`,
+`merge.currentContentBackground`, `merge.incomingHeaderBackground`, `merge.incomingContentBackground`, `merge.commonHeaderBackground`,
+`merge.commonContentBackground`, `merge.border`, `editorOverviewRuler.currentContentForeground`, `incomingContentForeground`,
+`commonContentForeground` (defaults in `DefaultColors`). No keys are bound.
+
 ## Memory and lifetime
 
 The view-model, view, diff control, gutter and blame features are disposable and drop every subscription (`DisposableStore`); the diff control
 disposes its pane views and releases its snapshot documents and their tokenisation sessions (test: `Closing_a_diff_releases_its_views_and_documents`).
 Caches are bounded: quick-diff originals 64 entries, inline blame 256 entries per view, git stderr 64 KB per process. Status snapshots are
 immutable and replaced wholesale.
+The conflict tracker keeps one scan per open document (the latest version; the text only when it has conflicts) in a weak table, so it goes
+with the document; the per-view conflict feature drops its blocks, timer and subscriptions with the view. The merge editor disposes its three
+views, releases its two snapshot documents, withdraws its lens provider and leaves the Result's document to the well (tests:
+`A_closed_view_with_conflicts_is_not_retained`, `A_closed_merge_editor_releases_its_panes_and_documents`).
 
 ## Tests
 
@@ -252,6 +380,24 @@ immutable and replaced wholesale.
   following edits and the original, peek / revert / stage, feature gating; inline blame.
 * `tests/CsCode.App.Tests/RealApp/SourceControlTests.cs`: the real composition on a git folder: status bar, Explorer decorations, the window,
   the providers, Open Changes in a diff tab, `textCompareEditorVisible`, Next Change, staging.
+* Merge conflicts: `tests/CsCode.Core.Tests/MergeConflictParserTests.cs` (two-way and diff3 blocks, CRLF, a footer without a terminator, empty
+  sides, broken blocks by VS Code's rules, the staging check's marker lines, 20,000 blocks, cancellation), `ThreeWayMergeTests.cs` (clean,
+  same-on-both, conflicting, adjacent and same-place changes, line endings, the order of both sides, classification, 200 random edit scripts
+  covering every text); `tests/CsCode.Editor.Tests/MergeConflictViewTests.cs` (headless: per-version scans and lines following typing, the
+  chunked scan across a chunk boundary, tint pixels and ruler marks, the setting, VS Code's colour defaults, the lens titles and a click in one
+  undo step, every command, accept-all on open and closed files, wrap-around navigation, Compare's texts and line, context keys and menu items,
+  diff panes left alone, no retention); `MergeEditorViewTests.cs` (the reset and its undo, checkboxes in order with undo read back, the lenses,
+  typing inside and outside a conflict, navigation, buttons and the scroll map, Complete Merge's question, save and completion, closing
+  untouched, a result without markers read back, no retention); `tests/CsCode.Panels.Git.Tests/MergeConflictTests.cs` (a real merge in a temp
+  repository: the merge group, staging asking with markers and not without, Yes / Cancel, Stage All, the stages read for the merge editor and
+  its labels, resolving through the merge model leaving the file and index resolved and committable, the model against `git merge-file`
+  `--ours` / `--theirs` / `--union` / `--diff3`, the git lens, the menu items); `tests/CsCode.App.Tests/RealApp/MergeConflictTests.cs` (the
+  real composition: Resolve in Merge Editor's tab, Complete Merge saving, staging, closing and letting the document go, closing untouched, the
+  editor's accept command on a conflicted file, a merge editor over a document an editor tab shows; an unsaved Result no editor tab shows: the
+  window's unsaved changes, Close All asking (Cancel keeps it, Save writes it), the tab's close button asking and Don't Save discarding, a
+  programmatic close keeping it in an editor tab); `tests/CsCode.App.Tests/Background/MergeEditorSessionTests.cs` (a real session process: a
+  quit with `files.hotExit` off asks to save that Result and Save writes it; a hot-exit quit backs it up without asking, leaves the file alone,
+  and the next start of the session restores it as the file's editor tab, dirty, with the Result's text).
 
 ## What is left
 
@@ -262,6 +408,14 @@ immutable and replaced wholesale.
   needs the modified pane to share the open `EditorDocument` and survive that tab closing (the well closes a document when its last tab goes).
 * Per-hunk stage/unstage/discard **in the Source Control window** (the gutter peek stages and reverts single changes; the engine has
   `StageRangeAsync`/`UnstageRangeAsync`); a tree view of the change lists; multi-select drag.
-* Merge conflict tooling beyond listing (accept current/incoming, a 3-way merge editor); stash; tags; history/graph; `git.autofetch`.
+* Stash; tags; history/graph; `git.autofetch`.
+* Merge conflicts: VS Code's `merge-conflict.autoNavigateNextConflict.enabled` and `merge-conflict.diffViewPosition` are not read; a block's
+  lens and tint follow the text 250 ms / 500 ms after typing pauses (lines move at once). The merge editor has no "Reset Result", no "Accept
+  Combination" lens (taking both is two checkboxes, or Accept Both), no minimap, and its conflicts are diff3's, not the joined and refined
+  conflicts of git's default style; a conflict starting on an empty line has no checkbox lens (§7e of docs/EDITOR.md: the header buttons
+  still act on it). Complete Merge saves the Result directly (`IEditorDocument.SaveAsync`): the shell's will-save participants (format on
+  save, code actions on save) do not run. A merge editor tab is not restored with a session: its unsaved Result comes back as the file in an
+  editor tab (see Lifetime above), and Resolve in Merge Editor reopens it. Rebases and cherry-picks work (their stages are the same) but the
+  sides keep the merge's names ("Current" is the branch being rebased onto).
 * A dedicated `git-branch` icon (the Codicon set in `CsCode.Ui/Icons` has `source-control` only; adding icons regenerates a shared file).
 * View zones (VS Code's blank filler lines) to align the side-by-side panes exactly; the scroll map interpolates instead.

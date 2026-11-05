@@ -115,6 +115,8 @@ public class ProtocolCodecTests
         RoundTrip(new InlayHint(new TextPosition(3, 4), ": string", InlayHintKind.Type, true, true, MarkupContent.Plain("tip")));
         RoundTrip(new CodeLens(R, new Command("3 refs", "show.refs", [Data]), Data));
         RoundTrip(new ColorInformation(R, 0.1, 0.2, 0.3, 1));
+        RoundTrip<IReadOnlyList<ColorPresentation>>([new ColorPresentation("rgb(1, 2, 3)"), new ColorPresentation("#010203", new TextEdit(R, "#010203"), [new TextEdit(R, "@use x;")])]);
+        RoundTrip(new LangArgs { Color = new ColorInformation(R, 1, 0.5, 0, 0.25) });
         RoundTrip(new LinkedEditingRanges([R, R], "[a-z]+"));
         var item = new HierarchyItem("f", SymbolKind.Function, U("/h.ts"), R, R, "detail", Data);
         RoundTrip(new CallHierarchyIncomingCall(item, [R]));

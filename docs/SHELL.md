@@ -404,13 +404,73 @@ skipped (logged) and edits computed for a version the user has since changed are
 resource operations of workspace edits run the `IFileOperationParticipant`s around the file-system call: `WillRenameFilesAsync` first (bounded to 3 s;
 its edit is applied before the move, so references and imports follow the file; in a workspace edit without a second confirmation), then
 `DidRename/DidCreate/DidDeleteFilesAsync`. Participants are resolved on first use (the language client itself depends on the navigation service).
+An Explorer rename or move (F2, cut and paste, drag and drop, undo of a drop) no longer closes the editors of the files moved: once the move
+succeeded they follow them in place (`DocumentWell.RelocateAsync`; the document implements `IRelocatableDocument`, Core, additive: it takes the new
+path as after Save As, without writing, so unsaved changes, undo history, view and tab position stay, and language servers see the old path closed
+and the new one opened); a move that fails leaves them where they were. A document that cannot follow is closed and reopened with its unsaved text.
 
-**Explorer** (virtualised flat rows, 20k siblings expand in well under a second): lazy folders, off-thread read/sort, VS file icons, persisted expansion, create/rename (F2 inline)/delete (trash, confirmed)/duplicate/cut/copy/paste/move (model; with the file-operation participants),
+**Auto save** (`Services/AutoSave.cs`, VS Code's `files.autoSave`, read per document so a `"[lang]"` section can set it, and live): `afterDelay` saves a
+dirty document `files.autoSaveDelay` ms (1000) after its last edit, every edit starting the wait again (one timer per document, re-armed on the typing
+path without allocating); `onFocusChange` saves an editor's document when the editor loses the keyboard (to another editor, a tool window, the
+palette or a prompt; a menu or popup over it does not count) or stops being the active editor, and every dirty document when a CsCode window loses
+activation; `onWindowChange` saves every dirty document when a CsCode window (the main one or a floating one) loses activation. Turning auto save on
+saves the dirty documents at once, as VS Code does. Never an untitled or read-only document, and never one whose "changed on disk" question is
+open (`EditorDocument.IsExternalChangePending`; a delayed save waits until it is answered, then saves). Saves go through `DocumentWell.SaveAsync(tab,
+reason)`: the will-save participants with `DocumentSaveReason.AfterDelay` / `FocusOut`, then the editor's save for that reason, which after a delay
+skips format on save and leaves the carets' lines alone (docs/EDITOR.md §7); encoding and writing run on the IO lane. One document is never saved
+twice at once (edits made meanwhile are saved after); a failing save is logged and reported once until one succeeds. Closing a dirty editor saves it
+instead of asking when it auto-saves on focus change, or after a delay of at most 1000 ms (VS Code treats it as being saved), and in every mode while
+the window closes (VS Code saves on shutdown); `onWindowChange` asks while the window stays (the question does not leave the window). Each document is
+tracked while a tab shows it and released with its last tab (`AutoSaveTests`, `AutoSaveRealAppTests`).
+
+**Explorer** (virtualised flat rows, 20k siblings expand in well under a second): lazy folders, off-thread read/sort, VS file icons, persisted expansion, create/rename (F2 inline)/delete (trash, confirmed)/duplicate/cut/copy/paste/move (with the file-operation participants),
 reveal active file, `files.exclude`, watcher batches applied by diffing only the affected loaded directories, type-ahead, filter box (loaded nodes), context menu incl. contributed items, empty state, multi-root.
+Rows multi-select (Ctrl/⌘-click, Shift-click); Cut and Copy take every selected row, the menu's other commands the clicked one.
+**Drag and drop** (VS Code's Explorer; `ExplorerView`, `ExplorerViewModel.DropAsync` / `DropExternalAsync`, `ExplorerDrag`):
+* Selected rows dragged onto a folder row move into it; onto a file row, into that file's folder; onto the blank space under the rows, into the
+  first workspace folder. ⌥ held at the drop on macOS, Ctrl elsewhere, copies instead. A plain press on one of several selected rows keeps them
+  selected so they drag together (released without a drag, it selects that row alone). The folder a drop would land in is highlighted
+  (`list.dropBackground`); a collapsed folder hovered for 500 ms opens; near the list's top or bottom edge the rows scroll, also while the pointer
+  rests there. Refused, as in VS Code: a workspace folder (not draggable), a folder onto itself or anything below it, and a move onto the folder an
+  item is already in (nothing would happen; when any dragged item is refused the whole drag is). A copy onto its own folder is named like
+  Duplicate's ("x copy.txt"). A folder dragged with something inside it carries it.
+* A move asks "Are you sure you want to move 'x' into 'y'?" (several: the names, ten at most) while `explorer.confirmDragAndDrop` is true; its
+  "Move, Don't Ask Again" answer writes the setting false (the prompt has buttons, no check box). Copies are not confirmed (VS Code asks for moves
+  only). A name already taken in the folder asks once for all of them: Replace (what is there goes to the Trash first, its editors closed), Skip
+  (those stay where they are, the rest go) or Cancel (nothing happens).
+* A move is the rename path above (will-rename edits, editors following with their unsaved changes, did-rename); a copy reports what it created
+  (`DidCreateFilesAsync`). All file I/O is the file system's (`IFileSystem`, its IO lane); the drop returns to the platform at once and the move or
+  copy, questions included, runs after it. Only the folders that changed are read again; the target opens and its first new item is selected.
+* **From Finder or a file manager** onto a folder row: copied into the folder (never moved, as VS Code), folders with their contents, with the same
+  replace-or-skip question; the workspace's own folder or one around the target is refused; a local file dropped on a remote folder is read and
+  written through the remote file system.
+* **Onto the rest of the window** (`Input/WindowFileDrop`, on the main and the floating windows): files dragged from Finder or from the Explorer open
+  as editor tabs in the editor group under the pointer, the last one active (Explorer folder rows are not opened, and Explorer rows dropped on the
+  Explorer's own header do nothing). A folder dragged from Finder opens as the workspace folder, as File > Open Folder; several: the first opens and
+  the others are added beside it (multi-root). Over an editor this works too: AvaloniaEdit's own text drag and drop marks every drag over the text
+  handled, so the window's handler also takes handled drags that carry files and no text from inside an editor's text area.
+* **Out to Finder**: an Explorer drag also carries its local items as files (`DataFormat.File`, the platform's storage items, looked up when the drag
+  starts: one stat per item, the drag's only file access on the UI thread), so Finder or a file manager takes a **copy**: the drag offers Copy only,
+  because Finder moves what is offered as movable on the same volume. Inside CsCode the move or copy is decided from the keys at the drop, so a move
+  shows the platform's copy badge.
+* **Undo** (`explorer.enableUndo`, true): ⌘Z (Ctrl+Z) in the Explorer undoes the last drop: moved items move back (the same rename path), copies go to
+  the Trash after a question. Only the last drop, no redo; what a Replace replaced stays in the Trash; the record goes with the Explorer view (it is
+  disposed when the tool window hides).
 **Error List** (counts and chips, search, group by file, sort, double-click navigates, aggregation and sorting on a worker at <= 10 Hz, 50k rows apply as one property change).
 **Output** (channel dropdown, clear, shows the most recent 5,000 lines of a channel; the ring keeps 2 MB). **Find Results** (target of `cscode.references.show`; preview lines read lazily).
+**Bookmark Window** (`ToolWindows/Bookmarks`, Visual Studio's; View > Bookmark Window, `bookmarks.showWindow`, Ctrl+K Ctrl+W in the Visual Studio
+keymap from an editor, as every Ctrl+K chord of that keymap; bottom well, hidden by default): every bookmark of the workspace grouped by file in navigation order, each row a check box (enabled), its
+name (the label, else "Line N"), its line and the line's text (an open document's follows typing; a closed file is read when its rows are shown, 16
+files cached). Toolbar: Previous, Next, Enable or Disable All, Rename, Delete, Clear All, and the count. Double-click or Enter goes to it, F2
+renames it (an input box; empty removes the label), Space enables or disables it, Delete deletes it (on a file's row: the file's bookmarks),
+Ctrl+C copies `path(line): text`; the right-click menu has all of these. A file that is gone loses its bookmarks when the window goes to one.
+The bookmarks and their commands are the editor's (`IBookmarkService`, docs/EDITOR.md §7g; Edit > Bookmarks runs them); the window's model
+rebuilds its rows once per UI turn when they change and is disposed with its view when the window is hidden.
 
 **Status bar items owned by the shell:** Ln/Col, indent, encoding, EOL, language mode (picker), diagnostics counts (computed off-thread), memory (with UI stall counters in its tooltip), debug state, language-server status, notification bell.
+The indentation ("Spaces: 4" / "Tab Size: 4"), encoding (VS Code's short label: "UTF-8", "Windows 1252") and EOL ("LF" / "CRLF") items run the
+editor's `changeEditorIndentation`, `workbench.action.editor.changeEncoding` and `workbench.action.editor.changeEOL` (docs/EDITOR.md §7) and follow
+the active document's `OptionsChanged` (its encoding, line ending or the indentation chosen for it) and the settings.
 Other modules (Vim mode, remote indicator) register their own through `IStatusBarService`; text may use `$(icon-name)`. The Vim adapter's items:
 `vim.mode` (`-- INSERT --`, `recording @q`), `vim.cmdline` (the `:` `/` `?` command line with its cursor, or Vim's last message), `vim.showcmd`
 (pending keys), all leftmost, and `vim.toggle` on the right (*Vim* / *Vim: Off*, runs Toggle Vim Mode); all but the toggle disappear when Vim is off.
@@ -521,8 +581,11 @@ Every other id has exactly one registration; the test fails when a new duplicate
 
 `cscode.shell.liveEditorViews` (8), `cscode.shell.confirmMultiFileEdits` (true), `cscode.diagnostics.uiStallLogMs` (0; Debug builds default to 100),
 `cscode.toolbars.standard`, `cscode.toolbars.debug` (true: the toolbar groups View > Toolbars shows; the setting is the
-state, so settings.json and other windows agree), plus the ones it reads:
-`workbench.colorTheme`, `workbench.startupEditor`, `files.exclude`, `editor.fontFamily`, `editor.tabSize`, `editor.insertSpaces`. They are declared through `IConfigurationService.RegisterProperties`.
+state, so settings.json and other windows agree),
+`explorer.confirmDragAndDrop` (true: a drag and drop that moves asks first), `explorer.enableUndo` (true: ⌘Z / Ctrl+Z in the Explorer undoes the last
+drop), VS Code's keys and defaults, plus the ones it reads:
+`workbench.colorTheme`, `workbench.startupEditor`, `files.exclude`, `editor.fontFamily`, `editor.tabSize`, `editor.insertSpaces`, `files.autoSave`, `files.autoSaveDelay`
+(auto save, above). They are declared through `IConfigurationService.RegisterProperties`.
 
 ## Threading and isolation (binding rules, and how they are enforced)
 
@@ -601,10 +664,18 @@ File menu with icon, shortcut and separator columns, palette with fuzzy list and
 
 ## Known gaps and issues (honest list)
 
-Not done: single-instance forwarding (SHOULD); native menu bar (`NativeMenu` on macOS / DBus global menu); Explorer drag-and-drop **UI** (the model's `MoveAsync` is tested; the view has no drag source/drop target) and dropping files from the OS onto the window;
+Not done: single-instance forwarding (SHOULD); native menu bar (`NativeMenu` on macOS / DBus global menu);
 dirty marker is Dock's `*` rather than a dot that turns into a close glyph on hover; pinned tabs have model/commands but no pin glyph; layout restore reopens tabs but does not recreate split document groups (floating windows it does recreate);
 auto-hide/peek animations, taskbar jump list, `--diff`, toolbar overflow (all SHOULD; high contrast comes from VS Code's two high-contrast themes, completed from the shell's high-contrast bases); the Windows/macOS title-bar path (`ExtendClientAreaToDecorationsHint`) is written but untested here (Linux only).
 `reloadWindow` only refreshes menus. Find in Files is the Search panel's tool window (`CsCode.Panels.Search`); Find Results hosts the references delivered by `cscode.references.show`. Explorer filter searches loaded nodes only.
+
+Explorer drag and drop, not verified or not done: Avalonia.Headless has no drag source and no platform pasteboard, so the tests
+(`ExplorerDragDropTests`, `WindowFileDropTests`) start the Explorer's drag through a seam that captures its data and play it back with the
+window's drag events, and stand for Finder with Avalonia's own file items; a real drop from Finder, a drag out to Finder (that it copies, and that
+the in-process items reach a drop inside CsCode through Avalonia.Native; a platform that does not hand them back is covered by `ExplorerDrag.Current`)
+and the ⌥ key during a native drag are the integrator's check on a Mac, and a Linux file manager's on Linux. Not done: reordering workspace
+folders by dragging them (VS Code's multi-root drag); Edit > Undo does not reach the Explorer (only ⌘Z / Ctrl+Z while it has the keyboard); a
+workspace edit's rename (`NavigationService`, language servers' resource operations) still closes the tab and reopens it at the new path.
 
 Clipboard and menus, not done: a native Wayland primary selection
 (Avalonia 12 runs through XWayland here); QuickWatch's tree (QuickWatch shows the value in a notification with Add Watch). Peek Definition
@@ -641,5 +712,8 @@ cannot switch the repair off yet.
   thread, so parsing the 21 embedded themes and completing the current one never runs on the UI thread before the first frame; the other themes are
   completed on a pool thread right after). The Settings page gets `IColorThemeService` through `SearchServices.Themes` (optional; without it the
   Appearance section is hidden).
+* **Bookmarks**: `AddBookmarkFileTracking()` (after `AddCsCodeRemote`) makes the editor's bookmark service an `IFileOperationParticipant`, so an
+  Explorer rename, move or delete takes the bookmarks along; `AppShutdown` disposes `IBookmarkService` with the step-2 participants, so a change
+  made within its 400 ms debounce is in the last state flush; `BookmarksToolWindow` is registered in `AddCsCodeShell`.
 * The brief's `IExtensionService.ActivateByEventAsync("onStartupFinished")` is **not** used: the extension system was removed (commit "Drop the extension system").
 * The removed system's remnants elsewhere (extension command ids, `ExtensionsDir`, the `ExtensionId` members, Core wording, the README tagline) were deleted at integration.

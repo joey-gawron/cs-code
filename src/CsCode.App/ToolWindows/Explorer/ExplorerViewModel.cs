@@ -512,21 +512,13 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Renames/moves on disk; open tabs inside the moved path are closed first (with their save prompts) and reopened at the new location.
-    /// Will-rename participants (language servers updating imports and references) are asked first and their edit is applied before the move;
-    /// did-rename follows it.
+    /// Renames/moves on disk: the one path every Explorer rename and move takes (F2, cut and paste, drag and drop, undo of a drop). Will-rename
+    /// participants (language servers updating imports and references) are asked first and their edit is applied before the move; then the
+    /// editors of the files moved follow them to the new path, unsaved changes included (<see cref="DocumentWell.RelocateAsync"/>); did-rename
+    /// follows.
     /// </summary>
     private async Task MoveUriAsync(Uri from, Uri to)
     {
-        var reopen = new List<(Uri Old, Uri New)>();
-        if (_well is not null)
-            foreach (var tab in _well.EditorTabs.ToArray())
-            {
-                var rel = RelativeUnder(from, tab.Uri);
-                if (rel is null) continue;
-                if (!await _well.CloseAsync(tab).ConfigureAwait(true)) return; // user cancelled a save prompt: abort the move
-                reopen.Add((tab.Uri, new Uri(to.AbsoluteUri.TrimEnd('/') + (rel.Length > 0 ? "/" + rel : ""))));
-            }
         IReadOnlyList<(Uri, Uri)> renamed = [(from, to)];
         IReadOnlyList<(Uri Uri, string Text)> before = [];
         if (_participants is not null && await _participants.WillRenameAsync(renamed).ConfigureAwait(true) is { } edit && _navigation is not null)
@@ -540,14 +532,13 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         }
         catch
         {
-            // Nothing moved (a target in the way, a volume that refuses): the imports and references rewritten for the new path are put back, and
-            // the tabs closed for the move come back where they were (files-1).
+            // Nothing moved (a target in the way, a volume that refuses): the imports and references rewritten for the new path are put back; the
+            // editors never left (files-1).
             await RevertTextsAsync(before, $"Undo Rename {NameOf(from)}").ConfigureAwait(true);
-            if (_navigation is not null) foreach (var (o, _) in reopen) await _navigation.OpenAsync(o).ConfigureAwait(true);
             throw;
         }
+        if (_well is not null) await _well.RelocateAsync(from, to).ConfigureAwait(true);
         if (_participants is not null) await _participants.DidRenameAsync(renamed).ConfigureAwait(true);
-        if (_navigation is not null) foreach (var (_, n) in reopen) await _navigation.OpenAsync(n).ConfigureAwait(true);
     }
 
     /// <summary>The current text of each file (the open editor's, else the file's on disk); a file that cannot be read is left out.</summary>
@@ -665,18 +656,279 @@ public sealed class ExplorerViewModel : ObservableObject, IDisposable
         if (clip.Cut) foreach (var root in _roots) await ReloadLoadedAsync(root).ConfigureAwait(true);
     }
 
-    /// <summary>Drag-and-drop move of <paramref name="sources"/> into a folder.</summary>
-    public async Task MoveAsync(IEnumerable<ExplorerNode> sources, ExplorerNode targetFolder)
+    /// <summary>Moves <paramref name="sources"/> into a folder (or a file's folder) without asking first: <see cref="DropAsync"/> with no confirmation.</summary>
+    public Task<IReadOnlyList<Uri>> MoveAsync(IEnumerable<ExplorerNode> sources, ExplorerNode targetFolder) =>
+        DropAsync([.. sources.Select(n => n.Uri)], targetFolder, copy: false, confirm: false);
+
+    // ------------------------------------------------------------------ drag and drop (VS Code's Explorer)
+
+    /// <summary>VS Code's <c>explorer.confirmDragAndDrop</c>: a drag and drop that moves files or folders asks first.</summary>
+    public const string ConfirmDragAndDropSetting = "explorer.confirmDragAndDrop";
+
+    /// <summary>VS Code's <c>explorer.enableUndo</c>: ⌘Z (Ctrl+Z) in the Explorer undoes its last drag and drop.</summary>
+    public const string EnableUndoSetting = "explorer.enableUndo";
+
+    private const string MoveAnswer = "Move", MoveAndStopAsking = "Move, Don't Ask Again", ReplaceAnswer = "Replace", SkipAnswer = "Skip";
+    private enum TransferKind { Move, Copy }
+    private sealed record Transfer(Uri Source, Uri Target, bool IsDirectory, bool Taken);
+    private (TransferKind Kind, IReadOnlyList<(Uri From, Uri To)> Items)? _lastTransfer;
+
+    /// <summary>The folder a drop on <paramref name="target"/> lands in: a folder row is that folder, a file row its folder, no row (the blank space
+    /// under the rows) the first workspace folder. Null without a folder.</summary>
+    public ExplorerNode? DropFolder(ExplorerNode? target) => target is null ? _roots.FirstOrDefault() : target.IsDirectory ? target : target.Parent;
+
+    /// <summary>
+    /// VS Code's rules for dragging Explorer items onto <paramref name="target"/>: refused when any of them is a workspace folder, the folder
+    /// itself or a folder above it (a folder cannot go into itself or below itself) or, for a move, already in that folder (nothing would
+    /// happen). A copy into its own folder is allowed (it is named "name copy", as Duplicate does).
+    /// </summary>
+    public bool CanDrop(IReadOnlyList<Uri> sources, ExplorerNode? target, bool copy)
     {
-        var container = ContainerOf(targetFolder);
-        foreach (var n in sources.ToArray())
+        if (sources.Count == 0 || DropFolder(target) is not { } folder) return false;
+        var into = Key(folder.Uri);
+        foreach (var source in sources)
         {
-            if (n.IsRoot || n == container || IsDescendantOf(container, n)) continue; // cannot move a folder into itself
-            if (container.Children?.Any(c => string.Equals(c.Name, n.Name, StringComparison.OrdinalIgnoreCase)) == true) continue;
-            await MoveUriAsync(n.Uri, Child(container.Uri, n.Name, n.IsDirectory)).ConfigureAwait(true);
+            var s = Key(source);
+            if (_roots.Any(r => Key(r.Uri) == s)) return false;
+            if (s == into || into.StartsWith(s + "/", StringComparison.Ordinal)) return false;
+            if (!copy && ParentKey(s) == into) return false;
         }
-        foreach (var root in _roots) await ReloadLoadedAsync(root).ConfigureAwait(true);
+        return true;
     }
+
+    /// <summary>
+    /// Explorer items dropped on <paramref name="target"/>: moved into its folder or, with <paramref name="copy"/> (⌥ on macOS, Ctrl elsewhere),
+    /// copied. A move asks first while <see cref="ConfirmDragAndDropSetting"/> is on (its "Don't Ask Again" answer turns the setting off); a name
+    /// already taken in the folder asks to replace or skip. A move takes the rename path (language servers' will-rename edits, editors follow
+    /// the files with their unsaved changes, did-rename), a copy tells the participants what was created. All file I/O runs on the file system's
+    /// lane. Returns what was created in the folder (empty when refused, cancelled or nothing was left to do).
+    /// </summary>
+    public async Task<IReadOnlyList<Uri>> DropAsync(IReadOnlyList<Uri> sources, ExplorerNode? target, bool copy, bool confirm = true)
+    {
+        if (!CanDrop(sources, target, copy) || DropFolder(target) is not { } folder) return [];
+        var items = Outermost(sources);
+        if (!copy && confirm && !await ConfirmMoveAsync(items, folder).ConfigureAwait(true)) return [];
+        return await TransferAsync([.. items.Select(u => (u, u.AbsoluteUri.EndsWith('/')))], folder, copy ? TransferKind.Copy : TransferKind.Move).ConfigureAwait(true);
+    }
+
+    /// <summary>Whether files from another application may be dropped on <paramref name="target"/>: there is a folder, and it is not one of them or
+    /// inside one of them.</summary>
+    public bool CanDropExternal(IReadOnlyList<Uri> files, ExplorerNode? target)
+    {
+        if (files.Count == 0 || DropFolder(target) is not { } folder) return false;
+        var into = Key(folder.Uri);
+        return !files.Any(f => Key(f) == into || into.StartsWith(Key(f) + "/", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Files and folders dropped from another application (Finder, a file manager) on <paramref name="target"/>: copied into its folder, as VS Code
+    /// does (never moved), with the same replace-or-skip question for a name already taken. A folder dropped into itself or below itself is
+    /// refused. Returns what was created.
+    /// </summary>
+    public async Task<IReadOnlyList<Uri>> DropExternalAsync(IReadOnlyList<Uri> files, ExplorerNode? target)
+    {
+        if (!CanDropExternal(files, target) || DropFolder(target) is not { } folder) return [];
+        var items = new List<(Uri, bool)>();
+        foreach (var file in Outermost(files))
+            if (await _fs.StatAsync(file).ConfigureAwait(true) is { } stat) items.Add((file, stat.Type.HasFlag(FileType.Directory))); // (gone meanwhile: left out)
+        return await TransferAsync(items, folder, TransferKind.Copy).ConfigureAwait(true);
+    }
+
+    /// <summary>Whether <see cref="UndoAsync"/> has a drag and drop to undo (and <see cref="EnableUndoSetting"/> is on).</summary>
+    public bool CanUndo => _lastTransfer is not null && _config?.GetRaw(EnableUndoSetting) is not { ValueKind: JsonValueKind.False };
+
+    /// <summary>
+    /// Undoes the last drag and drop: what it moved goes back where it was (the same rename path), what it copied goes to the Trash after a
+    /// question. Something it replaced stays in the Trash. Only the last one: there is no redo, and the record goes with the Explorer view.
+    /// </summary>
+    public async Task<bool> UndoAsync()
+    {
+        if (!CanUndo || _lastTransfer is not { } last) return false;
+        _lastTransfer = null;
+        var failures = new List<string>();
+        var dirs = new HashSet<string>(StringComparer.Ordinal);
+        if (last.Kind == TransferKind.Copy)
+        {
+            if (_dialogs is not null)
+            {
+                var answer = await _dialogs.ShowAsync("Undo Copy", $"Are you sure you want to undo the copy of {Names(last.Items.Select(i => i.To).ToList())}?\n\nThe copies are moved to the Trash.",
+                    ["Undo", "Cancel"]).ConfigureAwait(true);
+                if (answer != "Undo") { _lastTransfer = last; return false; }
+            }
+            var deleted = new List<Uri>();
+            foreach (var (_, copy) in last.Items)
+            {
+                try
+                {
+                    await RemoveAsync(copy).ConfigureAwait(true);
+                    deleted.Add(copy);
+                    dirs.Add(ParentKey(Key(copy)));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException) { failures.Add($"{NameOf(copy)}: {ex.Message}"); }
+            }
+            if (deleted.Count > 0 && _participants is not null) await _participants.DidDeleteAsync(deleted).ConfigureAwait(true);
+        }
+        else
+        {
+            foreach (var (from, to) in last.Items.Reverse())
+            {
+                try
+                {
+                    await MoveUriAsync(to, from).ConfigureAwait(true);
+                    dirs.Add(ParentKey(Key(to)));
+                    dirs.Add(ParentKey(Key(from)));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException) { failures.Add($"{NameOf(to)}: {ex.Message}"); }
+            }
+        }
+        await ReloadAsync(dirs).ConfigureAwait(true);
+        if (failures.Count > 0) await ReportAsync("Could not undo everything:\n\n" + string.Join("\n", failures)).ConfigureAwait(true);
+        return true;
+    }
+
+    private async Task<IReadOnlyList<Uri>> TransferAsync(IReadOnlyList<(Uri Source, bool IsDirectory)> items, ExplorerNode folder, TransferKind kind)
+    {
+        // The folder is shown open, as VS Code does after a drop; reading it also gives a copy into its own folder the names to stay clear of.
+        await ExpandAsync(folder).ConfigureAwait(true);
+        var plan = new List<Transfer>();
+        var planned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (source, isDirectory) in items)
+        {
+            var name = NameOf(source);
+            var target = Child(folder.Uri, name, isDirectory);
+            if (Key(target) == Key(source))
+            {
+                if (kind == TransferKind.Move) continue;
+                target = Child(folder.Uri, UniqueName(folder, name, isDirectory, " copy"), isDirectory);
+            }
+            var taken = !planned.Add(Key(target)) || await _fs.StatAsync(target).ConfigureAwait(true) is not null;
+            plan.Add(new Transfer(source, target, isDirectory, taken));
+        }
+        if (plan.Any(p => p.Taken))
+        {
+            switch (await AskReplaceAsync([.. plan.Where(p => p.Taken)], folder).ConfigureAwait(true))
+            {
+                case null: return [];
+                case false: plan.RemoveAll(p => p.Taken); break;
+            }
+        }
+
+        var done = new List<(Uri From, Uri To)>();
+        var failures = new List<string>();
+        foreach (var p in plan)
+        {
+            try
+            {
+                if (p.Taken)
+                {
+                    await RemoveAsync(p.Target).ConfigureAwait(true); // replaced: what was there goes to the Trash
+                    if (_participants is not null) await _participants.DidDeleteAsync([p.Target]).ConfigureAwait(true);
+                }
+                if (kind == TransferKind.Move) await MoveUriAsync(p.Source, p.Target).ConfigureAwait(true);
+                else await CopyAcrossAsync(p.Source, p.Target, p.IsDirectory).ConfigureAwait(true);
+                done.Add((p.Source, p.Target));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                failures.Add($"{NameOf(p.Source)}: {ex.Message}");
+            }
+        }
+        if (kind == TransferKind.Copy && done.Count > 0 && _participants is not null) await _participants.DidCreateAsync([.. done.Select(d => d.To)]).ConfigureAwait(true);
+
+        // Only the folders that changed are read again: the target, and the ones the moved items left.
+        var dirs = new HashSet<string>(StringComparer.Ordinal) { Key(folder.Uri) };
+        if (kind == TransferKind.Move) foreach (var (from, _) in done) dirs.Add(ParentKey(Key(from)));
+        await ReloadAsync(dirs).ConfigureAwait(true);
+        if (done.Count > 0)
+        {
+            _lastTransfer = (kind, done);
+            if (folder.Children?.FirstOrDefault(c => Key(c.Uri) == Key(done[0].To)) is { } first) Selected = first;
+        }
+        if (failures.Count > 0)
+            await ReportAsync($"Could not {(kind == TransferKind.Move ? "move" : "copy")} everything into '{folder.Name}':\n\n" + string.Join("\n", failures)).ConfigureAwait(true);
+        return [.. done.Select(d => d.To)];
+    }
+
+    private async Task<bool> ConfirmMoveAsync(IReadOnlyList<Uri> items, ExplorerNode folder)
+    {
+        if (_dialogs is null || _config?.GetRaw(ConfirmDragAndDropSetting) is { ValueKind: JsonValueKind.False }) return true;
+        var message = items.Count == 1
+            ? $"Are you sure you want to move '{NameOf(items[0])}' into '{folder.Name}'?"
+            : $"Are you sure you want to move the following {items.Count} files and folders into '{folder.Name}'?\n\n{NameList(items)}";
+        var answer = await _dialogs.ShowAsync("Move", message, [MoveAnswer, MoveAndStopAsking, "Cancel"]).ConfigureAwait(true);
+        if (answer == MoveAndStopAsking && _config is not null) await _config.UpdateAsync(ConfirmDragAndDropSetting, false).ConfigureAwait(true);
+        return answer is MoveAnswer or MoveAndStopAsking;
+    }
+
+    /// <summary>Replace (true), Skip (false) or Cancel (null) for the items whose name is taken in <paramref name="folder"/>. Without a dialog
+    /// service nothing is replaced.</summary>
+    private async Task<bool?> AskReplaceAsync(IReadOnlyList<Transfer> taken, ExplorerNode folder)
+    {
+        if (_dialogs is null) return false;
+        var message = taken.Count == 1
+            ? $"A file or folder with the name '{NameOf(taken[0].Target)}' already exists in '{folder.Name}'. Do you want to replace it?"
+            : $"The following {taken.Count} files and folders already exist in '{folder.Name}':\n\n{NameList([.. taken.Select(t => t.Target)])}\n\nDo you want to replace them?";
+        var answer = await _dialogs.ShowAsync("Replace", message + "\n\nWhat is replaced is moved to the Trash. Skip leaves it, and does not move or copy the one dropped.",
+            [ReplaceAnswer, SkipAnswer, "Cancel"]).ConfigureAwait(true);
+        return answer switch { ReplaceAnswer => true, SkipAnswer => false, _ => null };
+    }
+
+    /// <summary>Moves <paramref name="uri"/> to the Trash, closing its editors first (without asking: it is being replaced or undone).</summary>
+    private async Task RemoveAsync(Uri uri)
+    {
+        if (_well is not null)
+            foreach (var tab in _well.EditorTabs.Where(t => RelativeUnder(uri, t.Uri) is not null).ToArray())
+                await _well.CloseAsync(tab, prompt: false).ConfigureAwait(true);
+        await _fs.DeleteAsync(uri, recursive: true, useTrash: true).ConfigureAwait(true);
+    }
+
+    /// <summary>A copy, also from another file system (a local file dropped on a remote folder): there its bytes are read and written, folder by folder.</summary>
+    private async Task CopyAcrossAsync(Uri source, Uri target, bool isDirectory)
+    {
+        if (string.Equals(source.Scheme, target.Scheme, StringComparison.OrdinalIgnoreCase) && string.Equals(source.Authority, target.Authority, StringComparison.OrdinalIgnoreCase))
+        {
+            await _fs.CopyAsync(source, target).ConfigureAwait(true);
+            return;
+        }
+        if (!isDirectory)
+        {
+            await _fs.WriteFileAsync(target, await _fs.ReadFileAsync(source).ConfigureAwait(true), createParents: false).ConfigureAwait(true);
+            return;
+        }
+        await _fs.CreateDirectoryAsync(target).ConfigureAwait(true);
+        foreach (var entry in await _fs.ReadDirectoryAsync(source).ConfigureAwait(true))
+        {
+            var dir = entry.Type.HasFlag(FileType.Directory);
+            await CopyAcrossAsync(Child(source, entry.Name, dir), Child(target, entry.Name, dir), dir).ConfigureAwait(true);
+        }
+    }
+
+    private async Task ReloadAsync(IEnumerable<string> folderKeys)
+    {
+        foreach (var key in folderKeys)
+            if (FindNode(new Uri(key + "/")) is { IsDirectory: true, Children: not null } node) await ReloadDirectoryAsync(node).ConfigureAwait(true);
+    }
+
+    /// <summary>The items not inside another one of them (a folder dragged with something in it carries it), in their order. Linear in the items
+    /// times the depth: a drag can carry thousands of selected rows.</summary>
+    private static List<Uri> Outermost(IReadOnlyList<Uri> uris)
+    {
+        var keys = new HashSet<string>(uris.Select(Key), StringComparer.Ordinal);
+        return [.. uris.DistinctBy(Key).Where(u =>
+        {
+            for (var parent = ParentKey(Key(u)); parent.Length > 0; parent = ParentKey(parent))
+                if (keys.Contains(parent)) return false;
+            return true;
+        })];
+    }
+
+    private static string Key(Uri uri) => uri.AbsoluteUri.TrimEnd('/');
+    private static string ParentKey(string key) => key[..Math.Max(0, key.LastIndexOf('/'))];
+
+    private static string NameList(IReadOnlyList<Uri> uris) =>
+        string.Join("\n", uris.Take(10).Select(NameOf)) + (uris.Count > 10 ? $"\n...and {uris.Count - 10} more" : "");
+
+    private static string Names(IReadOnlyList<Uri> uris) => uris.Count == 1 ? $"'{NameOf(uris[0])}'" : $"{uris.Count} files and folders";
 
     private static string UniqueName(ExplorerNode container, string name, bool isDir, string suffix)
     {

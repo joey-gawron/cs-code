@@ -14,8 +14,8 @@ public sealed record ShutdownReport(IReadOnlyList<string> TimedOut, IReadOnlyLis
 /// The orderly exit, run on the UI thread after the main window has closed and before the dispatcher stops:
 /// <list type="number">
 /// <item>flush state, so whatever the user did is on disk before anything below can hang;</item>
-/// <item>shut down the services that own sessions and child processes (language servers, debug sessions, breakpoints, launch configurations)
-/// gracefully and in parallel, off the UI thread, bounded by the deadline;</item>
+/// <item>shut down the services that own sessions and child processes (language servers, debug sessions, breakpoints, bookmarks, launch
+/// configurations) gracefully and in parallel, off the UI thread, bounded by the deadline;</item>
 /// <item>flush state again: those disposals persist (breakpoints are written on dispose);</item>
 /// <item>hard-kill tracked child processes whose owner did not stop them in time;</item>
 /// <item>dispose the container synchronously on the UI thread (UI singletons must be disposed on their thread; an async container dispose would
@@ -109,6 +109,7 @@ public static class AppShutdown
             ("remote connection", TryGet<CsCode.Core.Remote.IRemoteConnectionManager>(services, failures)),
             ("debug sessions", TryGet<IDebugService>(services, failures)),
             ("breakpoints", TryGet<IBreakpointManager>(services, failures)),
+            ("bookmarks", TryGet<CsCode.Core.Text.IBookmarkService>(services, failures)), // saves a change made within its debounce before the last flush
             ("launch configurations", TryGet<IDebugConfigurationService>(services, failures)),
         ];
         foreach (var (name, service) in candidates)

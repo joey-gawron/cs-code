@@ -242,6 +242,43 @@ public class BracketsHighlightsDebugTests
         Assert.Empty(debug.Manager.GetForUri(doc.Uri));
     }
 
+    /// <summary>An inline object as tall as <paramref name="height"/> at <paramref name="offset"/>: it stretches the row it is on below the text.</summary>
+    private sealed class TallObject(int offset, double height) : AvaloniaEdit.Rendering.VisualLineElementGenerator
+    {
+        public override int GetFirstInterestedOffset(int startOffset) =>
+            offset >= startOffset && offset <= CurrentContext.VisualLine.LastDocumentLine.EndOffset ? offset : -1;
+
+        public override AvaloniaEdit.Rendering.VisualLineElement? ConstructElement(int at) =>
+            at == offset ? new AvaloniaEdit.Rendering.InlineObjectElement(0, new Avalonia.Controls.Border { Width = 6, Height = height }) : null;
+    }
+
+    [AvaloniaFact]
+    public async Task The_glyph_sits_level_with_the_line_number_on_a_wrapped_line_whose_first_row_is_stretched()
+    {
+        var (debug, host) = DebugHost();
+        using var _ = host;
+        host.Config.Set("editor.wordWrap", "on");
+        var text = "int a = 1;\nvar s = \"" + string.Join(" ", Enumerable.Repeat("lorem ipsum dolor", 30)) + "\";\nint b = 2;\n";
+        var (doc, view, window) = await host.OpenAsync(text, "a.cs", 600, 400);
+        var tv = view.TextView;
+        tv.ElementGenerators.Add(new TallObject("int a = 1;\n".Length + 3, tv.DefaultLineHeight * 3)); // on the first row of line 1
+        tv.Redraw();
+        debug.Manager.Add(doc.Uri, 1);
+        await ViewHost.WaitFor(() => DebugOf(view).BreakpointAt(1) is not null, "breakpoint shown");
+        ViewHost.Pump();
+
+        var vl = tv.GetVisualLine(2)!;
+        Assert.True(vl.TextLines.Count > 1, "the line wraps");
+        Assert.True(vl.TextLines[0].Height > tv.DefaultLineHeight * 2, "the first row is stretched");
+        var margin = view.TextArea.LeftMargins[0];
+        var origin = margin.TranslatePoint(new Point(0, 0), window)!.Value;
+        var numberMiddle = origin.Y + vl.GetTextLineVisualYPosition(vl.TextLines[0], AvaloniaEdit.Rendering.VisualYPosition.TextMiddle) - tv.VerticalOffset;
+        var red = ((Avalonia.Media.ISolidColorBrush)view.Palette.BreakpointFill).Color;
+        var rows = PixelRows(window.CaptureRenderedFrame()!, red, 12, new PixelRect((int)origin.X, (int)origin.Y, (int)margin.Bounds.Width, (int)margin.Bounds.Height));
+        Assert.NotNull(rows);
+        Assert.InRange((rows.Value.Top + rows.Value.Bottom + 1) / 2.0, numberMiddle - 1.5, numberMiddle + 1.5);
+    }
+
     [AvaloniaFact]
     public async Task The_glyph_is_drawn_in_the_breakpoint_colour_and_hollow_grey_when_unverified()
     {

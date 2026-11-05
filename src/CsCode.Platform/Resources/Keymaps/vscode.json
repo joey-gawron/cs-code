@@ -29,6 +29,11 @@
   { "key": "f8",                 "command": "editor.action.marker.nextInFiles",   "when": "editorFocus" },
   { "key": "shift+f8",           "command": "editor.action.marker.prevInFiles",   "when": "editorFocus" },
 
+  // ---- bookmarks (docs/EDITOR.md §7g): the Bookmarks extension's keys ----
+  { "key": "ctrl+alt+k",         "command": "bookmarks.toggle",                   "when": "editorTextFocus", "mac": "cmd+alt+k" },
+  { "key": "ctrl+alt+l",         "command": "bookmarks.jumpToNext",               "when": "editorTextFocus", "mac": "cmd+alt+l" },
+  { "key": "ctrl+alt+j",         "command": "bookmarks.jumpToPrevious",           "when": "editorTextFocus", "mac": "cmd+alt+j" },
+
   // ---- editing ----
   { "key": "f2",                 "command": "editor.action.rename",               "when": "editorTextFocus && !editorReadonly" },
   { "key": "ctrl+shift+f2",      "command": "editor.action.linkedEditing",        "when": "editorTextFocus && !editorReadonly", "mac": "cmd+shift+f2" }, // Start Linked Editing
@@ -68,6 +73,7 @@
   { "key": "shift+f3",           "command": "editor.action.previousMatchFindAction", "when": "editorFocus", "mac": "cmd+shift+g" },
   { "key": "ctrl+shift+f",       "command": "workbench.action.findInFiles",       "mac": "cmd+shift+f" },
   { "key": "ctrl+shift+h",       "command": "workbench.action.replaceInFiles",    "mac": "cmd+shift+h" },
+  { "key": "ctrl+shift+r",       "command": "search.action.rerunEditorSearch",    "when": "inSearchEditor", "mac": "cmd+shift+r" }, // Search Again in a search editor
 
   // ---- command surfaces ----
   { "key": "ctrl+shift+p",       "command": "workbench.action.showCommands",      "mac": "cmd+shift+p" },
@@ -129,6 +135,17 @@
   { "key": "ctrl+; ctrl+e",      "command": "testing.debugFailTests",             "mac": "cmd+; cmd+e" },
   { "key": "ctrl+; l",           "command": "testing.reRunLastRun",               "mac": "cmd+; l" },
   { "key": "ctrl+; ctrl+l",      "command": "testing.debugLastRun",               "mac": "cmd+; cmd+l" },
+
+  // ---- word wrap and font zoom (docs/EDITOR.md §7): VS Code's Alt+Z; the zoom keys are VS Code's window zoom keys (CsCode has no window zoom)
+  // and share the Ctrl+wheel zoom of the editor. The case transforms and Duplicate Selection have no key in VS Code (Command Palette). ----
+  { "key": "alt+z",              "command": "editor.action.toggleWordWrap",       "when": "editorTextFocus" },
+  { "key": "ctrl+=",             "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+=" },
+  { "key": "ctrl+shift+=",       "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+shift+=" },
+  { "key": "ctrl+numpad_add",    "command": "editor.action.fontZoomIn",           "when": "editorTextFocus", "mac": "cmd+numpad_add" },
+  { "key": "ctrl+-",             "command": "editor.action.fontZoomOut",          "when": "editorTextFocus", "mac": "cmd+-" },
+  { "key": "ctrl+numpad_subtract", "command": "editor.action.fontZoomOut",        "when": "editorTextFocus", "mac": "cmd+numpad_subtract" },
+  { "key": "ctrl+0",             "command": "editor.action.fontZoomReset",        "when": "editorTextFocus", "mac": "cmd+0" },
+  { "key": "ctrl+numpad0",       "command": "editor.action.fontZoomReset",        "when": "editorTextFocus", "mac": "cmd+numpad0" },
 
   // ---- views ----
   { "key": "ctrl+shift+e",       "command": "workbench.view.explorer",            "mac": "cmd+shift+e" },

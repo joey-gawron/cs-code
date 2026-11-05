@@ -62,11 +62,11 @@ jobs:
           - group: app
             projects: tests/CsCode.App.Tests
           - group: editor
-            projects: tests/CsCode.Editor.Tests tests/CsCode.Vim.Tests tests/CsCode.Macros.Tests tests/CsCode.Core.Tests tests/CsCode.Docs.Tests
+            projects: tests/CsCode.Editor.Tests tests/CsCode.Vim.Tests tests/CsCode.Macros.Tests tests/CsCode.Core.Tests tests/CsCode.Docs.Tests tests/CsCode.SpellCheck.Tests
           - group: services
             projects: tests/CsCode.Dap.Tests tests/CsCode.Lsp.Tests tests/CsCode.Build.CMake.Tests tests/CsCode.Platform.Tests tests/CsCode.Remote.Tests tests/CsCode.Sessions.Tests tests/CsCode.Terminal.Tests tests/CsCode.ProjectTemplates.Tests
           - group: panels-memory
-            projects: tests/CsCode.Panels.Debug.Tests tests/CsCode.Panels.Search.Tests tests/CsCode.Panels.Terminal.Tests tests/CsCode.Panels.Git.Tests tests/CsCode.Panels.Testing.Tests tests/CsCode.Panels.Navigation.Tests tests/CsCode.Panels.NewProject.Tests tests/CsCode.Panels.Org.Tests tests/CsCode.MemoryTests
+            projects: tests/CsCode.Panels.Debug.Tests tests/CsCode.Panels.Search.Tests tests/CsCode.Panels.Terminal.Tests tests/CsCode.Panels.Git.Tests tests/CsCode.Panels.Testing.Tests tests/CsCode.Panels.Navigation.Tests tests/CsCode.Panels.NewProject.Tests tests/CsCode.Panels.Org.Tests tests/CsCode.Panels.Timeline.Tests tests/CsCode.MemoryTests
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:

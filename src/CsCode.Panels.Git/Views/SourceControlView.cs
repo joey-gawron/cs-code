@@ -31,9 +31,12 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
     private readonly TextBlock _branch, _sync, _info;
     private readonly ComboBox _repos;
     private readonly CheckBox _amend;
+    private readonly CommitMessageSpelling? _spelling;
     private bool _disposed;
 
-    public SourceControlView(SourceControlViewModel vm, Action<SourceControlViewModel> release, Core.Platform.IContextKeyService? keys = null)
+    /// <param name="spelling">The app's spell checker (docs/SPELLCHECK.md): misspelt words of the commit message are underlined (null: none).</param>
+    public SourceControlView(SourceControlViewModel vm, Action<SourceControlViewModel> release, Core.Platform.IContextKeyService? keys = null,
+        Core.Languages.ITextSpellChecker? spelling = null)
     {
         _vm = vm;
         _release = release;
@@ -99,7 +102,14 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
         _list.ContextRequested += OnContextRequested;
         ToolWindowFocus.KeepOnRows(_list);
 
-        var header = new StackPanel { Children = { top, _repos, _message, commitRow, _info } };
+        Control messageHost = _message;
+        if (spelling is not null)
+        {
+            // the underlines are a layer over the box (the box stays a plain TextBox: its keys, IME and menu are untouched elsewhere)
+            _spelling = new CommitMessageSpelling(_message, spelling);
+            messageHost = new Panel { Children = { _message, _spelling } };
+        }
+        var header = new StackPanel { Children = { top, _repos, messageHost, commitRow, _info } };
         var root = new DockPanel { Background = ThemeBrushes.Get("sideBar.background") };
         DockPanel.SetDock(header, Avalonia.Controls.Dock.Top);
         root.Children.Add(header);
@@ -111,6 +121,9 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
 
     internal ListBox List => _list;
     internal TextBox MessageBox => _message;
+
+    /// <summary>The commit message's spelling layer (null without a spell checker; tests).</summary>
+    internal CommitMessageSpelling? Spelling => _spelling;
     internal Button CommitButton => _commit;
 
     private static Button IconButton(string icon, string tip, Func<Task> run)
@@ -271,6 +284,12 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
                     ? new MenuEntry("_Unstage Changes", () => _vm.UnstageAsync(files)) { Icon = IconKey.Remove }
                     : new MenuEntry("_Stage Changes", () => _vm.StageAsync(files)) { Icon = IconKey.Add },
                 row.Group == ScmGroup.Changes ? new MenuEntry("_Discard Changes", () => _vm.DiscardAsync(files)) { Icon = IconKey.Undo } : null,
+            ],
+            // a conflicted file: resolve every block to one side (the editor's merge-conflict commands, VS Code's scm/resourceState/context items)
+            [
+                row.Group == ScmGroup.Merge && _vm.CanOpenMergeEditor ? new MenuEntry("Resolve in _Merge Editor", () => _vm.RunFileCommandAsync(GitHost.OpenMergeEditor, row)) : null,
+                row.Group == ScmGroup.Merge && _vm.HasCommand(GitHost.AcceptAllCurrent) ? new MenuEntry("Accept All C_urrent", () => _vm.RunFileCommandAsync(GitHost.AcceptAllCurrent, row)) : null,
+                row.Group == ScmGroup.Merge && _vm.HasCommand(GitHost.AcceptAllIncoming) ? new MenuEntry("Accept All _Incoming", () => _vm.RunFileCommandAsync(GitHost.AcceptAllIncoming, row)) : null,
             ]);
     }
 
@@ -304,6 +323,7 @@ public sealed class SourceControlView : UserControl, IDisposable, IToolWindowFoc
         if (_disposed) return;
         _disposed = true;
         _keys?.Set(ScmContextKeys.ScmInputFocus, false);
+        _spelling?.Detach();
         _vm.PropertyChanged -= OnVmChanged;
         _list.ItemsSource = null;
         _repos.ItemsSource = null;

@@ -157,6 +157,19 @@ public sealed class TokenizationManager : IMemoryTrimmable, IDisposable
     /// </summary>
     internal IEventSource<bool> GrammarAvailabilityChanged => _availability;
 
+    private readonly Emitter<(Uri Uri, int First, int Last)> _rowsChanged = new();
+
+    /// <summary>
+    /// Fires on the UI thread (coalesced per session, as the views' redraws are) with the lines of a document whose token rows changed: what
+    /// <see cref="SyntaxClassifier"/> reports to readers of token kinds (the spell checker).
+    /// </summary>
+    internal IEventSource<(Uri Uri, int First, int Last)> TokenRowsChanged => _rowsChanged;
+
+    internal void NotifyTokenRowsChanged(Uri uri, int first, int last)
+    {
+        if (!_disposed && _rowsChanged.SubscriberCount > 0) _rowsChanged.Fire((uri, first, last));
+    }
+
     private readonly Emitter<EditorDocument> _treeArrived = new();
 
     /// <summary>

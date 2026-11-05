@@ -279,6 +279,143 @@ public static class MultiCaretOperations
 
     private static bool IsMultiLine(TextDocument doc, CaretRange c) => !c.IsEmpty && doc.GetLineByOffset(c.Start).LineNumber != doc.GetLineByOffset(c.End).LineNumber;
 
+    // ------------------------------------------------------------------ typing with auto-closing, Backspace to tab stops (multi-cursor round 2)
+
+    /// <summary>
+    /// A typed character at every caret, each caret doing what <paramref name="decisions"/>[i] says (decided from that caret's own context, as
+    /// a single caret there would): <see cref="AutoCloseKind.InsertPair"/> types the character and its closer with the caret between them,
+    /// <see cref="AutoCloseKind.OverType"/> steps over the closer after the caret (no edit), <see cref="AutoCloseKind.Surround"/> wraps the
+    /// selection in the pair and keeps the inner text selected, <see cref="AutoCloseKind.None"/> replaces the selection with the character.
+    /// </summary>
+    public static CaretEditBatch TypeWithDecisions(CaretSet set, string text, IReadOnlyList<AutoCloseDecision> decisions)
+    {
+        var edits = new List<OffsetEdit>(set.Count + 2);
+        var carets = new CaretRange[set.Count];
+        var delta = 0;
+        for (var i = 0; i < set.Count; i++)
+        {
+            var c = set[i];
+            var d = decisions[i];
+            switch (d.Kind)
+            {
+                case AutoCloseKind.InsertPair when c.IsEmpty:
+                    edits.Add(new OffsetEdit(c.Start, c.Start, text + d.Close));
+                    carets[i] = CaretRange.At(c.Start + delta + text.Length);
+                    delta += text.Length + d.Close.Length;
+                    break;
+                case AutoCloseKind.OverType when c.IsEmpty:
+                    carets[i] = CaretRange.At(c.Start + delta + text.Length);
+                    break;
+                case AutoCloseKind.Surround when !c.IsEmpty:
+                {
+                    edits.Add(new OffsetEdit(c.Start, c.Start, d.Open));
+                    edits.Add(new OffsetEdit(c.End, c.End, d.Close));
+                    var start = c.Start + delta + d.Open.Length;
+                    var end = c.End + delta + d.Open.Length;
+                    carets[i] = c.IsReversed ? new CaretRange(end, start) : new CaretRange(start, end);
+                    delta += d.Open.Length + d.Close.Length;
+                    break;
+                }
+                default:
+                    edits.Add(new OffsetEdit(c.Start, c.End, text));
+                    carets[i] = CaretRange.At(c.Start + delta + text.Length);
+                    delta += text.Length - c.Length;
+                    break;
+            }
+        }
+        return new CaretEditBatch(edits.ToArray(), carets, set.PrimaryIndex);
+    }
+
+    /// <summary>
+    /// Backspace at every caret with the editor's rules: a selection is deleted; a caret between an auto-inserted pair
+    /// (<paramref name="autoClosedPairAt"/>: the closer at that offset was inserted by auto-closing and the character before is its opener)
+    /// deletes both; with <paramref name="useTabStops"/> (VS Code's <c>editor.useTabStops</c>) a caret in a line's leading whitespace deletes
+    /// back to the previous indentation stop; otherwise one character (a CRLF or a surrogate pair is one), or a word with <paramref name="word"/>.
+    /// </summary>
+    public static CaretEditBatch Backspace(TextDocument doc, CaretSet set, bool word, int tabSize, bool useTabStops, Func<int, bool>? autoClosedPairAt = null) =>
+        PerCaret(set, c =>
+        {
+            if (!c.IsEmpty) return (c.Start, c.End, "", 0);
+            if (word) return (WordLeft(doc, c.Start), c.Start, "", 0);
+            if (autoClosedPairAt is not null && c.Start > 0 && c.Start < doc.TextLength && autoClosedPairAt(c.Start)) return (c.Start - 1, c.Start + 1, "", 0);
+            if (useTabStops && IndentStopBefore(doc, c.Start, tabSize) is { } stop) return (stop, c.Start, "", 0);
+            return (PreviousCharOffset(doc, c.Start), c.Start, "", 0);
+        });
+
+    /// <summary>
+    /// Where Backspace at <paramref name="offset"/> deletes back to when the caret is in its line's leading whitespace (everything before it on
+    /// the line is spaces or tabs): the previous indentation stop, a multiple of <paramref name="tabSize"/> visual columns (VS Code's
+    /// <c>prevIndentTabStop</c>), so "        |" loses four spaces and "      |" two. Null when the caret is at the line start or after
+    /// non-blank text (Backspace then deletes one character).
+    /// </summary>
+    public static int? IndentStopBefore(TextDocument doc, int offset, int tabSize)
+    {
+        var line = doc.GetLineByOffset(offset);
+        if (offset <= line.Offset) return null;
+        for (var i = line.Offset; i < offset; i++)
+            if (doc.GetCharAt(i) is not (' ' or '\t')) return null;
+        tabSize = Math.Max(1, tabSize);
+        var column = VisualColumn(doc, line, offset, tabSize);
+        var target = Math.Max(0, column - 1 - (column - 1) % tabSize);
+        var to = OffsetAtVisualColumn(doc, line, target, tabSize);
+        if (to >= offset) to = PreviousCharOffset(doc, offset); // a tab spanning the stop: never delete nothing
+        return to;
+    }
+
+    /// <summary>
+    /// Up / Down with word wrap: by one visual row, aiming at each caret's desired column within the row (tabs expanded from the line's start,
+    /// counted from the row's start). <paramref name="rowStarts"/> gives the document offsets where each row of a line starts (the first is the
+    /// line's own start; one entry for a line that does not wrap). A caret at a wrap point belongs to the row that starts there. The first row's
+    /// Up goes to the document's start, the last row's Down to its end, as in <see cref="MoveVertical(TextDocument, CaretSet, bool, bool, int)"/>.
+    /// </summary>
+    public static CaretSet MoveVertical(TextDocument doc, CaretSet set, bool down, bool extend, int tabSize, Func<DocumentLine, IReadOnlyList<int>> rowStarts) =>
+        Move(set, c =>
+        {
+            var line = doc.GetLineByOffset(c.Active);
+            var rows = rowStarts(line);
+            var row = RowIndexOf(rows, c.Active);
+            var rowStart = rows[row];
+            var column = c.DesiredColumn >= 0 ? c.DesiredColumn : VisualColumn(doc, line, c.Active, tabSize) - VisualColumn(doc, line, rowStart, tabSize);
+            DocumentLine? targetLine = line;
+            var targetRow = row + (down ? 1 : -1);
+            IReadOnlyList<int> targetRows = rows;
+            if (targetRow < 0 || targetRow >= rows.Count)
+            {
+                targetLine = down ? line.NextLine : line.PreviousLine;
+                if (targetLine is not null)
+                {
+                    targetRows = rowStarts(targetLine);
+                    targetRow = down ? 0 : targetRows.Count - 1;
+                }
+            }
+            int to, desired;
+            if (targetLine is null)
+            {
+                to = down ? doc.TextLength : 0;
+                desired = -1;
+            }
+            else
+            {
+                var start = targetRows[targetRow];
+                var lastRow = targetRow == targetRows.Count - 1;
+                var end = lastRow ? targetLine.EndOffset : targetRows[targetRow + 1];
+                var baseColumn = VisualColumn(doc, targetLine, start, tabSize);
+                to = OffsetAtVisualColumn(doc, targetLine, baseColumn + column, tabSize);
+                // the end of a row that wraps is the start of the next one, where the caret would belong to that row: stop before its last character
+                to = Math.Clamp(to, start, lastRow || end <= start ? end : Math.Max(start, end - 1));
+                desired = column;
+            }
+            return extend ? new CaretRange(c.Anchor, to, desired) : new CaretRange(to, to, desired);
+        });
+
+    /// <summary>The row of <paramref name="offset"/>: the last one starting at or before it.</summary>
+    private static int RowIndexOf(IReadOnlyList<int> rowStarts, int offset)
+    {
+        var row = 0;
+        for (var i = 1; i < rowStarts.Count && rowStarts[i] <= offset; i++) row = i;
+        return row;
+    }
+
     // ------------------------------------------------------------------ movement
 
     /// <summary>Left / Right (by a character, or a word); with <paramref name="extend"/> the selection grows, else a selection collapses to its side.</summary>

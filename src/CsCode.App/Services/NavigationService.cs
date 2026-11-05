@@ -35,6 +35,7 @@ public sealed class NavigationService : INavigationService, IDisposable
     private volatile IEditorDocument? _activeDoc;
     private volatile object? _activeCaret; // boxed TextPosition
     private volatile IReadOnlyList<IEditorDocument> _open = [];
+    private Uri? _activeUri; // UI thread: the active document's path as last announced
 
     public NavigationService(DocumentWell well, IUiDispatcher ui, IModalDialogs dialogs, IFileSystem? fileSystem = null, IDocumentManager? documents = null,
         IWindowService? windows = null, IConfigurationService? config = null, FileParticipants? participants = null)
@@ -48,7 +49,17 @@ public sealed class NavigationService : INavigationService, IDisposable
         _windows = windows;
         _config = config;
         _subs.Add(well.ActiveChanged.Subscribe(OnActive));
-        _subs.Add(well.TabsChanged.Subscribe(_ => _open = well.EditorTabs.Select(t => t.Doc).ToArray()));
+        _subs.Add(well.TabsChanged.Subscribe(_ =>
+        {
+            _open = well.EditorTabs.Select(t => t.Doc).ToArray();
+            // A rename or move re-points the active editor in place (DocumentWell.RelocateAsync): same document, new path. VS Code announces
+            // that as an active-editor change, and the Timeline, breadcrumbs and title follow the new path from it.
+            if (_activeDoc is { } doc && doc.Uri != _activeUri)
+            {
+                _activeUri = doc.Uri;
+                _activeChanged.Fire(doc);
+            }
+        }));
     }
 
     public IEditorDocument? ActiveDocument => _activeDoc;
@@ -65,6 +76,7 @@ public sealed class NavigationService : INavigationService, IDisposable
         _caretSub = _viewSub = null;
         var editor = tab as EditorTab;
         _activeDoc = editor?.Doc;
+        _activeUri = _activeDoc?.Uri;
         _activeCaret = null;
         _caretChanged.Fire(null);
         if (editor is not null)
@@ -95,6 +107,38 @@ public sealed class NavigationService : INavigationService, IDisposable
             }).ConfigureAwait(false);
         return tab.Doc;
     }
+
+    // ------------------------------------------------------------------ search editor: untitled editors with text, to the side, titles
+
+    public async ValueTask<IEditorDocument?> OpenUntitledAsync(UntitledEditorOptions options, CancellationToken ct = default)
+    {
+        var tab = await _ui.InvokeAsync(() =>
+        {
+            var t = _well.OpenUntitled(options.LanguageId, options.Text, options.Title, options.SuggestedSaveUri, options.ToSide);
+            if (options.Selection is { } sel)
+            {
+                if (t.Controller is { } c) c.SetSelection(sel, reveal: true);
+                else t.PendingReveal = sel; // applied when the view is created
+            }
+            return t;
+        }).ConfigureAwait(false);
+        return tab.Doc;
+    }
+
+    public async ValueTask<IEditorDocument?> OpenToSideAsync(Uri uri, TextRange? selection = null, CancellationToken ct = default)
+    {
+        var tab = await await _ui.InvokeAsync(() => _well.OpenToSideAsync(uri, ct).AsTask()).ConfigureAwait(false);
+        if (selection is { } sel)
+            await _ui.InvokeAsync(() =>
+            {
+                if (tab.Controller is { } c) c.SetSelection(sel, reveal: true);
+                else tab.PendingReveal = sel;
+            }).ConfigureAwait(false);
+        return tab.Doc;
+    }
+
+    public void SetEditorTitle(Uri document, string? title, Uri? suggestedSaveUri = null) =>
+        _ui.Post(() => { if (_well.Find(document) is { } tab) _well.SetTitle(tab, title, suggestedSaveUri); });
 
     // ------------------------------------------------------------------ workspace edits
 

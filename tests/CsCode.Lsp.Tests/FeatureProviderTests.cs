@@ -766,6 +766,37 @@ public class FeatureProviderTests
     }
 
     [Fact]
+    public async Task Color_presentations_send_the_color_and_range_and_map_label_edit_and_additional_edits()
+    {
+        await using var env = new LspTestEnv();
+        P.ColorPresentationParams? seen = null;
+        var (_, doc) = await env.StartAsync(s =>
+        {
+            s.Capabilities = new P.ServerCapabilities { ColorProvider = true };
+            s.Requests[P.LspMethods.TextDocumentColorPresentation] = p =>
+            {
+                seen = JsonSerializer.Deserialize<P.ColorPresentationParams>(p, P.LspJson.Options);
+                return Reply(Json("""
+                    [{"label":"rgb(255, 128, 0)","textEdit":{"range":{"start":{"line":0,"character":2},"end":{"line":0,"character":9}},"newText":"rgb(255, 128, 0)"}},
+                     {"label":"#ff8000","additionalTextEdits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"@use x;\n"}]}]
+                    """));
+            };
+        });
+        var color = new ColorInformation(TextRange.FromLines(0, 2, 0, 9), 1, 0.5, 0, 0.75);
+        var list = await env.Provider<IDocumentColorProvider>(doc).ProvideColorPresentationsAsync(doc, color, Ct).Within();
+
+        Assert.Equal((1d, 0.5d, 0d, 0.75d), (seen!.Color.Red, seen.Color.Green, seen.Color.Blue, seen.Color.Alpha));
+        Assert.Equal((0, 2, 0, 9), ((int)seen.Range.Start.Line, (int)seen.Range.Start.Character, (int)seen.Range.End.Line, (int)seen.Range.End.Character));
+        Assert.Equal(U(doc), seen.TextDocument.Uri);
+        Assert.NotNull(list);
+        Assert.Equal(["rgb(255, 128, 0)", "#ff8000"], list.Select(x => x.Label));
+        Assert.Equal(new TextEdit(TextRange.FromLines(0, 2, 0, 9), "rgb(255, 128, 0)"), list[0].TextEdit);
+        Assert.Null(list[0].AdditionalTextEdits);
+        Assert.Null(list[1].TextEdit); // no edit: the label replaces the colour's range
+        Assert.Equal(new TextEdit(TextRange.FromLines(0, 0, 0, 0), "@use x;\n"), Assert.Single(list[1].AdditionalTextEdits!));
+    }
+
+    [Fact]
     public async Task Server_commands_are_bridged_into_the_command_service_and_executed()
     {
         await using var env = new LspTestEnv();

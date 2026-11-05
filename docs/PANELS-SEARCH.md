@@ -1,7 +1,7 @@
 # Search and Settings panels (`CsCode.Panels.Search`)
 
-Find in Files (with replace), the Settings editor and the Keyboard Shortcuts view. Everything is built against Core interfaces plus the
-`CsCode.Ui` design system; the project references `CsCode.Core` and `CsCode.Ui` only.
+Find in Files (with replace), the search editor (search results as an editable document, see "Search editor"), the Settings editor and the Keyboard
+Shortcuts view. Everything is built against Core interfaces plus the `CsCode.Ui` design system; the project references `CsCode.Core` and `CsCode.Ui` only.
 
 | View | Id | `IToolWindow.DefaultLocation` | Opened by |
 |---|---|---|---|
@@ -15,10 +15,16 @@ Find in Files (with replace), the Settings editor and the Keyboard Shortcuts vie
   in its constructor, and the tool windows depend on it**, so the shell enumerating `IEnumerable<IToolWindow>` at startup is what registers them.
   Required service: `IWorkspaceService`. Optional (the panel degrades without them): `IDocumentManager`, `INavigationService`, `IWindowService`,
   `IConfigurationService`, `IStateStorage`, `ICommandService`, `IKeybindingService`, `IContextKeyService`, `IActiveSelectionProvider`,
-  `IContributionRegistry`, `CsCode.Ui.Threading.IUiDispatcher` (falls back to `AvaloniaUiDispatcher.Instance`).
+  `IContributionRegistry`, `ILanguageFeatureRegistry` (the search editor's language features), `CsCode.Ui.Threading.IUiDispatcher` (falls back to
+  `AvaloniaUiDispatcher.Instance`). The host also builds the `SearchEditorService` in its constructor: it wires itself to the documents, the feature
+  registry and the active editor then; the engine and the other search services stay lazy until it runs a search.
 * **Additive Core change:** `src/CsCode.Core/Platform/ViewActivation.cs` adds `IViewActivator.ShowViewAsync(string viewId)`. The commands call it to
   bring a view to the front ("search", "settings", "keybindings"). The shell implements it (`ShellViewActivator`: `ToolWindowManager.Show` /
-  `DocumentWell.OpenView`). Without it the commands still work, but nothing is revealed. It is the only Core change.
+  `DocumentWell.OpenView`). Without it the commands still work, but nothing is revealed. The search editor added the others, all additive (default
+  interface members or new files): `INavigationService.OpenUntitledAsync` (`UntitledEditorOptions`: language, text, title, Save As proposal, to the side,
+  caret), `OpenToSideAsync`, `SetEditorTitle` and `ActiveCaretChanged`; `IEditorDocument.OpenUndoGroup`; `IMatchHighlightProvider` and
+  `IDoubleClickHandler` (`src/CsCode.Core/Languages/MatchHighlights.cs`). The shell implements the navigation members (`NavigationService` over
+  `DocumentWell`), the editor the rest (`EditorDocument.OpenUndoGroup`, `MatchHighlightFeature`, `DoubleClickFeature`).
 * **Document-location tool windows.** `Settings` and `Keyboard Shortcuts` use `ToolWindowLocation.Document`: the shell keeps them out of the tool wells and opens
   them on demand as singleton document tabs. Find in Files is not in the shell's default layout; its commands show it.
 * **Views are disposable.** `FindInFilesView`, `SettingsView`, `KeyboardShortcutsView` implement `IDisposable`; the shell's `ToolTab.DisposeView`
@@ -35,8 +41,10 @@ Find in Files (with replace), the Settings editor and the Keyboard Shortcuts vie
   `matchWholeWord`, `preserveCase`, `useExcludeSettingsAndIgnoreFiles`, `triggerSearch`) or a plain string, and seed the query from
   `IActiveSelectionProvider.SelectedText` (single line) or the word at the caret.
 * Context key set: `searchViewletVisible`. Settings registered: see below.
+* The search editor's commands, keys, context keys and settings are listed in "Search editor" below.
 * **Key bindings.** Neither preset keymap binds F4 / Shift+F4, so the host contributes them (`SearchPanelsHost.DefaultKeybindings`:
-  `f4` → `search.action.focusNextSearchResult`, `shift+f4` → `search.action.focusPreviousSearchResult`, both `when: searchViewletVisible`) to
+  `f4` → `search.action.focusNextSearchResult`, `shift+f4` → `search.action.focusPreviousSearchResult`, both `when: searchViewletVisible`, and
+  `enter` → `search.action.rerunEditorSearch` `when: searchEditorHeaderFocus && editorTextFocus`) to
   `IContributionRegistry` as `ContributionSources.Builtin`, withdrawn when the host is disposed. The platform's `KeybindingService` layers built-in
   contributions over the preset and the user's keybindings.json over both (verified against the real service in `RealPlatformTests`); the integrator
   only has to construct `KeybindingService` with the registry. With the panel focused the shell's window-level key pipeline runs the command first,
@@ -125,6 +133,84 @@ command `revealInExplorer` exists), Expand/Collapse, Exclude This Folder, Replac
 * **Bulk removal.** Exclude This Folder and the clean-up after Replace All remove their rows with one rebuild of the flat list (one reset notification), not one
   `IndexOf`/`RemoveRange`/reset per file; Dismiss of a single row stays incremental.
 
+## Search editor (`SearchEditor/`)
+
+VS Code's Search Editor: the results of a search as a text document in the `search-result` language, which is also VS Code's `.code-search` file
+format, so a saved search editor opens again as one (and a file VS Code saved opens here). The tab is an ordinary editor: copy, edit, fold a file's
+results, save.
+
+```
+# Query: alpha
+# Flags: CaseSensitive WordMatch RegExp
+# Including: src
+# ContextLines: 1
+
+3 results - 2 files
+
+docs/readme.md:
+  1: alpha and beta
+
+src/a.cs:
+  1  using System;
+  2: class Alpha
+  3  {
+  4:     int alpha = 1;
+  5  }
+```
+
+* **Header.** `# Query:` (a backslash written `\\`, a line break `\n`, as VS Code writes them; read leniently: a lone backslash before anything else stays
+  a backslash, so `\d+` typed by hand means `\d+`), `# Flags:` (`CaseSensitive`, `WordMatch`, `RegExp`, `OpenEditors`, `IgnoreExcludeSettings`: the
+  last turns off `files.exclude`/`search.exclude` and the ignore files together, VS Code's one toggle), `# Including:` / `# Excluding:` (the Find in Files
+  globs), `# ContextLines:` (0 to 100). The header is the leading lines that start with `#`; lines that would say nothing are left out.
+* **Results.** A summary line (`3 results - 2 files`, `No Results`: VS Code's wording; VS Code's message when `search.maxResults` cut the search off,
+  `- Search cancelled`, or the error of a bad pattern), then one block per file in VS Code's order (workspace folder, then the path segment by segment,
+  ignoring case): the path relative to the workspace folder (`folder • path` with several folders, absolute outside them, a URI for another scheme),
+  match lines `  N: text` and context lines `  N  text`, line numbers right-aligned within the file, an empty line between runs of lines that are not
+  adjacent (with context), an empty line after each file. A line is shown whole, with its indentation; one longer than 1000 characters is shown from 100
+  characters before its first match, with `⟪ N characters skipped ⟫` standing for the rest (VS Code's elision). The engine's previews are trimmed and
+  clipped, so a run reads every matching file's lines again (an open document from memory, any other through `IFileSystem`, decoded as the engine
+  decoded it); a file that cannot be read any more falls back to the previews, without context.
+* **Running.** A `SearchEditorSession` per open `search-result` document (an untitled one or a `.code-search` file; created when it opens or turns into
+  that language, disposed when it closes or turns into another; a Save As keeps it). Search Again (Enter on a header line, `search.action.rerunEditorSearch`)
+  reads the header, stops the previous run and starts a `SearchEditorRun` with **the Find in Files engine** (its threads, limits, filters, cancellation).
+  The run's worker, on one dedicated thread the search editors share ("cscode-search-editor"; never the UI thread, never the pool), reads the lines,
+  formats each file's block and works out where it belongs among the blocks already written (`ResultLayout`), then hands the UI thread chunks of finished
+  text of about 32 KB: the UI thread inserts queued chunks for at most about 4 ms per dispatcher callback (background priority) and rewrites the summary
+  line (`Searching… 12 results - 3 files`, then the final count). The whole run is one undo step (`IEditorDocument.OpenUndoGroup`). Lines added to the
+  header while it streams move its frame; an edit of the results stops it (the user's text wins). An empty query clears the results. With
+  `search.searchOnType` an edit of the header searches again once typing pauses for `search.searchOnTypeDebouncePeriod`. With Vim emulation on, Enter
+  is Vim's in every mode (docs/VIM.md), so there Search Again is the palette, Ctrl/⌘+Shift+R in the VS Code keymap, or search as you type.
+* **Navigation.** The language features of `search-result` (`SearchResultFeatures`, registered in `ILanguageFeatureRegistry`): a definition provider
+  (F12, Ctrl/⌘+click) on a match or context line opens the file at that line and the column under the pointer (in an elided line the skipped characters
+  count; on the line number, the line's start), on a path line the file; each path line is a document link; a double-click on a result or path line opens
+  it as `search.searchEditor.doubleClickBehaviour` says (`goToLocation`, `openLocationToSide`, or `selectWord` to leave the editor's word selection).
+  Path lines are resolved back the way they were written (`SearchResultPaths`): relative to the one folder, `folder • path`, absolute, `~/`.
+* **Highlights.** An `IMatchHighlightProvider`: the query of the last run in this editor (of the header, for a saved file not run here) matched again on
+  each match line's text, on a worker, at most 50,000 ranges; the editor paints them with `searchEditor.findMatchBackground` (VS Code's default: the
+  find-match highlight at 66 %) and moves them with edits until its next answer. Context lines are not highlighted, as in VS Code.
+* **Grammar.** The editor's built-in `search-result` language (`.code-search`): TextMateSharp.Grammars does not embed VS Code's search-result extension,
+  so the grammar is CsCode's own (`src/CsCode.Editor/Languages/Grammars/search-result.tmLanguage.json`) with VS Code's scope names (header keys and flags,
+  path, match and context line prefixes, elisions), so themes that style the search editor colour it the same way.
+
+| Command | Title | Keys |
+|---|---|---|
+| `search.action.openNewEditor` | Search Editor: New Search Editor (Edit menu: New Search Editor) | — |
+| `search.action.openNewEditorToSide` | Search Editor: Open New Search Editor to the Side | — |
+| `search.action.openInEditor` | Search: Open Results in Editor (the Find in Files toolbar's Open in Editor) | — |
+| `search.action.rerunEditorSearch` (also VS Code's `rerunSearchEditorSearch`, kept out of the palette) | Search Editor: Search Again | Enter on a header line; Ctrl/⌘+Shift+R `when: inSearchEditor` in the VS Code keymap |
+
+New Search Editor seeds the query from the selection (one line) or the word at the caret and searches at once when there is a query; it takes VS Code's
+argument object (`query`, `filesToInclude`, `filesToExclude`, `contextLines`, `isRegexp`, `isCaseSensitive`, `matchWholeWord`,
+`useExcludeSettingsAndIgnoreFiles`, `onlyOpenEditors`, `triggerSearch`) or a query string. The new tab is untitled, titled "Search: query" (it follows the
+query when it is run again), with the caret at the end of the query; Save As proposes `<first folder>/<query>.code-search`. Open Results in Editor writes
+the Find in Files window's query and the results it shows (dismissed rows left out), with `search.searchEditor.defaultNumberOfContextLines` of context read
+from the files; a window that has not searched opens a search editor with its query. Context keys: `inSearchEditor` (the active editor is a search editor),
+`searchEditorHeaderFocus` (its caret is on a header line).
+
+Settings (VS Code's keys and defaults): `search.searchEditor.defaultNumberOfContextLines` (1), `search.searchEditor.doubleClickBehaviour` (`goToLocation`),
+`search.searchEditor.reusePriorSearchConfiguration` (false; when on, a new search editor takes the previous one's flags, globs and context lines),
+`search.searchOnType` (true; the search editor only), `search.searchOnTypeDebouncePeriod` (300 ms).
+
 ## Settings editor (`SettingsViewModel`)
 
 Mapping from `ConfigurationProperty` (default + JSON-schema fragment) to controls:
@@ -165,13 +251,23 @@ Mapping from `ConfigurationProperty` (default + JSON-schema fragment) to control
   columns, "keybindings.json" button (`workbench.action.openGlobalKeybindingsFile`; creates the file if missing). Rebinding in the UI is a STRETCH and not implemented.
 
 Settings registered by this module: `search.maxResults`, `search.maxFileSizeBytes`, `search.regexTimeoutMs`, `search.exclude`, `search.useIgnoreFiles`, `search.collapseResults`
-(`auto` | `alwaysCollapse` | `alwaysExpand`).
+(`auto` | `alwaysCollapse` | `alwaysExpand`), and the search editor's five (above).
 
 ## Tests (`tests/CsCode.Panels.Search.Tests`, xUnit v3 + Avalonia.Headless)
 
-`dotnet test tests/CsCode.Panels.Search.Tests` (on Nix-provided dotnet run it after `source tools/nix-dev-env.sh`, the headless tests need Skia's libraries). 368 tests:
+`dotnet test tests/CsCode.Panels.Search.Tests` (on Nix-provided dotnet run it after `source tools/nix-dev-env.sh`, the headless tests need Skia's libraries). 434 tests:
 engine (matching, files/encodings, filters and `.gitignore`, open documents, limits/lifecycle, replace), view-models (find, replace flows, history, settings, host/commands,
-shortcuts), headless UI + screenshots, real-platform integration, hostile/responsiveness and leak tests.
+shortcuts), headless UI + screenshots, real-platform integration, hostile/responsiveness and leak tests, and the search editor's (`SearchEditor/`, 27).
+* Search editor: `SearchEditorFormatTests` (the header as VS Code writes it, a saved file and one VS Code saved round-trip, lenient header reading, summaries,
+  elisions, blocks with context and gaps, line splitting and decoding as the engine's, path lines both ways); `SearchEditorTests` over the real engine
+  (results in path order with context, the query edited and run again replacing the results in place as one undo step, an empty query and a bad regex,
+  a superseded run stopped with its engine session and its queued chunks dropped, search as you type, 3,000 capped results streamed in several chunks with
+  the longest UI callback timed, `Rerun` returning to the caller at once, result lines' targets including elisions, double-click behaviours, highlights
+  from the run's query, Open Results in Editor leaving dismissed files out, the commands and their arguments, reusing the prior configuration, context
+  keys, sessions following `.code-search` documents, closing mid-run, and `LeakAssert.NotRetained` for a closed search editor's document, session and
+  run). The editor side is in `tests/CsCode.Editor.Tests/SearchResultEditorTests.cs` (grammar scopes, highlights following edits, double-clicks, a
+  screenshot `.scratch/screenshots/search-editor.png`) and the shell's in `tests/CsCode.App.Tests/SearchEditorShellTests.cs` (titled untitled tabs, to the
+  side, the Save As proposal, and New Search Editor end to end in the real composition).
 * Screenshots are written to `.scratch/screenshots/` (git-ignored): `search-*.png`, `settings-*.png`, `keybindings.png`.
 * The hostile suite builds a 200,000-file tree (about 800 MB of small files in the temp dir, removed afterwards) plus a 10 MB line, a million-match file, a 150 MB text file and a
   400 MB sparse binary, and asserts, with a heartbeat probe on a simulated UI thread (whose own self-test proves it sees a 60 ms stall): dispatcher latency p99 < 16 ms and max < 50 ms
@@ -198,8 +294,13 @@ Shortcuts table from the real keymap. On Nix-provided dotnet source `tools/nix-d
 
 ## Known gaps
 
-* Not implemented: "open results in an editor" (SHOULD), include/exclude presets (SHOULD), a command/UI to *start* a search-in-selection (the engine supports `SelectionScope`,
+* Not implemented: include/exclude presets (SHOULD), a command/UI to *start* a search-in-selection (the engine supports `SelectionScope`,
   but Core exposes no selection range, only `IActiveSelectionProvider.SelectedText`), rebinding UI (STRETCH).
+* Search editor: the header is text, so there are no toggle buttons and none of VS Code's Alt+C / Alt+W / Alt+R / Alt+L toggle commands (edit the
+  `# Flags:` line); result lines are not coloured as their own language (VS Code's grammar embeds each language's); a multi-line regex match is written
+  as all its lines but highlighted only where the query matches within one line; there is no "delete file results" command; a search editor a saved
+  session restores is titled Untitled-N until it runs again; a `.code-search` file over the editor's large-file threshold (5 MB) gets no highlights, links
+  or double-click (large-file mode). An untitled search editor holding results is a modified buffer: closing it asks whether to save it.
 * The replace preview in the tree sees only the (clipped) matched text, so for patterns that depend on context (anchors) it is an approximation, and for patterns that
   need the backtracking engine it does not substitute `$` groups (see Replace preview); the replacement that is actually written is always computed from the file.
 * A named pipe (FIFO) inside the workspace would block a worker on open (not guarded). Cancel still completes the search at once, but that worker thread stays blocked
@@ -209,4 +310,5 @@ Shortcuts table from the real keymap. On Nix-provided dotnet source `tools/nix-d
   `ApplyWorkspaceEditAsync` returns `false`. Files are applied one by one, so every file whose write fails delays the rest of a Replace All by about 20 s (or for
   good, if newer toasts push that one off the stack). Read-only files, the common case, are skipped before they reach the shell; other write failures (a full disk,
   a folder without write permission) still stall. The shell should show that toast without awaiting it.
-* Search-as-you-type and re-run on workspace change are not implemented (a folder change marks the results stale instead).
+* In the Find in Files window, search-as-you-type and re-run on workspace change are not implemented (a folder change marks the results stale instead);
+  the search editor searches as you type in its header.

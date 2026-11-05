@@ -278,6 +278,22 @@ internal sealed class DocumentColorProvider(LanguageClient client) : LspProvider
             var r = await dr.SendAsync(P.LspRequests.TextDocumentDocumentColor, new P.DocumentColorParams { TextDocument = dr.Id }).ConfigureAwait(false);
             return r is null ? null : r.Take(5000).Select(c => LspMapper.ToCore(c, dr.Mapper, dr.Uri)).ToArray();
         }, ct);
+
+    /// <summary><c>textDocument/colorPresentation</c> (the colour picker): interactive, since the picker applies the answer while the user drags.</summary>
+    public ValueTask<IReadOnlyList<ColorPresentation>?> ProvideColorPresentationsAsync(ITextDocument document, ColorInformation color, CancellationToken ct) =>
+        Client.DocRequestAsync<IReadOnlyList<ColorPresentation>>(Kind, Feature(1), document, LanePriority.Interactive, async dr =>
+        {
+            var p = new P.ColorPresentationParams
+            {
+                TextDocument = dr.Id,
+                Color = new P.Color { Red = color.Red, Green = color.Green, Blue = color.Blue, Alpha = color.Alpha },
+                Range = dr.Mapper.ToLsp(color.Range, dr.Uri),
+            };
+            var r = await dr.SendAsync(P.LspRequests.TextDocumentColorPresentation, p).ConfigureAwait(false);
+            return r is null ? null : r.Take(100).Select(x => new ColorPresentation(x.Label ?? "",
+                x.TextEdit is { } te ? dr.Mapper.ToCore(te, dr.Uri) : null,
+                x.AdditionalTextEdits is { Length: > 0 } more ? dr.Mapper.ToCore(more, dr.Uri) : null)).ToArray();
+        }, ct);
 }
 
 internal sealed class FormattingProvider(LanguageClient client, FeatureEntry[] entries) : LspProvider(client, ProviderKind.Formatting), IDocumentFormattingProvider

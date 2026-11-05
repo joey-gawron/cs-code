@@ -88,9 +88,11 @@ public class RealAppContextMenuTests
         var menu = await RightClickAsync(host, view, PointOfOffset(view, 4, 12));
 
         // No language server is running (RealAppHost disables them): the capability-gated items are hidden, not dead; no debug session: no watch items.
+        // Quick Actions stays: the built-in spell checker offers code actions in every document (docs/SPELLCHECK.md).
         Assert.Equal(
         [
-            "Breakpoint", "Run To Cursor", "-",
+            "Quick Actions and Refactorings...", "-",
+            "Breakpoint", "Bookmarks", "Run To Cursor", "-",
             "Snippet", "-",
             "Cut", "Copy", "Copy with Formatting", "Paste", "-",
             "Comment Selection", "Uncomment Selection", "-",
@@ -120,7 +122,7 @@ public class RealAppContextMenuTests
         var view = EditorView(host);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var menu = await RightClickAsync(host, view, PointOfOffset(view, 4, 13));
-        Assert.Equal(["Rename...", "-", "Peek Definition", "Go To Definition", "Go To Declaration", "Go To Implementation"], Headers(menu).Take(6));
+        Assert.Equal(["Quick Actions and Refactorings...", "Rename...", "-", "Peek Definition", "Go To Definition", "Go To Declaration", "Go To Implementation"], Headers(menu).Take(7));
         Assert.Equal(PlatformKeys.Label("Alt+F12", "⌥F12"), Entries(menu).Single(e => e.AccessibleName == "Peek Definition").Gesture);
         var renameItem = ContextMenus.ItemsOf(menu).First(i => ContextMenus.EntryOf(i)!.AccessibleName == "Rename...");
         Assert.Equal(PlatformKeys.Label("Ctrl+R, Ctrl+R", "⌘R ⌘R"), ContextMenus.EntryOf(renameItem)!.Gesture);
@@ -139,7 +141,7 @@ public class RealAppContextMenuTests
         var view = EditorView(host);
         var menu = await RightClickAsync(host, view, PointOfOffset(view, 4, 13));
         var headers = Headers(menu);
-        Assert.Equal(["View Call Hierarchy", "-"], headers.Take(2));
+        Assert.Equal(["Quick Actions and Refactorings...", "-", "View Call Hierarchy", "-"], headers.Take(4)); // Quick Actions: the spell checker's
         Assert.Equal(PlatformKeys.Label("Ctrl+K, Ctrl+T", "⌘K ⌘T"), Entries(menu).Single(e => e.AccessibleName == "View Call Hierarchy").Gesture);
         Assert.DoesNotContain("View Type Hierarchy", headers); // no type hierarchy provider
         menu.Close();

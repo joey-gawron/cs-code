@@ -212,16 +212,20 @@ internal sealed partial class LanguageClient : IAsyncDisposable
             var log = _log; // capture the log only: a callback held by the transport must not keep the whole client alive
             // the login shell's environment first (macOS, started from the Dock: lsp-1): PATH lookup and ${env:NAME} read CsCode's environment
             await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
+            var logsDir = _ctx.Services.Paths?.LogsDir;
             var launch = Definition with
             {
                 Command = await FromPythonEnvironmentAsync(ct).ConfigureAwait(false) ?? Definition.Command,
-                Args = LaunchVariables.ExpandArguments(Definition.Args, RootFolder, _ctx.Services.Paths?.LogsDir),
+                Args = LaunchVariables.ExpandArguments(Definition.Args, RootFolder, logsDir),
                 // lsp-9, macOS only: elsewhere a definition's env is passed as written, as it always was
                 Env = OperatingSystem.IsMacOS() ? LaunchVariables.ExpandEnvironment(Definition.Env, RootFolder) : Definition.Env,
             };
+            // an alternative's arguments are expanded as the command's are (Roslyn's Microsoft.CodeAnalysis.LanguageServer takes RoslynArgs too)
+            var alternatives = BuiltinLanguageServers.AlternativesFor(Definition)
+                .Select(a => a with { Args = LaunchVariables.ExpandArguments(a.Args, RootFolder, logsDir) }).ToArray();
             var connection = await _ctx.Connections.ConnectAsync(
                 new LspLaunchRequest(launch, _ctx.Services.Paths?.ToolsDir, Definition.WorkingDirectory ?? cwd, settings.Priority, line => log.Add(line), settings.CpuQuotaPercent,
-                    settings.SearchDirs, BuiltinLanguageServers.AlternativesFor(Definition)), ct).ConfigureAwait(false);
+                    settings.SearchDirs, alternatives), ct).ConfigureAwait(false);
             _connection = connection;
 
             var formatter = new SystemTextJsonFormatter();
