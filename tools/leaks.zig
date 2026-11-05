@@ -784,6 +784,29 @@ fn limaRunning(arena: Allocator, io: Io) bool {
     return std.mem.indexOf(u8, r.stdout, "jiffy-ubuntu Running") != null;
 }
 
+/// macOS's `leaks` reads a process's memory only if the process allows it
+/// (com.apple.security.get-task-allow): a copy of the editor, ad-hoc signed
+/// with that entitlement, next to the `share` folder its fonts are found in.
+fn signedCopy(arena: Allocator, io: Io, opts: *const Options, bin: []const u8) ![]const u8 {
+    const cwd = Io.Dir.cwd();
+    const dir = try std.fmt.allocPrint(arena, "{s}/signed", .{opts.fixtures});
+    try cwd.deleteTree(io, dir);
+    try cwd.createDirPath(io, try std.fmt.allocPrint(arena, "{s}/bin", .{dir}));
+    const copy = try std.fmt.allocPrint(arena, "{s}/bin/cs", .{dir});
+    _ = try run(arena, io, null, &.{ "cp", bin, copy });
+    const share = try std.fmt.allocPrint(arena, "{s}/../share", .{std.fs.path.dirname(bin) orelse "."});
+    _ = try run(arena, io, null, &.{ "ln", "-s", share, try std.fmt.allocPrint(arena, "{s}/share", .{dir}) });
+    const plist = try std.fmt.allocPrint(arena, "{s}/get-task-allow.plist", .{opts.fixtures});
+    try write(io, plist,
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        \\<plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/></dict></plist>
+        \\
+    );
+    _ = try run(arena, io, null, &.{ "codesign", "-s", "-", "-f", "--entitlements", plist, copy });
+    return copy;
+}
+
 /// How a session ended, judged from what it printed and how it exited.
 const Verdict = struct {
     ok: bool,
@@ -809,11 +832,14 @@ fn judge(stderr: []const u8, stdout: []const u8, term: std.process.Child.Term, t
             return .{ .ok = true };
         },
         .leaks => {
-            // "Process 123: 2 leaks for 160 total leaked bytes."
-            const marker = std.mem.indexOf(u8, stdout, " leaks for ") orelse return .{ .ok = false, .why = "no leaks report" };
+            // The tool can only look into a process that allows it: a binary
+            // without get-task-allow reports "0 leaks" about nothing.
+            if (std.mem.indexOf(u8, stdout, "is not debuggable") != null) return .{ .ok = false, .why = "leaks cannot read the process (it needs the get-task-allow entitlement)" };
+            // "Process 123: 2 leaks for 160 total leaked bytes." (or "1 leak for ...").
+            const marker = std.mem.indexOf(u8, stdout, " leaks for ") orelse std.mem.indexOf(u8, stdout, " leak for ") orelse return .{ .ok = false, .why = "no leaks report" };
             var start = marker;
             while (start > 0 and std.ascii.isDigit(stdout[start - 1])) start -= 1;
-            const n = std.fmt.parseInt(usize, stdout[start..marker], 10) catch 0;
+            const n = std.fmt.parseInt(usize, stdout[start..marker], 10) catch return .{ .ok = false, .why = "unreadable leaks report" };
             if (n > 0) return .{ .ok = false, .leaks = n, .why = "leaked memory" };
             return .{ .ok = true };
         },
@@ -912,6 +938,7 @@ pub fn main(init: std.process.Init) !u8 {
     }
     opts.repo = try cwd.realPathFileAlloc(io, opts.repo, arena);
     const project = try prepare(arena, io, &opts);
+    const run_bin = if (opts.tool == .leaks) try signedCopy(arena, io, &opts, bin) else bin;
 
     var base_env = try init.environ_map.clone(arena);
     try base_env.put("SHELL", "/bin/sh");
@@ -963,7 +990,7 @@ pub fn main(init: std.process.Init) !u8 {
             for (r.env) |kv| try renv.put(kv[0], kv[1]);
             var argv: std.ArrayList([]const u8) = .empty;
             if (opts.tool == .leaks) try argv.appendSlice(arena, &.{ "leaks", "--atExit", "--" });
-            try argv.append(arena, bin);
+            try argv.append(arena, run_bin);
             try argv.appendSlice(arena, &.{ "--headless", "1280x800", "--standalone" });
             if (s != .lsp and s != .remote) try argv.append(arena, "--no-lsp");
             try argv.appendSlice(arena, r.argv);
@@ -997,7 +1024,7 @@ pub fn main(init: std.process.Init) !u8 {
                             std.debug.print("      ...{s}\n", .{tail});
                         }
                     },
-                    .leaks => printHead(result.stdout, "Process ", 40),
+                    .leaks => if (std.mem.indexOf(u8, result.stdout, "STACK OF") != null) printHead(result.stdout, "STACK OF", 30) else printHead(result.stdout, "is not debuggable", 4),
                 }
                 break;
             }
