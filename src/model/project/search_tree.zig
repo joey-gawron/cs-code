@@ -15,6 +15,8 @@ pub const Match = struct {
     line: u32,
     /// Byte column of the first match in the original line, 0-based.
     column: u32,
+    /// Byte column in the original line where `preview` starts.
+    preview_col: u32,
     preview: []const u8,
     ranges: []const [2]u32,
 };
@@ -123,6 +125,7 @@ pub fn build(gpa: Allocator, text: []const u8, ranges: []const [2]usize) !Tree {
         try cur_matches.append(alloc, .{
             .line = parsed.line_number,
             .column = first_col,
+            .preview_col = @intCast(start),
             .preview = try alloc.dupe(u8, body[start..end]),
             .ranges = local.items,
         });
@@ -214,6 +217,7 @@ test "a tree groups matching lines by file with ranges in the preview" {
     try testing.expectEqual(@as(u32, 4), tree.files[0].matches[0].line);
     try testing.expectEqualStrings("const foo = foo + 1;", tree.files[0].matches[0].preview);
     try testing.expectEqual(@as(usize, 2), tree.files[0].matches[0].ranges.len);
+    try testing.expectEqual(@as(u32, 4), tree.files[0].matches[0].preview_col);
     try testing.expectEqual([2]u32{ 6, 9 }, tree.files[0].matches[0].ranges[0]);
     try testing.expectEqual([2]u32{ 12, 15 }, tree.files[0].matches[0].ranges[1]);
     try testing.expectEqual(@as(u32, 20), tree.files[0].matches[1].line);

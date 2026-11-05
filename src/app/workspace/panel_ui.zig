@@ -38,6 +38,7 @@ const TerminalView = @import("../terminal/terminal_view.zig").TerminalView;
 const editor_view = @import("../editor/editor_view.zig");
 const terminal_ui = @import("terminal_ui.zig");
 const git_status_ui = @import("git_status_ui.zig");
+const search_ui = @import("search_ui.zig");
 const context_menu = @import("context_menu.zig");
 const rpath = @import("../../model/remote/path.zig");
 const pty = @import("../../framework/platform/pty.zig");
@@ -59,7 +60,7 @@ const all_row_h: f32 = 28;
 const row_h: f32 = 42;
 const term_row_h: f32 = 26;
 
-pub const View = enum { terminal, source_control, language_servers };
+pub const View = enum { terminal, source_control, language_servers, search };
 
 /// A clickable part of the panel, from the last paint.
 const Hit = union(enum) {
@@ -77,6 +78,8 @@ const Hit = union(enum) {
     /// A row of the terminal list, and its ×.
     terminal: usize,
     close_terminal: usize,
+    /// A button of the Search view's header.
+    search_action: search_ui.Action,
 };
 
 /// A terminal in the panel.
@@ -116,6 +119,8 @@ pub const State = struct {
     /// The status bar item from the last paint, and the server it names.
     status_item: Rect = .{},
     status_item_server: ?[]const u8 = null,
+    /// The Search view: Find in Files results as a tree (search_ui.zig).
+    search: search_ui.State = .{},
 };
 
 pub fn deinit(ws: *Workspace) void {
@@ -130,6 +135,7 @@ pub fn deinit(ws: *Workspace) void {
         ws.gpa.destroy(b);
     }
     st.hits.deinit(ws.gpa);
+    search_ui.deinit(ws);
 }
 
 fn sameName(a: ?[]const u8, b: ?[]const u8) bool {
@@ -215,6 +221,7 @@ pub fn viewEditor(ws: *Workspace) ?*Editor {
         .terminal => null,
         .source_control => if (st.source_control) |p| p.editor else null,
         .language_servers => st.log,
+        .search => null,
     };
 }
 
@@ -228,8 +235,23 @@ pub fn focusedEditor(ws: *Workspace) ?*Editor {
 /// true if consumed.
 pub fn handleKey(ws: *Workspace, k: platform.KeyEvent) bool {
     const st = &ws.panel;
+    if (st.visible and st.view == .search) return search_ui.key(ws, k);
     if (!st.visible or st.view != .source_control) return false;
     return git_status_ui.viewKey(ws, k);
+}
+
+/// Find in Files: the results tree, shown (`focus` gives it the keyboard).
+pub fn showSearch(ws: *Workspace, focus: bool) void {
+    show(ws, .search, focus);
+}
+
+/// F4 / Shift+F4 through the results tree; false when there is none.
+pub fn stepSearch(ws: *Workspace, forward: bool) bool {
+    if (!search_ui.step(ws, forward)) return false;
+    ws.panel.view = .search;
+    ws.panel.visible = true;
+    ws.dirty = true;
+    return true;
 }
 
 /// View ▸ Panel.
@@ -332,6 +354,7 @@ pub fn promptRunCommand(ws: *Workspace) void {
 
 /// The Run Command prompt's answer. Returns false for other prompts.
 pub fn confirmPrompt(ws: *Workspace, tag: u32, input: []const u8) bool {
+    if (search_ui.confirmPrompt(ws, tag, input)) return true;
     if (tag != run_command_tag) return false;
     const cmd = std.mem.trim(u8, input, " \t");
     if (cmd.len > 0) runCommand(ws, cmd);
@@ -632,6 +655,8 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     st.log_rect = .{};
     st.term_rect = .{};
     st.scm_rect = .{};
+    st.search.rect = .{};
+    st.search.rows.clearRetainingCapacity();
     if (!st.visible or st.rect.h <= 0) return;
     const theme = ctx.theme;
     const scene = ctx.scene;
@@ -646,6 +671,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
         .{ .label = "Terminal", .view = .terminal },
         .{ .label = "Source Control", .view = .source_control },
         .{ .label = "Language Servers", .view = .language_servers },
+        .{ .label = "Search", .view = .search },
     };
     var tx = r.x + 14;
     for (tabs) |t| {
@@ -673,6 +699,12 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
             &.{ .{ .label = "Run…", .hit = .run_command }, .{ .label = "+", .hit = .new_terminal } },
         .source_control => &.{ .{ .label = "Refresh", .hit = .refresh }, .{ .label = "?", .hit = .git_help } },
         .language_servers => &.{ .{ .label = "Clear", .hit = .clear }, .{ .label = "Restart", .hit = .restart } },
+        .search => &.{
+            .{ .label = "Clear", .hit = .{ .search_action = .clear } },
+            .{ .label = "Collapse All", .hit = .{ .search_action = .collapse_all } },
+            .{ .label = "Open in Editor", .hit = .{ .search_action = .open_in_editor } },
+            .{ .label = "Replace All", .hit = .{ .search_action = .replace_all } },
+        },
     };
     for (buttons) |b| {
         const w = @max(28, ctx.text.measure(b.label, ws.fonts.ui_small) + 16);
@@ -705,6 +737,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
             const log_rect: Rect = .{ .x = list.right() + 1, .y = body.y, .w = @max(0, body.right() - list.right() - 1), .h = body.h };
             paintLog(ws, ctx, log_rect);
         },
+        .search => search_ui.paint(ws, ctx, body),
     }
 }
 
@@ -906,6 +939,7 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
                 focusPanel(ws);
             },
             .close_terminal => |i| if (i < st.terminals.items.len) closeTerminal(ws, st.terminals.items[i].view),
+            .search_action => |a| search_ui.runAction(ws, a),
         }
         return true;
     };
@@ -923,6 +957,11 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
         ws.mouse_down_in = .panel;
         if (m.click_count == 2) git_status_ui.onViewDoubleClick(ws);
     };
+    if (st.search.rect.contains(pos.x, pos.y)) {
+        focusPanel(ws);
+        search_ui.click(ws, m);
+        return true;
+    }
     // A terminal: selection and mouse reports (drags are followed by terminal_ui).
     if (st.term_rect.contains(pos.x, pos.y)) if (activeTerminal(ws)) |tv| {
         focusPanel(ws);
@@ -945,6 +984,7 @@ pub fn onScroll(ws: *Workspace, s: platform.ScrollEvent) bool {
     if (st.log_rect.contains(s.pos.x, s.pos.y)) if (st.log) |ed| ed.onScroll(s);
     if (st.scm_rect.contains(s.pos.x, s.pos.y)) if (st.source_control) |p| p.editor.onScroll(s);
     if (st.term_rect.contains(s.pos.x, s.pos.y)) if (activeTerminal(ws)) |tv| tv.wheel(s);
+    if (st.search.rect.contains(s.pos.x, s.pos.y)) search_ui.scroll(ws, s);
     return true;
 }
 
@@ -958,5 +998,8 @@ pub fn cursorShape(ws: *Workspace, pos: platform.Vec2) ?platform.CursorShape {
     if (st.log_rect.contains(pos.x, pos.y)) if (st.log) |ed| return ed.cursorShapeAt(pos);
     if (st.scm_rect.contains(pos.x, pos.y)) if (st.source_control) |p| return p.editor.cursorShapeAt(pos);
     if (st.term_rect.contains(pos.x, pos.y)) return .text;
+    if (st.search.rect.contains(pos.x, pos.y)) {
+        for (st.search.rows.items) |h| if (h.rect.contains(pos.x, pos.y)) return .pointer;
+    }
     return .default;
 }

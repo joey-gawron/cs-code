@@ -108,6 +108,7 @@ pub const Action = enum {
     toggle_find_regex,
     toggle_find_case,
     toggle_find_whole_word,
+    toggle_find_preserve_case,
     use_selection_for_find,
 
     // Overlays.
@@ -546,6 +547,7 @@ const defaults = [_]DefaultBinding{
     .{ "alt+r", .toggle_find_regex, .global },
     .{ "alt+c", .toggle_find_case, .global },
     .{ "alt+w", .toggle_find_whole_word, .global },
+    .{ "alt+p", .toggle_find_preserve_case, .global },
 
     .{ "ctrl+p", .goto_anything, .global },
     .{ "ctrl+g", .goto_line, .global },

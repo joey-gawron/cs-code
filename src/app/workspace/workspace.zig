@@ -34,6 +34,7 @@ const git_status_ui = @import("git_status_ui.zig");
 const groups = @import("groups.zig");
 const terminal_ui = @import("terminal_ui.zig");
 const panel_ui = @import("panel_ui.zig");
+const search_ui = @import("search_ui.zig");
 const leader_ui = @import("leader_ui.zig");
 const file_cmd = @import("file_cmd.zig");
 const path_complete = @import("path_complete.zig");
@@ -290,6 +291,8 @@ pub const Workspace = struct {
     /// Find in Files: the running search, and the match ranges of the
     /// Find Results buffer (for F4 / shift+F4).
     search_job: ?*search.Job = null,
+    /// The query of the running (or last) search, for the results tree.
+    last_query: search.Query = .{ .pattern = "" },
     /// Searches whose `onSearchDone` hasn't run, superseded ones included.
     searches_running: u32 = 0,
     /// Watches the folders of open files for changes made by other programs.
@@ -1583,11 +1586,11 @@ pub const Workspace = struct {
             return;
         };
         self.searches_running += 1;
-        const ed = self.resultsEditor() orelse return;
-        const msg = std.fmt.allocPrint(alloc, "Searching for \"{s}\"…\n", .{pattern}) catch return;
-        setResultsText(ed, msg);
         self.result_ranges.clearRetainingCapacity();
         self.result_index = null;
+        self.last_query = query;
+        search_ui.begin(self, query);
+        panel_ui.showSearch(self, false);
         self.hideFind();
         self.setStatus("Searching…", .{});
     }
@@ -1605,19 +1608,26 @@ pub const Workspace = struct {
             self.setStatus("Find in Files failed", .{});
             return;
         };
-        // Reuse the results tab without stealing focus if it was closed meanwhile.
-        const ed = if (self.resultsTab()) |i| self.tabs.items[i].editor else self.resultsEditor() orelse return;
-        setResultsText(ed, r.text);
-        ed.setSingleSelection(.caret(0));
-        ed.scroll_y = 0;
-        self.result_ranges.clearRetainingCapacity();
-        self.result_ranges.appendSlice(self.gpa, r.matches) catch {};
-        self.result_index = null;
-        ed.highlights.clearRetainingCapacity();
-        ed.highlights.appendSlice(self.gpa, r.matches) catch {};
+        // The results tree in the panel; the Find Results document is Open in Editor.
+        search_ui.finish(self, &r, self.last_query);
+        panel_ui.showSearch(self, false);
         if (r.regex_error) {
             self.setStatus("Invalid regular expression", .{});
         } else self.setStatus("{d} matches across {d} files", .{ r.matches.len, r.files_matched });
+    }
+
+    /// The panel's Open in Editor: the results as a Find Results document
+    /// (F4 and a double click on a line go through it).
+    pub fn openResultsInEditor(self: *Workspace, text: []const u8, matches: []const [2]usize) void {
+        const ed = if (self.resultsTab()) |i| self.tabs.items[i].editor else self.resultsEditor() orelse return;
+        setResultsText(ed, text);
+        ed.setSingleSelection(.caret(0));
+        ed.scroll_y = 0;
+        self.result_ranges.clearRetainingCapacity();
+        self.result_ranges.appendSlice(self.gpa, matches) catch {};
+        self.result_index = null;
+        ed.highlights.clearRetainingCapacity();
+        ed.highlights.appendSlice(self.gpa, matches) catch {};
     }
 
     pub fn isFindResults(ed: *const Editor) bool {
@@ -1699,6 +1709,9 @@ pub const Workspace = struct {
 
     /// F4 / shift+F4: step through Find in Files matches.
     fn stepResult(self: *Workspace, forward: bool) void {
+        if (self.focus != .editor or !isFindResults(self.activeEditor() orelse return)) {
+            if (panel_ui.stepSearch(self, forward)) return;
+        }
         const n = self.result_ranges.items.len;
         const ti = self.resultsTab() orelse return;
         if (n == 0) {
@@ -1718,6 +1731,8 @@ pub const Workspace = struct {
 
     /// Replace in every file listed in Find Results (left open, unsaved, like Sublime).
     fn replaceInFiles(self: *Workspace) void {
+        // With results in the panel, Replace follows the tree (dismissed lines stay).
+        if (search_ui.hasResults(self)) return search_ui.runAction(self, .replace_all);
         const f = self.find orelse return;
         const ti = self.resultsTab() orelse {
             self.setStatus("Run Find in Files first", .{});
@@ -2188,6 +2203,7 @@ pub const Workspace = struct {
             .toggle_find_regex => if (self.find) |f| f.flip(.regex),
             .toggle_find_case => if (self.find) |f| f.flip(.case_sensitive),
             .toggle_find_whole_word => if (self.find) |f| f.flip(.whole_word),
+            .toggle_find_preserve_case => if (self.find) |f| f.flip(.preserve_case),
             .toggle_record_macro => {
                 self.recording = !self.recording;
                 if (self.recording) {
