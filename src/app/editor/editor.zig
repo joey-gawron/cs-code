@@ -223,6 +223,8 @@ pub const Editor = struct {
     applying_edit: bool = false,
     /// Overrides the caret shape (vim normal mode draws a block).
     block_caret: bool = false,
+    /// Drawn as an underline when `block_caret` is set (vim's replace and operator-pending modes).
+    underline_caret: bool = false,
     /// When non-empty, carets are drawn here instead of at selection heads
     /// (vim visual mode: the cursor sits on the last selected char).
     caret_override: std.ArrayList(usize) = .empty,

@@ -442,6 +442,7 @@ test {
     _ = @import("app/workspace/find_panel.zig");
     _ = @import("app/workspace/path_complete.zig");
     _ = @import("app/workspace/workspace.zig");
+    _ = @import("vim_tests.zig");
     _ = @import("model/text/fold_map.zig");
     _ = @import("model/text/display_map.zig");
     _ = @import("framework/text/line_index.zig");

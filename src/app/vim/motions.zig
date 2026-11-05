@@ -9,6 +9,13 @@ const Scanner = movement.Scanner;
 
 pub const Kind = enum { exclusive, inclusive, linewise };
 
+/// The last line of the text: the empty row after a final newline is not a line.
+pub fn lastRow(buffer: *const Buffer) u32 {
+    const n = buffer.lineCount();
+    if (n > 1 and buffer.lineStart(n - 1) == buffer.len()) return n - 2;
+    return n - 1;
+}
+
 pub const Target = struct {
     offset: usize,
     kind: Kind,
@@ -199,7 +206,7 @@ pub const Ctx = struct {
 
     pub fn paragraphForward(self: *Ctx, start: usize, count: usize) usize {
         var r = self.row(start);
-        const last = self.buffer.lineCount() - 1;
+        const last = lastRow(self.buffer);
         var n: usize = 0;
         while (n < count) : (n += 1) {
             // Skip blank lines, then non-blank lines.
@@ -319,7 +326,7 @@ pub const Ctx = struct {
 
     pub fn paragraphObject(self: *Ctx, at: usize, around: bool) Range {
         const r0 = self.row(at);
-        const last = self.buffer.lineCount() - 1;
+        const last = lastRow(self.buffer);
         const blank = self.buffer.lineLen(r0) == 0;
         var first = r0;
         var lst = r0;
