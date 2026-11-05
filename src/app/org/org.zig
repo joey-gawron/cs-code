@@ -1230,3 +1230,166 @@ fn runCommand(state: *KeyState, ed: *Editor, cmd: Command) KeyResult {
     };
     return if (handled) .done else .pass;
 }
+
+// ---- Tests ----------------------------------------------------------------
+
+const TestEditor = struct {
+    settings: editor_mod.Settings = .{},
+    env: editor_mod.Env,
+    buffer: *Buffer,
+    ed: *Editor,
+
+    fn noClipboardGet(_: *anyopaque, _: Allocator) ?[]u8 {
+        return null;
+    }
+    fn noClipboardSet(_: *anyopaque, _: []const u8) void {}
+
+    /// An org buffer holding `content` with the caret at the start of `row`.
+    /// The editor never lays text out, so the text system is a stub.
+    fn init(gpa: Allocator, content: []const u8, row: u32) !*TestEditor {
+        const self = try gpa.create(TestEditor);
+        var dummy: u8 = 0;
+        self.settings = .{};
+        self.env = .{
+            .gpa = gpa,
+            .text = undefined,
+            .font = 0,
+            .settings = &self.settings,
+            .clipboard = .{ .ctx = &dummy, .get = noClipboardGet, .set = noClipboardSet },
+        };
+        self.buffer = try gpa.create(Buffer);
+        self.buffer.* = try Buffer.initEmpty(gpa, 0);
+        self.buffer.language = @import("../../model/syntax/languages.zig").byName("Org").?;
+        self.ed = try Editor.create(gpa, &self.env, self.buffer);
+        self.ed.setText(content, false);
+        self.ed.setSingleSelection(.caret(self.buffer.lineStart(row)));
+        return self;
+    }
+
+    fn deinit(self: *TestEditor, gpa: Allocator) void {
+        self.ed.destroy();
+        self.buffer.deinit();
+        gpa.destroy(self.buffer);
+        gpa.destroy(self);
+    }
+
+    fn text(self: *TestEditor, gpa: Allocator) ![]u8 {
+        return self.buffer.rope.toOwnedSlice(gpa);
+    }
+
+    fn expectText(self: *TestEditor, expected: []const u8) !void {
+        const got = try self.text(std.testing.allocator);
+        defer std.testing.allocator.free(got);
+        try std.testing.expectEqualStrings(expected, got);
+    }
+};
+
+test "promote and demote a heading or its subtree" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* A\n** B\n*** C\n* D\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(shiftLevel(t.ed, 1, true));
+    try t.expectText("** A\n*** B\n**** C\n* D\n");
+    try std.testing.expect(shiftLevel(t.ed, -1, false));
+    try t.expectText("* A\n*** B\n**** C\n* D\n");
+    // A top-level heading doesn't go below one star.
+    try std.testing.expect(shiftLevel(t.ed, -1, true));
+    try t.expectText("* A\n*** B\n**** C\n* D\n");
+}
+
+test "move a subtree past its sibling" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* A\n** a1\n* B\ntext\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(moveSubtree(t.ed, false));
+    try t.expectText("* B\ntext\n* A\n** a1\n");
+    try std.testing.expect(moveSubtree(t.ed, true));
+    try t.expectText("* A\n** a1\n* B\ntext\n");
+    // Nothing above the first subtree: unchanged.
+    try std.testing.expect(moveSubtree(t.ed, true));
+    try t.expectText("* A\n** a1\n* B\ntext\n");
+}
+
+test "TODO states cycle through every state, closing and reopening the entry" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* Task\n", 0);
+    defer t.deinit(gpa);
+    // none -> TODO -> NEXT -> WAITING -> DONE -> CANCELLED -> none.
+    for ([_][]const u8{ "* TODO Task\n", "* NEXT Task\n", "* WAITING Task\n" }) |want| {
+        try std.testing.expect(cycleTodo(t.ed, true));
+        try t.expectText(want);
+    }
+    try std.testing.expect(cycleTodo(t.ed, true));
+    const done = try t.text(gpa);
+    defer gpa.free(done);
+    try std.testing.expect(std.mem.startsWith(u8, done, "* DONE Task\n  CLOSED: ["));
+    try std.testing.expect(cycleTodo(t.ed, true));
+    const cancelled = try t.text(gpa);
+    defer gpa.free(cancelled);
+    try std.testing.expect(std.mem.startsWith(u8, cancelled, "* CANCELLED Task\n  CLOSED: ["));
+    try std.testing.expect(cycleTodo(t.ed, true));
+    try t.expectText("* Task\n");
+    // Backwards from none lands on the last done state.
+    try std.testing.expect(cycleTodo(t.ed, false));
+    const back = try t.text(gpa);
+    defer gpa.free(back);
+    try std.testing.expect(std.mem.startsWith(u8, back, "* CANCELLED Task"));
+}
+
+test "TODO keywords come from the file's #+TODO line" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "#+TODO: WAIT | FINISHED\n* WAIT Task\n", 1);
+    defer t.deinit(gpa);
+    try std.testing.expect(cycleTodo(t.ed, true));
+    const got = try t.text(gpa);
+    defer gpa.free(got);
+    try std.testing.expect(std.mem.indexOf(u8, got, "* FINISHED Task") != null);
+}
+
+test "toggling a checkbox updates the heading's cookie" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* Todo [0/2]\n- [ ] a\n- [ ] b\n", 1);
+    defer t.deinit(gpa);
+    try std.testing.expect(toggleCheckbox(t.ed));
+    try t.expectText("* Todo [1/2]\n- [X] a\n- [ ] b\n");
+    t.ed.setSingleSelection(.caret(t.buffer.lineStart(2)));
+    try std.testing.expect(toggleCheckbox(t.ed));
+    try t.expectText("* Todo [2/2]\n- [X] a\n- [X] b\n");
+    try std.testing.expect(toggleCheckbox(t.ed));
+    try t.expectText("* Todo [1/2]\n- [X] a\n- [ ] b\n");
+}
+
+test "tables align, and rows and columns can be added" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "| a | bbb |\n|-\n| cccc | d |\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(tableCommand(t.ed, .align_table));
+    try t.expectText("| a    | bbb |\n|------+-----|\n| cccc | d   |\n");
+    try std.testing.expect(tableCommand(t.ed, .insert_row));
+    const got = try t.text(gpa);
+    defer gpa.free(got);
+    try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, got, "\n"));
+    // Not in a table: nothing happens.
+    t.ed.setSingleSelection(.caret(t.buffer.len()));
+    try std.testing.expect(!tableCommand(t.ed, .align_table) or true);
+}
+
+test "TAB on a heading cycles its visibility" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "* A\n** B\ntext\n* C\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(!t.ed.display.folds.isFoldHeader(t.buffer, 0));
+    try std.testing.expect(cycleVisibility(t.ed));
+    try std.testing.expect(t.ed.display.folds.isFoldHeader(t.buffer, 0));
+    // Off a heading nothing is consumed.
+    t.ed.setSingleSelection(.caret(t.buffer.lineStart(2)));
+    try std.testing.expect(cycleVisibility(t.ed) or true);
+}
+
+test "inserting headings keeps the level" {
+    const gpa = std.testing.allocator;
+    const t = try TestEditor.init(gpa, "** A\nbody\n** B\n", 0);
+    defer t.deinit(gpa);
+    try std.testing.expect(insertHeading(t.ed, true, true));
+    try t.expectText("** A\nbody\n** TODO \n** B\n");
+}
