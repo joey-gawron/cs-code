@@ -257,6 +257,11 @@ CsCode.Panels.Git.Tests: 64 passed, 1 skipped); `SpellCheckRealAppTests` 3 passe
   other prose without a grammar is checked whole, view or not.
 * The tokens of a line edited a moment ago may be the previous version's until the editor tokenises it again (a few milliseconds); the
   re-check that the new tokens trigger corrects it.
+* **The user settings file is not watched by the checker** (the settings service watches it; a folder watch of its own took every event of
+  whatever else lives in that folder, and the tests keep their settings file in the system temp folder). A word typed into the user file by
+  hand while the workspace also sets `cSpell.words` changes no merged value, so the settings service reports nothing and the word counts
+  from the next settings reload (a change of any `cSpell.*` setting, another folder, or a restart). Words added through CsCode (quick fix,
+  Vim's `zg`, the commit box) apply at once.
 * YAML cspell configs, `import`, `overrides`, `languageSettings`, cspell's own bundled dictionaries (`typescript`, `companies`, ...) and
   `cSpell.customDictionaries` are not read; `cSpell.userWords` is read but nothing writes it (Add to User Dictionary writes `cSpell.words`,
   as the brief asks).

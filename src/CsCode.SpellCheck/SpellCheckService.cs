@@ -588,9 +588,10 @@ public sealed class SpellCheckService : IMemoryTrimmable, IDisposable
                 _textsChanged.Fire(true);
                 ScheduleAll(0);
             });
-        // the user file: a word added there while the workspace also sets cSpell.words changes no merged value, so the settings service is silent
-        if (Path.GetDirectoryName(_config.UserSettingsPath) is { Length: > 0 } userDir && Path.IsPathRooted(userDir))
-            Watch(userDir, n => n.Equals(Path.GetFileName(_config.UserSettingsPath), StringComparison.OrdinalIgnoreCase), () => ScheduleSettingsReload());
+        // The user settings file is not watched here: the settings service watches it, and the checker's own writes apply at once (AcceptNow).
+        // A folder watch on its directory took every event of whatever else lives there (the test settings sit in the system temp folder,
+        // and that watch slowed every other watch of the process). A word typed into the user file by hand while the workspace also sets
+        // cSpell.words changes no merged value, so it is picked up at the next settings reload (docs/SPELLCHECK.md).
         if (_workspace is null) return;
         var names = SpellSettingsLoader.ProjectConfigNames.Concat(SpellSettingsLoader.YamlConfigNames).Select(Path.GetFileName).Append("settings.json")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
