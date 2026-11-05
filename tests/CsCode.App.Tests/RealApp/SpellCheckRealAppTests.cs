@@ -87,6 +87,19 @@ public class SpellCheckRealAppTests(ITestOutputHelper output)
         Assert.Contains(app.Host.Get<ICommandService>().All, c => c.Id == SpellCheckHost.ToggleEnableSpellChecker && c.Title == "Toggle Spell Checking");
     }
 
+    [AvaloniaFact(Timeout = 120_000)]
+    public async Task The_commit_message_box_gets_the_spelling_layer_over_the_real_checker()
+    {
+        await using var host = await RealAppHost.Create().StartAsync([]);
+        await host.RunAsync(CsCode.Panels.Git.GitHost.ShowScm);
+        Assert.True(await RealAppHost.WaitFor(() => host.Shell.Tools.Get(CsCode.Panels.Git.GitHost.ViewId)?.LiveView is CsCode.Panels.Git.Views.SourceControlView), "the window");
+        var view = (CsCode.Panels.Git.Views.SourceControlView)host.Shell.Tools.Get(CsCode.Panels.Git.GitHost.ViewId)!.LiveView!;
+        // the layer (internal to the panel) sits over the message box when the composition has a spell checker
+        Assert.Contains(Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view), v => v.GetType().Name == "CommitMessageSpelling");
+        var issues = await host.Get<ITextSpellChecker>().CheckTextAsync("Fix the wierd bug\n\nIt is definately fixed.", "scminput");
+        Assert.Equal(["wierd", "definately"], issues.Select(i => i.Word));
+    }
+
     private static string? StatusText(RealAppHost host) =>
         host.Get<IStatusBarService>().Items.FirstOrDefault(i => i.Id == SpellCheckHost.StatusItemId)?.Text;
 }
