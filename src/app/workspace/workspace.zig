@@ -36,6 +36,7 @@ const terminal_ui = @import("terminal_ui.zig");
 const settings_ui = @import("settings_ui.zig");
 const scm_state = @import("scm_state.zig");
 const scm_ui = @import("scm_ui.zig");
+const diff_view = @import("diff_view.zig");
 const panel_ui = @import("panel_ui.zig");
 const search_ui = @import("search_ui.zig");
 const debug_ui = @import("debug_ui.zig");
@@ -98,6 +99,8 @@ pub const Tab = struct {
     terminal: ?*TerminalView = null,
     /// Set for the Settings tab (settings_ui.zig).
     settings: ?*settings_ui.View = null,
+    /// Set for a diff editor tab (diff_view.zig).
+    diff_view: ?*diff_view.View = null,
     /// Set for Diff, Log and Git Output tabs (opened from Source Control; git_status_ui.zig).
     git_diff: ?*git_status_ui.Diff = null,
     /// Set for a commit message (COMMIT_EDITMSG) tab (git_popup.zig).
@@ -453,6 +456,7 @@ pub const Workspace = struct {
             }
             if (t.terminal) |tv| tv.destroy();
             if (t.settings) |sv| sv.destroy();
+            if (t.diff_view) |dv| dv.destroy();
             if (t.git_diff) |d| d.destroy(null);
             if (t.git_commit) |c| c.destroy();
         }
@@ -974,6 +978,7 @@ pub const Workspace = struct {
         }
         if (tab.terminal) |tv| tv.destroy();
         if (tab.settings) |sv| sv.destroy();
+        if (tab.diff_view) |dv| dv.destroy();
         if (tab.git_diff) |d| d.destroy(ed.buffer);
         if (tab.git_commit) |c| git_status_ui.commitTabClosed(self, c, ed.buffer);
         for (self.mru.items, 0..) |e, i| if (e == ed) {
@@ -1823,6 +1828,7 @@ pub const Workspace = struct {
         if (scm_ui.handleEvent(self, ev)) return;
         if (page_ui.handleEvent(self, ev)) return;
         if (settings_ui.handleEvent(self, ev)) return;
+        if (diff_view.handleEvent(self, ev)) return;
         if (terminal_ui.handleEvent(self, ev)) return;
         switch (ev) {
             .key_down => |k| self.onKey(k),
@@ -3058,6 +3064,7 @@ pub const Workspace = struct {
             ed.layout(er);
             if (terminal_ui.paint(self, ed, er, scene)) continue;
             if (settings_ui.paint(self, ed, er, scene)) continue;
+            if (diff_view.paint(self, ed, er, scene)) continue;
             if (focused_group and self.find_visible) if (self.find) |f| if (f.mode == .buffer) f.update(ed);
             if (isFindResults(ed) and ed.highlights.items.len != self.result_ranges.items.len and !(focused_group and self.find_visible)) {
                 ed.highlights.clearRetainingCapacity();

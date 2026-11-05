@@ -423,6 +423,7 @@ test {
     _ = @import("app/workspace/scm_state.zig");
     _ = @import("app/editor/quick_diff.zig");
     _ = @import("app/workspace/scm_ui.zig");
+    _ = @import("app/workspace/diff_view.zig");
     _ = @import("model/lsp/signature.zig");
     _ = @import("app/session/store.zig");
     _ = @import("app/session/snapshot.zig");

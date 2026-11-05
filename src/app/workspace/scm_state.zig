@@ -18,6 +18,7 @@ const platform = @import("../../framework/platform/platform.zig");
 const Color = @import("../../framework/gpu/scene.zig").Color;
 const theme_mod = @import("../../framework/ui/theme.zig");
 const scm_ui = @import("scm_ui.zig");
+const diff_view = @import("diff_view.zig");
 
 const Allocator = std.mem.Allocator;
 const Workspace = workspace_mod.Workspace;
@@ -86,6 +87,8 @@ pub const State = struct {
     message: std.ArrayList(u8) = .empty,
     /// The dock's own state (scm_ui.zig).
     ui: scm_ui.Ui = .{},
+    /// Diff tabs being opened: their sides are still being read.
+    loaders: std.ArrayList(*diff_view.Loader) = .empty,
 
     pub fn deinitState(self: *State, gpa: Allocator) void {
         if (self.job) |j| j.detach();
@@ -110,6 +113,7 @@ pub const State = struct {
 };
 
 pub fn deinit(ws: *Workspace) void {
+    diff_view.deinitLoaders(ws);
     ws.git_state.scm.deinitState(ws.gpa);
 }
 

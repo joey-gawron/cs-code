@@ -14,6 +14,7 @@ const quick_panel = @import("quick_panel.zig");
 const git = @import("../../model/git/git.zig");
 const status_mod = @import("../../model/git/status.zig");
 const git_ui = @import("git_ui.zig");
+const diff_view = @import("diff_view.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const scene_mod = @import("../../framework/gpu/scene.zig");
 const ui = @import("../../framework/ui/ui.zig");
@@ -986,12 +987,62 @@ fn openRowFile(ws: *Workspace, ri: usize) void {
     ws.focus = .editor;
 }
 
-/// The change itself; until the diff editor exists, the file.
+/// The change in the diff editor: a staged one HEAD against the index, an
+/// unstaged one the index against the file, an untracked file against
+/// nothing, a file deleted on disk against nothing.
 fn openRowChange(ws: *Workspace, ri: usize) void {
     const r = entryAt(ws, ri) orelse return;
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = absPath(ws, &buf, r.e.path) orelse return;
-    _ = ws.openFile(path, true) catch return;
+    openChange(ws, r.e, r.group, true);
+}
+
+pub fn openChange(ws: *Workspace, e: *const Entry, group: Group, preview: bool) void {
+    const st = scm_state.state(ws);
+    const snap = st.snapshot orelse return;
+    var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs = absPath(ws, &abs_buf, e.path) orelse return;
+    // A conflicted file is edited, not compared.
+    if (group == .merge) {
+        _ = ws.openFile(abs, false) catch return;
+        ws.focus = .editor;
+        return;
+    }
+    var head: [std.fs.max_path_bytes + 8]u8 = undefined;
+    var index: [std.fs.max_path_bytes + 2]u8 = undefined;
+    var left_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    var right_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const path = std.mem.trimEnd(u8, e.path, "/");
+    const index_spec = std.fmt.bufPrint(&index, ":{s}", .{path}) catch return;
+    const orig = e.orig_path orelse path;
+    const head_spec = std.fmt.bufPrint(&head, "HEAD:{s}", .{orig}) catch return;
+    const initial = snap.status.branch.initial();
+    var title_buf: [160]u8 = undefined;
+    const base = std.fs.path.basename(path);
+    const deleted_on_disk = e.y == 'D';
+    if (group == .staged) {
+        const title = std.fmt.bufPrint(&title_buf, "{s} (Index)", .{base}) catch base;
+        diff_view.open(ws, .{
+            .title = title,
+            .path = path,
+            .left_label = std.fmt.bufPrint(&left_buf, "{s} (HEAD)", .{orig}) catch orig,
+            .right_label = std.fmt.bufPrint(&right_buf, "{s} (Index)", .{path}) catch path,
+            .left = if (initial or e.x == 'A') .empty else .{ .git = head_spec },
+            .right = if (e.x == 'D') .empty else .{ .git = index_spec },
+            .open_path = if (e.x == 'D') null else abs,
+            .preview = preview,
+        });
+        return;
+    }
+    const title = std.fmt.bufPrint(&title_buf, "{s} (Working Tree)", .{base}) catch base;
+    diff_view.open(ws, .{
+        .title = title,
+        .path = path,
+        .left_label = std.fmt.bufPrint(&left_buf, "{s} (Index)", .{path}) catch path,
+        .right_label = std.fmt.bufPrint(&right_buf, "{s} (Working Tree)", .{path}) catch path,
+        .left = if (e.kind == .untracked) .empty else .{ .git = index_spec },
+        .right = if (deleted_on_disk) .empty else .{ .file = abs },
+        .open_path = if (deleted_on_disk) null else abs,
+        .preview = preview,
+    });
 }
 
 // ---- Branches and the menu -----------------------------------------------------------------
