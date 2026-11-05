@@ -421,6 +421,7 @@ test {
     _ = @import("model/text/selection.zig");
     _ = @import("model/text/linediff.zig");
     _ = @import("app/workspace/scm_state.zig");
+    _ = @import("app/editor/quick_diff.zig");
     _ = @import("model/lsp/signature.zig");
     _ = @import("app/session/store.zig");
     _ = @import("app/session/snapshot.zig");

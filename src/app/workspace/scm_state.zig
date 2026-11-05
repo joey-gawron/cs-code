@@ -162,7 +162,7 @@ fn findRepository(ws: *Workspace, st: *State, dir: []const u8) void {
     forget(ws, st);
     st.unavailable = false;
     st.job_is_status = false;
-    st.job = git.Job.start(git_ui.runner(ws), &.{ "rev-parse", "--show-toplevel", "--absolute-git-dir" }, dir, null, null, ws, onRevParse) catch {
+    st.job = git.Job.start(git_ui.runner(ws), &.{ "rev-parse", "--show-toplevel", "--absolute-git-dir", "--show-prefix" }, dir, null, null, ws, onRevParse) catch {
         st.unavailable = true;
         return;
     };
@@ -179,13 +179,18 @@ fn onRevParse(ctx: *anyopaque, job: *git.Job) void {
         return;
     };
     var lines = std.mem.tokenizeAny(u8, out, "\r\n");
-    const root = lines.next() orelse "";
+    const toplevel = lines.next() orelse "";
     const git_dir = lines.next() orelse "";
-    if (root.len == 0) {
+    const prefix = std.mem.trimEnd(u8, lines.next() orelse "", "/");
+    if (toplevel.len == 0) {
         st.unavailable = true;
         return;
     }
-    st.root = ws.gpa.dupe(u8, root) catch return;
+    // The root as the workspace spells it (git's is a real path: /private/var
+    // for /var), so open files are recognised as inside it.
+    const dir = std.mem.trimEnd(u8, job.cwd, "/");
+    const spelled = if (prefix.len == 0) dir else if (std.mem.endsWith(u8, dir, prefix) and dir.len > prefix.len and dir[dir.len - prefix.len - 1] == '/') dir[0 .. dir.len - prefix.len - 1] else toplevel;
+    st.root = ws.gpa.dupe(u8, spelled) catch return;
     st.git_dir = ws.gpa.dupe(u8, git_dir) catch null;
     st.stale = true;
     st.generation +%= 1;
