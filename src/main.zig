@@ -466,6 +466,7 @@ test {
     _ = @import("app/settings/ui_state.zig");
     _ = @import("model/lsp/protocol.zig");
     _ = @import("model/lsp/lsp.zig");
+    _ = @import("model/dap/dap.zig");
     _ = @import("model/syntax/languages.zig");
     _ = @import("model/syntax/injection.zig");
     _ = @import("model/git/git.zig");

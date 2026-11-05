@@ -36,6 +36,7 @@ const terminal_ui = @import("terminal_ui.zig");
 const settings_ui = @import("settings_ui.zig");
 const panel_ui = @import("panel_ui.zig");
 const search_ui = @import("search_ui.zig");
+const debug_ui = @import("debug_ui.zig");
 const leader_ui = @import("leader_ui.zig");
 const file_cmd = @import("file_cmd.zig");
 const path_complete = @import("path_complete.zig");
@@ -390,6 +391,8 @@ pub const Workspace = struct {
     lsp_state: lsp_ui.State = .{},
     /// The panel under the editors (terminals, language servers).
     panel: panel_ui.State = .{},
+    /// The debug view of the panel (debug_ui.zig).
+    debug: debug_ui.State = .{},
     git_state: git_ui.State = .{},
     /// Called when the active editor changes (org agenda, etc. may care).
     should_quit: bool = false,
@@ -432,6 +435,7 @@ pub const Workspace = struct {
         git_ui.deinit(self);
         lsp_ui.deinit(self);
         panel_ui.deinit(self);
+        debug_ui.deinit(self);
         if (self.overlay) |o| o.destroy();
         if (self.find) |f| f.destroy();
         for (self.tabs.items) |t| {
@@ -1423,7 +1427,7 @@ pub const Workspace = struct {
                     else => {},
                 };
             },
-            .prompt => if (!org_ui.confirmPrompt(self, tag, q) and !remote_ui.confirmPrompt(self, tag, q) and !session_ui.confirmPrompt(self, tag, q) and !panel_ui.confirmPrompt(self, tag, q) and !git_status_ui.confirmPrompt(self, tag, q) and !file_cmd.confirmPrompt(self, tag, q) and !page_ui.confirmPrompt(self, tag, q)) self.confirmPrompt(@enumFromInt(tag), q),
+            .prompt => if (!org_ui.confirmPrompt(self, tag, q) and !remote_ui.confirmPrompt(self, tag, q) and !session_ui.confirmPrompt(self, tag, q) and !panel_ui.confirmPrompt(self, tag, q) and !debug_ui.confirmPrompt(self, tag, q) and !git_status_ui.confirmPrompt(self, tag, q) and !file_cmd.confirmPrompt(self, tag, q) and !page_ui.confirmPrompt(self, tag, q)) self.confirmPrompt(@enumFromInt(tag), q),
             .locations => if (item) |it| switch (it.payload) {
                 .location => |loc| lsp_ui.confirmLocation(self, loc.path, loc.line, loc.character, loc.utf8),
                 else => {},
@@ -2048,6 +2052,7 @@ pub const Workspace = struct {
 
     pub fn perform(self: *Workspace, action: Action) void {
         if (terminal_ui.perform(self, action)) return;
+        if (debug_ui.perform(self, action)) return;
         switch (action) {
             .cancel => {
                 if (self.menuIsOpen()) {
@@ -3463,6 +3468,7 @@ pub const Workspace = struct {
         git_ui.tick(self);
         git_status_ui.tick(self);
         remote_ui.tick(self);
+        debug_ui.tick(self);
     }
 
     /// Time until something animated (caret blink, status message) changes.

@@ -32,6 +32,8 @@ const editor_mod = @import("../editor/editor.zig");
 const buffer_mod = @import("../../model/text/buffer.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const lsp_mod = @import("../../model/lsp/lsp.zig");
+const debug_ui = @import("debug_ui.zig");
+const keymap_mod = @import("../settings/keymap.zig");
 const ui = @import("../../framework/ui/ui.zig");
 const Palette = @import("../terminal/palette.zig").Palette;
 const TerminalView = @import("../terminal/terminal_view.zig").TerminalView;
@@ -61,7 +63,7 @@ const all_row_h: f32 = 28;
 const row_h: f32 = 42;
 const term_row_h: f32 = 26;
 
-pub const View = enum { terminal, source_control, language_servers, problems, search };
+pub const View = enum { terminal, source_control, language_servers, problems, search, debug };
 
 /// A clickable part of the panel, from the last paint.
 const Hit = union(enum) {
@@ -74,6 +76,8 @@ const Hit = union(enum) {
     /// A row of the server list (null: "All servers").
     server: ?[]const u8,
     new_terminal,
+    /// A debug toolbar button: the action it runs.
+    debug_action: keymap_mod.Action,
     run_command,
     kill_terminal,
     /// A row of the terminal list, and its ×.
@@ -192,6 +196,11 @@ pub fn showSourceControl(ws: *Workspace) void {
     show(ws, .source_control, true);
 }
 
+/// The debug view, shown but not focused (a run began, or Debug ▸ Debug Panel).
+pub fn showDebug(ws: *Workspace) void {
+    show(ws, .debug, false);
+}
+
 /// Shows the log of `server` (null: all servers).
 pub fn showLanguageServers(ws: *Workspace, server: ?[]const u8, focus: bool) void {
     ws.panel.filter = server;
@@ -224,7 +233,7 @@ fn focusPanel(ws: *Workspace) void {
 pub fn viewEditor(ws: *Workspace) ?*Editor {
     const st = &ws.panel;
     return switch (st.view) {
-        .terminal => null,
+        .terminal, .debug => null,
         .source_control => if (st.source_control) |p| p.editor else null,
         .language_servers => st.log,
         .problems => null,
@@ -692,6 +701,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     const tabs = [_]struct { label: []const u8, view: View }{
         .{ .label = "Error List", .view = .problems },
         .{ .label = "Terminal", .view = .terminal },
+        .{ .label = "Debug", .view = .debug },
         .{ .label = "Source Control", .view = .source_control },
         .{ .label = "Language Servers", .view = .language_servers },
         .{ .label = "Search", .view = .search },
@@ -729,6 +739,17 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
             .{ .label = "Open in Editor", .hit = .{ .search_action = .open_in_editor } },
             .{ .label = "Replace All", .hit = .{ .search_action = .replace_all } },
         },
+        .debug => if (ws.debug.debugger) |d| (if (d.isLive())
+            &.{
+                .{ .label = "Stop", .hit = .{ .debug_action = .debug_stop } },
+                .{ .label = "Restart", .hit = .{ .debug_action = .debug_restart } },
+                .{ .label = "Step Out", .hit = .{ .debug_action = .debug_step_out } },
+                .{ .label = "Step Into", .hit = .{ .debug_action = .debug_step_into } },
+                .{ .label = "Step Over", .hit = .{ .debug_action = .debug_step_over } },
+                .{ .label = "Continue", .hit = .{ .debug_action = .debug_start } },
+            }
+        else
+            &.{ .{ .label = "Start", .hit = .{ .debug_action = .debug_start } } }) else &.{},
     };
     for (buttons) |b| {
         const w = @max(28, ctx.text.measure(b.label, ws.fonts.ui_small) + 16);
@@ -753,6 +774,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
             git_status_ui.paintPopup(ws, ctx, body);
             st.scm_rect = body;
         },
+        .debug => debug_ui.paint(ws, ctx, body),
         .language_servers => {
             const list_w = @round(std.math.clamp(r.w * 0.24, 170, 300));
             const list: Rect = .{ .x = body.x, .y = body.y, .w = @min(list_w, body.w), .h = body.h };
@@ -956,6 +978,7 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
             .clear => if (ws.lsp) |l| l.clearLog(),
             .restart => ws.perform(.lsp_restart),
             .server => |name| st.filter = name,
+            .debug_action => |a| ws.perform(a),
             .new_terminal => addTerminal(ws),
             .run_command => promptRunCommand(ws),
             .kill_terminal => if (activeTerminal(ws)) |tv| closeTerminal(ws, tv),
@@ -969,6 +992,7 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
         return true;
     };
     if (st.view == .problems and problems_ui.onMouseDown(ws, m)) return true;
+    if (st.view == .debug and debug_ui.onMouseDown(ws, m)) return true;
     if (st.log_rect.contains(pos.x, pos.y)) if (st.log) |ed| {
         focusPanel(ws);
         ed.onMouseDown(m);
@@ -1009,6 +1033,7 @@ pub fn onScroll(ws: *Workspace, s: platform.ScrollEvent) bool {
     const st = &ws.panel;
     if (!st.visible or !st.rect.contains(s.pos.x, s.pos.y)) return false;
     if (st.view == .problems) problems_ui.onScroll(ws, s);
+    if (st.view == .debug and debug_ui.onScroll(ws, s)) return true;
     if (st.log_rect.contains(s.pos.x, s.pos.y)) if (st.log) |ed| ed.onScroll(s);
     if (st.scm_rect.contains(s.pos.x, s.pos.y)) if (st.source_control) |p| p.editor.onScroll(s);
     if (st.term_rect.contains(s.pos.x, s.pos.y)) if (activeTerminal(ws)) |tv| tv.wheel(s);
@@ -1023,6 +1048,7 @@ pub fn cursorShape(ws: *Workspace, pos: platform.Vec2) ?platform.CursorShape {
     if (st.status_item.contains(pos.x, pos.y)) return .pointer;
     if (!st.visible or !st.rect.contains(pos.x, pos.y)) return null;
     for (st.hits.items) |h| if (h.rect.contains(pos.x, pos.y)) return .pointer;
+    if (st.view == .debug) return debug_ui.cursorShape(ws, pos) orelse .default;
     if (st.log_rect.contains(pos.x, pos.y)) if (st.log) |ed| return ed.cursorShapeAt(pos);
     if (st.scm_rect.contains(pos.x, pos.y)) if (st.source_control) |p| return p.editor.cursorShapeAt(pos);
     if (st.term_rect.contains(pos.x, pos.y)) return .text;

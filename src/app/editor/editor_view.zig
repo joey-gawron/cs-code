@@ -45,6 +45,7 @@ pub fn layout(self: *Editor, bounds: Rect) void {
         gutter_w = @max(digits, 3) * cw + cw * 3;
     }
     gutter_w += blame_view.columnWidth(self);
+    if (hasDebugMargin(self)) gutter_w += cw * 2;
     const minimap_w: f32 = if (settings.show_minimap and !self.plain) @round(@min(120, bounds.w * 0.12)) else 0;
     self.gutter_rect = .{ .x = bounds.x, .y = bounds.y, .w = gutter_w, .h = bounds.h };
     self.minimap_rect = .{ .x = bounds.right() - minimap_w, .y = bounds.y, .w = minimap_w, .h = bounds.h };
@@ -345,6 +346,19 @@ pub fn paint(self: *Editor, scene: *Scene, theme: *const Theme) void {
             scene.fill(.{ .x = self.text_rect.x, .y = rowY(self, d), .w = self.text_rect.w, .h = lh }, theme.line_highlight);
         }
     }
+
+    if (hasDebugMargin(self)) if (!single) {
+        const dbg = self.env.debug.?;
+        var d = vis.first_d;
+        while (d <= vis.last_d) : (d += 1) {
+            const color: Color = switch (dbg.mark(dbg.ctx, self.buffer.path.?, self.segmentAt(d).row)) {
+                .current, .current_breakpoint => debug_current_line,
+                .frame, .frame_breakpoint => debug_frame_line,
+                else => continue,
+            };
+            scene.fill(.{ .x = self.text_rect.x, .y = rowY(self, d), .w = self.text_rect.w, .h = lh }, color);
+        }
+    };
 
     paintSelections(self, scene, theme, vis);
     paintFindHighlights(self, scene, theme, vis);
@@ -689,6 +703,42 @@ fn paintCaret(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRan
     }
 }
 
+const debug_current_line = Color.hexa(0xffee62, 0.22);
+const debug_frame_line = Color.hexa(0x6cc667, 0.16);
+const debug_red = Color.hex(0xe51400);
+
+/// Whether the gutter has the margin for breakpoint glyphs: a file's
+/// editor while a debugger exists.
+fn hasDebugMargin(self: *const Editor) bool {
+    return self.env.debug != null and self.buffer.path != null and !self.plain and self.mode != .single_line;
+}
+
+/// A breakpoint's dot or the stop line's arrow, centred on (cx, cy).
+fn paintDebugMark(scene: *Scene, cx: f32, cy: f32, mark: editor_mod.DebugMark) void {
+    const r: f32 = 5.5;
+    switch (mark) {
+        .none => {},
+        .breakpoint, .current_breakpoint, .frame_breakpoint => scene.quad(.{ .x = cx - r, .y = cy - r, .w = r * 2, .h = r * 2 }, .{ .color = debug_red, .radius = r }),
+        .breakpoint_disabled => scene.quad(.{ .x = cx - r, .y = cy - r, .w = r * 2, .h = r * 2 }, .{ .border_color = Color.hex(0x848484), .border_width = 1.5, .radius = r }),
+        .breakpoint_unverified => scene.quad(.{ .x = cx - r, .y = cy - r, .w = r * 2, .h = r * 2 }, .{ .border_color = debug_red, .border_width = 1.5, .radius = r }),
+        .current, .frame => {},
+    }
+    const arrow: ?Color = switch (mark) {
+        .current, .current_breakpoint => Color.hex(0xffee62),
+        .frame, .frame_breakpoint => Color.hex(0x6cc667),
+        else => null,
+    };
+    if (arrow) |color| {
+        // A right-pointing arrow: a shaft and a head of one-pixel columns.
+        scene.fill(.{ .x = cx - 4, .y = cy - 1.5, .w = 4, .h = 3 }, color);
+        for (0..5) |i| {
+            const t: f32 = @floatFromInt(i);
+            const half = 4.5 - t * 0.9;
+            scene.fill(.{ .x = cx + t - 1, .y = cy - half, .w = 1, .h = half * 2 }, color);
+        }
+    }
+}
+
 fn paintGutter(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRange, caret_rows: *std.AutoHashMapUnmanaged(u32, void)) void {
     const g = self.gutter_rect;
     scene.fill(g, theme.background);
@@ -724,6 +774,10 @@ fn paintGutter(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRa
         _ = self.env.text.drawText(scene, label, self.env.font, g.right() - cw * 2 - w, y + baseline_off, color);
         if (diagnostic_rows.get(row)) |sev| {
             scene.quad(.{ .x = g.x + 4, .y = y + lh / 2 - 3, .w = 6, .h = 6 }, .{ .color = diagnosticColor(theme, sev), .radius = 3 });
+        }
+        if (hasDebugMargin(self)) {
+            const dbg = self.env.debug.?;
+            paintDebugMark(scene, g.x + cw * 1.1, y + lh / 2, dbg.mark(dbg.ctx, self.buffer.path.?, row));
         }
         // Fold markers, as in cs-code: a boxed - on every foldable line, a boxed + on a folded one.
         const folded = self.display.folds.isFoldHeader(self.buffer, row);
@@ -943,6 +997,12 @@ pub fn onMouseDown(self: *Editor, ev: platform.MouseEvent) void {
     if (ev.mods.command()) self.drag_base.appendSlice(self.gpa, self.selections.items) catch {};
 
     if (self.gutter_rect.contains(pos.x, pos.y) and !self.plain) {
+        // The leftmost margin sets and clears breakpoints.
+        if (hasDebugMargin(self) and pos.x < self.gutter_rect.x + self.charWidth() * 2) {
+            const dbg = self.env.debug.?;
+            dbg.toggle(dbg.ctx, self.buffer.path.?, rowAt(self, pos.y));
+            return;
+        }
         // The rightmost gutter column toggles folds.
         if (pos.x >= self.gutter_rect.right() - self.charWidth() * 2) {
             if (self.toggleFoldAt(rowAt(self, pos.y))) return;

@@ -80,6 +80,28 @@ pub const Clipboard = struct {
 };
 
 /// Services shared by every editor (owned by the app).
+/// What the gutter shows beside a row of a file being debugged.
+pub const DebugMark = enum {
+    none,
+    breakpoint,
+    breakpoint_disabled,
+    /// The adapter did not accept it.
+    breakpoint_unverified,
+    /// The line the program is stopped at (the top frame).
+    current,
+    current_breakpoint,
+    /// The line of another frame of the call stack.
+    frame,
+    frame_breakpoint,
+};
+
+/// The debugger's answers for the editors' gutters (debugger.zig).
+pub const DebugHook = struct {
+    ctx: *anyopaque,
+    mark: *const fn (ctx: *anyopaque, path: []const u8, row: u32) DebugMark,
+    toggle: *const fn (ctx: *anyopaque, path: []const u8, row: u32) void,
+};
+
 pub const Env = struct {
     gpa: Allocator,
     text: *text_mod.TextSystem,
@@ -93,6 +115,8 @@ pub const Env = struct {
     /// Grammars, for code embedded in custom-highlighted buffers (org
     /// source blocks); null leaves it plain.
     registry: ?*syntax_mod.Registry = null,
+    /// Breakpoint glyphs and the current line; null shows none.
+    debug: ?DebugHook = null,
 };
 
 pub const Motion = enum {
