@@ -59,10 +59,10 @@ pub fn tick(ws: *Workspace) void {
 
 pub fn runCommand(ws: *Workspace, cmd: org.Command) void {
     switch (cmd) {
-        .schedule => ws.openPrompt("Schedule (2026-10-24, +3d, fri, tomorrow):", @intFromEnum(PromptKind.schedule), ""),
-        .deadline => ws.openPrompt("Deadline (2026-10-24, +3d, fri, tomorrow):", @intFromEnum(PromptKind.deadline), ""),
-        .timestamp => ws.openPrompt("Timestamp:", @intFromEnum(PromptKind.timestamp), "today"),
-        .timestamp_inactive => ws.openPrompt("Inactive timestamp:", @intFromEnum(PromptKind.timestamp_inactive), "today"),
+        .schedule => promptPlanning(ws, .schedule),
+        .deadline => promptPlanning(ws, .deadline),
+        .timestamp => ws.openPrompt("Timestamp (fri, +3d, nov 20 14:00, 2pm):", @intFromEnum(PromptKind.timestamp), "today"),
+        .timestamp_inactive => ws.openPrompt("Inactive timestamp (fri, +3d, nov 20 14:00, 2pm):", @intFromEnum(PromptKind.timestamp_inactive), "today"),
         .open_link => openLink(ws),
         .agenda => openAgenda(ws, .week),
         .todo_list => openAgenda(ws, .todo),
@@ -110,18 +110,37 @@ pub fn confirmPrompt(ws: *Workspace, tag: u32, input: []const u8) bool {
         if (org.setTags(ed, input)) ed.afterCommand(false);
         return true;
     }
-    const d = date.Date.parseHuman(input, date.Date.today()) orelse {
+    // An emptied Schedule / Deadline prompt removes the date it had.
+    if ((kind == .schedule or kind == .deadline) and std.mem.trim(u8, input, " ").len == 0) {
+        if (org.removePlanning(ed, planningKeyword(kind))) ed.afterCommand(false);
+        return true;
+    }
+    const d = date.parseInput(input, date.Date.today()) orelse {
         ws.setStatus("Can't understand date: {s}", .{input});
         return true;
     };
     switch (kind) {
-        .schedule => org.setPlanning(ed, "SCHEDULED:", d),
-        .deadline => org.setPlanning(ed, "DEADLINE:", d),
+        .schedule, .deadline => org.setPlanning(ed, planningKeyword(kind), d),
         .timestamp => org.insertTimestamp(ed, d, true),
         .timestamp_inactive => org.insertTimestamp(ed, d, false),
         else => unreachable,
     }
     return true;
+}
+
+fn planningKeyword(kind: PromptKind) []const u8 {
+    return if (kind == .schedule) "SCHEDULED:" else "DEADLINE:";
+}
+
+/// Schedule / Deadline: org's date prompt, starting from the date the entry has.
+fn promptPlanning(ws: *Workspace, kind: PromptKind) void {
+    const label = if (kind == .schedule)
+        "Schedule (fri, +3d, nov 20, 14:00, fri 10:00 +1w; empty removes):"
+    else
+        "Deadline (fri, +3d, nov 20, 14:00, fri -3d; empty removes):";
+    var buf: [96]u8 = undefined;
+    const current = if (ws.activeEditor()) |ed| org.planningValue(ed, planningKeyword(kind), &buf) orelse "" else "";
+    ws.openPrompt(label, @intFromEnum(kind), current);
 }
 
 /// C-c C-q: the heading's tags, edited in a prompt that lists the file's.

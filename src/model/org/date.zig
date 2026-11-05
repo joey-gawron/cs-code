@@ -217,6 +217,188 @@ fn parseTime(s: []const u8) ?Time {
     return .{ .hour = h, .minute = m };
 }
 
+/// What the date prompt reads: a date, optionally a time or a time range and a
+/// repeater and warning period after it ("fri 10:00-11:30 +1w -3d").
+pub const Input = struct {
+    date: Date,
+    time: ?Time = null,
+    end_time: ?Time = null,
+    suffix_buf: [32]u8 = undefined,
+    suffix_len: u8 = 0,
+
+    pub fn suffix(self: *const Input) []const u8 {
+        return self.suffix_buf[0..self.suffix_len];
+    }
+
+    /// The inside of a timestamp: "2026-11-20 Fri 10:00-11:30 +1w -3d".
+    pub fn format(self: *const Input, buf: []u8) []const u8 {
+        var w: std.Io.Writer = .fixed(buf);
+        var dbuf: [32]u8 = undefined;
+        w.writeAll(self.date.format(&dbuf)) catch return "";
+        if (self.time) |t| {
+            w.print(" {d:0>2}:{d:0>2}", .{ t.hour, t.minute }) catch return "";
+            if (self.end_time) |e| w.print("-{d:0>2}:{d:0>2}", .{ e.hour, e.minute }) catch return "";
+        }
+        if (self.suffix_len > 0) w.print(" {s}", .{self.suffix()}) catch return "";
+        return w.buffered();
+    }
+};
+
+const Clock = struct { time: Time, pm: ?bool };
+
+/// One clock time: "14:00", "10:30am", "2pm" (a bare number is not a time).
+/// `inherit` gives the am/pm of the other end of a range.
+fn parseClock(tok: []const u8, inherit: ?bool) ?Clock {
+    var body = tok;
+    var pm: ?bool = inherit;
+    if (std.ascii.endsWithIgnoreCase(body, "am")) {
+        pm = false;
+        body = body[0 .. body.len - 2];
+    } else if (std.ascii.endsWithIgnoreCase(body, "pm")) {
+        pm = true;
+        body = body[0 .. body.len - 2];
+    } else if (std.mem.indexOfScalar(u8, body, ':') == null) return null;
+    if (body.len == 0) return null;
+    var hour: u8 = undefined;
+    var minute: u8 = 0;
+    if (std.mem.indexOfScalar(u8, body, ':')) |colon| {
+        hour = std.fmt.parseInt(u8, body[0..colon], 10) catch return null;
+        minute = std.fmt.parseInt(u8, body[colon + 1 ..], 10) catch return null;
+    } else hour = std.fmt.parseInt(u8, body, 10) catch return null;
+    if (minute > 59 or hour > 24) return null;
+    if (pm) |is_pm| {
+        if (hour == 0 or hour > 12) return null;
+        hour = if (is_pm) (if (hour == 12) 12 else hour + 12) else (if (hour == 12) 0 else hour);
+    }
+    return .{ .time = .{ .hour = hour, .minute = minute }, .pm = pm };
+}
+
+/// A time or a range of two ("10:00-11:30", "9-11am").
+fn parseClockToken(tok: []const u8) ?struct { start: Time, end: ?Time } {
+    if (tok.len == 0 or !std.ascii.isDigit(tok[0])) return null;
+    if (std.mem.indexOfScalar(u8, tok, '-')) |dash| {
+        const right = parseClock(tok[dash + 1 ..], null) orelse return null;
+        const left_text = tok[0..dash];
+        // "9-11am": a bare left end takes the right end's am/pm.
+        const bare = std.mem.indexOfScalar(u8, left_text, ':') == null and
+            !std.ascii.endsWithIgnoreCase(left_text, "am") and !std.ascii.endsWithIgnoreCase(left_text, "pm");
+        const left = if (bare) parseClockPlain(left_text, right.pm) else parseClock(left_text, null);
+        return .{ .start = (left orelse return null).time, .end = right.time };
+    }
+    const one = parseClock(tok, null) orelse return null;
+    return .{ .start = one.time, .end = null };
+}
+
+fn parseClockPlain(digits: []const u8, pm: ?bool) ?Clock {
+    const hour = std.fmt.parseInt(u8, digits, 10) catch return null;
+    if (hour == 0 or hour > 12) return null;
+    const is_pm = pm orelse return null;
+    return .{ .time = .{ .hour = if (is_pm) (if (hour == 12) 12 else hour + 12) else (if (hour == 12) 0 else hour), .minute = 0 }, .pm = pm };
+}
+
+fn monthIndex(tok: []const u8) ?u8 {
+    if (tok.len < 3) return null;
+    for (month_names, 0..) |name, i| if (std.ascii.startsWithIgnoreCase(name, tok)) return @intCast(i + 1);
+    return null;
+}
+
+/// A repeater (+1w, ++1m, .+2d) or a warning period (-3d).
+pub fn isSuffixToken(tok: []const u8) bool {
+    var rest = tok;
+    if (std.mem.startsWith(u8, rest, "++") or std.mem.startsWith(u8, rest, ".+")) {
+        rest = rest[2..];
+    } else if (rest.len > 0 and (rest[0] == '+' or rest[0] == '-')) rest = rest[1..] else return false;
+    if (rest.len < 2) return false;
+    for (rest[0 .. rest.len - 1]) |ch| if (!std.ascii.isDigit(ch)) return false;
+    return std.mem.indexOfScalar(u8, "dwmy", rest[rest.len - 1]) != null;
+}
+
+/// "+2fri": the second such weekday from `base`.
+fn parseNthWeekday(tok: []const u8, base: Date) ?Date {
+    if (tok.len < 5 or tok[0] != '+') return null;
+    var i: usize = 1;
+    while (i < tok.len and std.ascii.isDigit(tok[i])) i += 1;
+    if (i == 1 or i >= tok.len) return null;
+    const n = std.fmt.parseInt(i64, tok[1..i], 10) catch return null;
+    if (n < 1) return null;
+    const first = Date.parseHuman(tok[i..], base) orelse return null;
+    if (first.toDays() == base.toDays() and tok[i..].len < 3) return null;
+    // Only weekday names count here.
+    for (day_names) |name| if (tok.len - i >= 3 and std.ascii.startsWithIgnoreCase(name, tok[i..])) return first.addDays((n - 1) * 7);
+    return null;
+}
+
+/// Org's date prompt: a date as `Date.parseHuman` reads it, plus `11/20`,
+/// `nov 20`, `20 nov 2027`, `+2fri`, a time anywhere (`14:00`, `2pm`,
+/// `9-11am`, `10:00-11:30`) and, after the date, a repeater and a warning
+/// period. An empty input is `base`.
+pub fn parseInput(input: []const u8, base: Date) ?Input {
+    var result: Input = .{ .date = base };
+    var date_toks: [4][]const u8 = undefined;
+    var n_date: usize = 0;
+    var it = std.mem.tokenizeScalar(u8, input, ' ');
+    var suffix_w: std.Io.Writer = .fixed(&result.suffix_buf);
+    var seen_time = false;
+    while (it.next()) |tok| {
+        if (parseClockToken(tok)) |clock| {
+            if (seen_time) return null;
+            seen_time = true;
+            result.time = clock.start;
+            result.end_time = clock.end;
+        } else if (n_date > 0 and isSuffixToken(tok)) {
+            if (result.suffix_len > 0) suffix_w.writeByte(' ') catch return null;
+            suffix_w.writeAll(tok) catch return null;
+            result.suffix_len = @intCast(suffix_w.buffered().len);
+        } else {
+            if (n_date == date_toks.len) return null;
+            date_toks[n_date] = tok;
+            n_date += 1;
+        }
+    }
+    if (n_date == 0) return result;
+    const toks = date_toks[0..n_date];
+
+    // A month name with a day and maybe a year, in either order.
+    var month: ?u8 = null;
+    var day: ?u8 = null;
+    var year: ?i32 = null;
+    for (toks) |tok| {
+        if (monthIndex(tok)) |m| {
+            if (month != null) return null;
+            month = m;
+        } else if (std.fmt.parseInt(u16, tok, 10)) |num| {
+            if (num >= 1000) year = num else if (num >= 1 and num <= 31 and day == null) day = @intCast(num) else return null;
+        } else |_| {
+            month = null;
+            day = null;
+            year = null;
+            break;
+        }
+    }
+    if (month) |m| {
+        const d = day orelse return null;
+        var candidate: Date = .{ .year = year orelse base.year, .month = m, .day = d };
+        if (d > daysInMonth(candidate.year, m)) return null;
+        if (year == null and candidate.toDays() < base.toDays()) candidate.year += 1;
+        result.date = candidate;
+        return result;
+    }
+    if (toks.len != 1) return null;
+    const tok = toks[0];
+    // 11/20 (this year, or next when past).
+    if (std.mem.indexOfScalar(u8, tok, '/')) |slash| {
+        const m = std.fmt.parseInt(u8, tok[0..slash], 10) catch return null;
+        const d = std.fmt.parseInt(u8, tok[slash + 1 ..], 10) catch return null;
+        if (m < 1 or m > 12 or d < 1 or d > daysInMonth(base.year, m)) return null;
+        var candidate: Date = .{ .year = base.year, .month = m, .day = d };
+        if (candidate.toDays() < base.toDays()) candidate.year += 1;
+        result.date = candidate;
+        return result;
+    }
+    result.date = parseNthWeekday(tok, base) orelse Date.parseHuman(tok, base) orelse return null;
+    return result;
+}
+
 /// Parses a timestamp starting at text[at] ('<' or '['), with the second
 /// half of a range (`--<...>`) if one follows.
 pub fn parseTimestamp(text: []const u8, at: usize) ?Timestamp {
@@ -336,4 +518,41 @@ test "warning periods" {
     try std.testing.expectEqual(@as(u8, 10), t.time.?.hour);
     try std.testing.expectEqual(@as(?u16, 14), parseTimestamp("<2026-10-21 Wed +1w -2w>", 0).?.warn_days);
     try std.testing.expect(parseTimestamp("<2026-10-21 Wed>", 0).?.warn_days == null);
+}
+
+test "the date prompt" {
+    const base: Date = .{ .year = 2026, .month = 11, .day = 5 }; // a Thursday
+    const eq = struct {
+        fn f(want: []const u8, input: []const u8) !void {
+            var buf: [64]u8 = undefined;
+            const got = parseInput(input, .{ .year = 2026, .month = 11, .day = 5 }) orelse return error.Unparsed;
+            try std.testing.expectEqualStrings(want, got.format(&buf));
+        }
+    }.f;
+    try eq("2026-11-05 Thu", "");
+    try eq("2026-11-05 Thu", ".");
+    try eq("2026-11-06 Fri", "tomorrow");
+    try eq("2026-11-08 Sun", "+3d");
+    try eq("2026-11-20 Fri", "2026-11-20");
+    try eq("2026-11-20 Fri", "11/20");
+    try eq("2027-01-04 Mon", "1/4");
+    try eq("2026-11-20 Fri", "nov 20");
+    try eq("2026-11-20 Fri", "20 nov");
+    try eq("2027-11-20 Sat", "20 nov 2027");
+    try eq("2026-11-20 Fri", "20");
+    try eq("2026-11-13 Fri", "+2fri");
+    try eq("2026-11-06 Fri 14:00", "fri 14:00");
+    try eq("2026-11-06 Fri 14:00", "14:00 fri");
+    try eq("2026-11-05 Thu 14:00", "2pm");
+    try eq("2026-11-05 Thu 10:30", "10:30am");
+    try eq("2026-11-05 Thu 09:00-11:00", "9-11am");
+    try eq("2026-11-05 Thu 10:00-11:30", "10:00-11:30");
+    try eq("2026-11-06 Fri 10:00 +1w", "fri 10:00 +1w");
+    try eq("2026-11-06 Fri ++1m", "fri ++1m");
+    try eq("2026-11-06 Fri .+2d -3d", "fri .+2d -3d");
+    // A leading +N is a relative date; after a date it is a repeater.
+    try eq("2026-11-12 Thu", "+1w");
+    try std.testing.expect(parseInput("blah", base) == null);
+    try std.testing.expect(parseInput("nov 40", base) == null);
+    try std.testing.expect(parseInput("14:00 15:00", base) == null);
 }

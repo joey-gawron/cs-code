@@ -501,12 +501,61 @@ fn updateCookies(ed: *Editor, row: u32) void {
     }
 }
 
-/// Sets SCHEDULED / DEADLINE on the heading at the caret.
-pub fn setPlanning(ed: *Editor, which: []const u8, d: date.Date) void {
+/// The repeater and warning period of the timestamp in `stamp` ("+1w -3d").
+fn suffixOf(stamp: []const u8, buf: []u8) []const u8 {
+    const ts = date.parseTimestamp(stamp, 0) orelse return "";
+    var w: std.Io.Writer = .fixed(buf);
+    var it = std.mem.tokenizeScalar(u8, stamp[1 .. ts.end - 1], ' ');
+    _ = it.next(); // the date
+    while (it.next()) |tok| if (date.isSuffixToken(tok)) {
+        if (w.buffered().len > 0) w.writeByte(' ') catch break;
+        w.writeAll(tok) catch break;
+    };
+    return w.buffered();
+}
+
+/// The row below the heading at `hrow` when it is a planning line, and
+/// where `which` ("SCHEDULED:") sits on it.
+fn planningSlot(line: []const u8, which: []const u8) ?struct { start: usize, ts: date.Timestamp } {
+    const p = std.mem.indexOf(u8, line, which) orelse return null;
+    var j = p + which.len;
+    while (j < line.len and line[j] == ' ') j += 1;
+    const ts = date.parseTimestamp(line, j) orelse return null;
+    return .{ .start = p, .ts = ts };
+}
+
+/// The inside of the heading's `which` timestamp ("2026-11-05 Thu 10:00 +1w"),
+/// for the date prompt to start from.
+pub fn planningValue(ed: *Editor, which: []const u8, buf: []u8) ?[]const u8 {
+    const hrow = headingRowFor(ed, currentRow(ed)) orelse return null;
+    if (hrow + 1 >= ed.buffer.lineCount()) return null;
+    const line = lineSlice(ed, hrow + 1);
+    const slot = planningSlot(line, which) orelse return null;
+    const inner = line[slot.ts.start + 1 .. slot.ts.end - 1];
+    if (inner.len > buf.len) return null;
+    @memcpy(buf[0..inner.len], inner);
+    return buf[0..inner.len];
+}
+
+/// Sets the heading's SCHEDULED / DEADLINE (`which` includes the colon). A
+/// repeater and warning the old date had stay unless the new input names
+/// its own.
+pub fn setPlanning(ed: *Editor, which: []const u8, input: date.Input) void {
     const hrow = headingRowFor(ed, currentRow(ed)) orelse return;
-    var dbuf: [32]u8 = undefined;
-    var tbuf: [64]u8 = undefined;
-    const stamp = std.fmt.bufPrint(&tbuf, "{s} <{s}>", .{ which, d.format(&dbuf) }) catch return;
+    var kept_buf: [32]u8 = undefined;
+    var kept: []const u8 = "";
+    if (input.suffix_len == 0 and hrow + 1 < ed.buffer.lineCount()) {
+        const line = lineSlice(ed, hrow + 1);
+        if (planningSlot(line, which)) |slot| kept = suffixOf(line[slot.ts.start..slot.ts.end], &kept_buf);
+    }
+    var with_suffix = input;
+    if (kept.len > 0) {
+        @memcpy(with_suffix.suffix_buf[0..kept.len], kept);
+        with_suffix.suffix_len = @intCast(kept.len);
+    }
+    var ibuf: [96]u8 = undefined;
+    var tbuf: [128]u8 = undefined;
+    const stamp = std.fmt.bufPrint(&tbuf, "{s} <{s}>", .{ which, with_suffix.format(&ibuf) }) catch return;
     const level = ed.orgHeadingLevel(hrow).?;
     if (hrow + 1 < ed.buffer.lineCount()) {
         const pline = ed.gpa.dupe(u8, lineSlice(ed, hrow + 1)) catch return;
@@ -520,13 +569,13 @@ pub fn setPlanning(ed: *Editor, which: []const u8, d: date.Date) void {
                 replaceInLine(ed, hrow + 1, p, ts.end, stamp);
             } else {
                 const end = std.mem.trimEnd(u8, pline, " ").len;
-                var buf: [80]u8 = undefined;
+                var buf: [160]u8 = undefined;
                 replaceInLine(ed, hrow + 1, end, end, std.fmt.bufPrint(&buf, " {s}", .{stamp}) catch return);
             }
             return;
         }
     }
-    var buf: [96]u8 = undefined;
+    var buf: [192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.writeAll("\n") catch {};
     w.splatByteAll(' ', level + 1) catch {};
@@ -534,6 +583,26 @@ pub fn setPlanning(ed: *Editor, which: []const u8, d: date.Date) void {
     const at = ed.buffer.lineEnd(hrow);
     var edits = [_]editor_mod.Edit{.{ .start = at, .end = at, .text = w.buffered() }};
     ed.commitTransform(&edits, .other);
+}
+
+/// Removes the heading's SCHEDULED / DEADLINE (and the planning line when
+/// nothing else is on it). False when it has none.
+pub fn removePlanning(ed: *Editor, which: []const u8) bool {
+    const hrow = headingRowFor(ed, currentRow(ed)) orelse return false;
+    if (hrow + 1 >= ed.buffer.lineCount()) return false;
+    const pline = ed.gpa.dupe(u8, lineSlice(ed, hrow + 1)) catch return false;
+    defer ed.gpa.free(pline);
+    const slot = planningSlot(pline, which) orelse return false;
+    var end = slot.ts.end;
+    while (end < pline.len and pline[end] == ' ') end += 1;
+    const rest_empty = std.mem.trim(u8, pline[0..slot.start], " \t").len == 0 and std.mem.trim(u8, pline[end..], " \t").len == 0;
+    ed.buffer.beginGroup();
+    defer ed.buffer.endGroup();
+    if (rest_empty) {
+        var edits = [_]editor_mod.Edit{.{ .start = ed.buffer.lineEnd(hrow), .end = ed.buffer.lineEnd(hrow + 1), .text = "" }};
+        ed.commitTransform(&edits, .other);
+    } else replaceInLine(ed, hrow + 1, slot.start, end, "");
+    return true;
 }
 
 // ---- Tables ---------------------------------------------------------------
@@ -982,10 +1051,10 @@ pub fn setTags(ed: *Editor, input: []const u8) bool {
     return true;
 }
 
-pub fn insertTimestamp(ed: *Editor, d: date.Date, active: bool) void {
-    var dbuf: [32]u8 = undefined;
-    var buf: [48]u8 = undefined;
-    const text = std.fmt.bufPrint(&buf, "{c}{s}{c}", .{ @as(u8, if (active) '<' else '['), d.format(&dbuf), @as(u8, if (active) '>' else ']') }) catch return;
+pub fn insertTimestamp(ed: *Editor, input: date.Input, active: bool) void {
+    var ibuf: [96]u8 = undefined;
+    var buf: [128]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "{c}{s}{c}", .{ @as(u8, if (active) '<' else '['), input.format(&ibuf), @as(u8, if (active) '>' else ']') }) catch return;
     ed.insertText(text);
 }
 
@@ -1398,4 +1467,40 @@ test "inserting headings keeps the level" {
     defer t.deinit(gpa);
     try std.testing.expect(insertHeading(t.ed, true, true));
     try t.expectText("** A\nbody\n** TODO \n** B\n");
+}
+
+test "schedule, deadline and timestamps take the date prompt's times and repeaters" {
+    const gpa = std.testing.allocator;
+    const base: date.Date = .{ .year = 2026, .month = 11, .day = 5 };
+    const t = try TestEditor.init(gpa, "* TODO A\nbody\n", 0);
+    defer t.deinit(gpa);
+    setPlanning(t.ed, "SCHEDULED:", date.parseInput("fri 10:00 +1w", base).?);
+    try t.expectText("* TODO A\n  SCHEDULED: <2026-11-06 Fri 10:00 +1w>\nbody\n");
+    // A new date keeps the old repeater.
+    setPlanning(t.ed, "SCHEDULED:", date.parseInput("nov 20", base).?);
+    try t.expectText("* TODO A\n  SCHEDULED: <2026-11-20 Fri +1w>\nbody\n");
+    // The deadline joins the planning line.
+    setPlanning(t.ed, "DEADLINE:", date.parseInput("+2w -3d", base).?);
+    try t.expectText("* TODO A\n  SCHEDULED: <2026-11-20 Fri +1w> DEADLINE: <2026-11-19 Thu -3d>\nbody\n");
+
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("2026-11-20 Fri +1w", planningValue(t.ed, "SCHEDULED:", &buf).?);
+    try std.testing.expect(planningValue(t.ed, "CLOSED:", &buf) == null);
+
+    // Removing one leaves the other; removing the last takes the line.
+    try std.testing.expect(removePlanning(t.ed, "SCHEDULED:"));
+    try t.expectText("* TODO A\n  DEADLINE: <2026-11-19 Thu -3d>\nbody\n");
+    try std.testing.expect(removePlanning(t.ed, "DEADLINE:"));
+    try t.expectText("* TODO A\nbody\n");
+    try std.testing.expect(!removePlanning(t.ed, "DEADLINE:"));
+}
+
+test "inserting timestamps, active and inactive" {
+    const gpa = std.testing.allocator;
+    const base: date.Date = .{ .year = 2026, .month = 11, .day = 5 };
+    const t = try TestEditor.init(gpa, "x\n", 0);
+    defer t.deinit(gpa);
+    insertTimestamp(t.ed, date.parseInput("2pm", base).?, true);
+    insertTimestamp(t.ed, date.parseInput("tomorrow", base).?, false);
+    try t.expectText("<2026-11-05 Thu 14:00>[2026-11-06 Fri]x\n");
 }
