@@ -19,6 +19,7 @@ const ui = @import("../../framework/ui/ui.zig");
 
 const Allocator = std.mem.Allocator;
 const Workspace = workspace_mod.Workspace;
+const scm_ui = @import("scm_ui.zig");
 const Editor = editor_mod.Editor;
 const Action = keymap_mod.Action;
 const Agenda = agenda_mod.Agenda;
@@ -26,7 +27,7 @@ const Item = agenda_mod.Item;
 const Rect = scene_mod.Rect;
 const Color = scene_mod.Color;
 
-pub const Tab = enum { explorer, agenda };
+pub const Tab = enum { explorer, agenda, scm };
 
 /// The tab strip under the side bar's content.
 pub const tab_h: f32 = 26;
@@ -171,6 +172,18 @@ pub fn selectedItem(ws: *Workspace) ?Item {
 // ---- Painting -----------------------------------------------------------------
 
 /// The bottom tab strip, on both tabs.
+const tab_pad: f32 = 22;
+
+const TabLabel = struct { tab: Tab, text: []const u8 };
+
+fn tabLabels(ws: *Workspace) [3]TabLabel {
+    return .{
+        .{ .tab = .explorer, .text = if (ws.project != null) "Explorer" else "Open Files" },
+        .{ .tab = .agenda, .text = "Org Agenda" },
+        .{ .tab = .scm, .text = "Source Control" },
+    };
+}
+
 pub fn paintTabs(ws: *Workspace, ctx: *const ui.Ctx) void {
     const theme = ctx.theme;
     const scene = ctx.scene;
@@ -179,13 +192,10 @@ pub fn paintTabs(ws: *Workspace, ctx: *const ui.Ctx) void {
     const strip: Rect = .{ .x = sb.x + 1, .y = sb.bottom() - tab_h, .w = sb.w - 1, .h = tab_h };
     scene.fill(strip, theme.tabbar_background);
     scene.fill(.{ .x = strip.x, .y = strip.y, .w = strip.w, .h = 1 }, theme.tab_separator);
-    const labels = [_]struct { tab: Tab, text: []const u8 }{
-        .{ .tab = .explorer, .text = if (ws.project != null) "Explorer" else "Open Files" },
-        .{ .tab = .agenda, .text = "Org Agenda" },
-    };
+    const labels = tabLabels(ws);
     var x = strip.x;
     for (labels) |l| {
-        const w = ctx.text.measure(l.text, ws.fonts.ui) + 26;
+        const w = ctx.text.measure(l.text, ws.fonts.ui) + tab_pad;
         const r: Rect = .{ .x = x, .y = strip.y, .w = w, .h = tab_h };
         const active = st.tab == l.tab;
         if (active) {
@@ -588,10 +598,18 @@ pub fn handleEvent(ws: *Workspace, ev: platform.Event) bool {
 fn tabClick(ws: *Workspace, m: platform.MouseEvent) bool {
     if (m.button != .left) return true;
     const st = &ws.agenda;
-    const explorer_w = ws.env.text.measure(if (ws.project != null) "Explorer" else "Open Files", ws.fonts.ui) + 26;
     const x = m.pos.x - (ws.sidebar_rect.x + 1);
-    st.tab = if (x < explorer_w) .explorer else .agenda;
+    var edge: f32 = 0;
+    st.tab = .scm;
+    for (tabLabels(ws)) |l| {
+        edge += ws.env.text.measure(l.text, ws.fonts.ui) + tab_pad;
+        if (x < edge) {
+            st.tab = l.tab;
+            break;
+        }
+    }
     st.focused = st.tab == .agenda;
+    if (st.tab == .scm) scm_ui.onShown(ws);
     if (st.tab == .agenda) {
         ws.sidebar_width = @max(ws.sidebar_width, min_width);
         _ = ensure(ws);

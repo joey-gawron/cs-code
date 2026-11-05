@@ -149,6 +149,7 @@ const base = [_]Command{
     .{ .caption = "LSP: Restart Servers", .action = .lsp_restart },
     .{ .caption = "LSP: Show Language Server Status", .action = .lsp_show_status },
     .{ .caption = "LSP: Clear Log", .action = .lsp_clear_log },
+    .{ .caption = "View: Show Source Control", .action = .scm_show },
     .{ .caption = "Git: Show Status", .action = .git_status },
     .{ .caption = "Git: Toggle Blame", .action = .git_toggle_blame },
     .{ .caption = "Git: Toggle Inline Blame", .action = .git_toggle_inline_blame },

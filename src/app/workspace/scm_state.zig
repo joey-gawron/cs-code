@@ -17,6 +17,7 @@ const rpath = @import("../../model/remote/path.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const Color = @import("../../framework/gpu/scene.zig").Color;
 const theme_mod = @import("../../framework/ui/theme.zig");
+const scm_ui = @import("scm_ui.zig");
 
 const Allocator = std.mem.Allocator;
 const Workspace = workspace_mod.Workspace;
@@ -57,6 +58,7 @@ const Op = struct {
     job: *git.Job,
     label: []u8,
     done: []u8,
+    clear_message: bool,
 };
 
 pub const State = struct {
@@ -82,6 +84,8 @@ pub const State = struct {
     busy: ?[]const u8 = null,
     /// The commit message being written in the dock.
     message: std.ArrayList(u8) = .empty,
+    /// The dock's own state (scm_ui.zig).
+    ui: scm_ui.Ui = .{},
 
     pub fn deinitState(self: *State, gpa: Allocator) void {
         if (self.job) |j| j.detach();
@@ -101,6 +105,7 @@ pub const State = struct {
         if (self.root) |d| gpa.free(d);
         if (self.git_dir) |d| gpa.free(d);
         self.message.deinit(gpa);
+        self.ui.deinitUi(gpa);
     }
 };
 
@@ -399,6 +404,8 @@ pub const RunOptions = struct {
     done: []const u8 = "",
     /// Network commands: git may not prompt on a terminal or open an editor.
     batch: bool = false,
+    /// The commit message box is emptied when it succeeds.
+    clear_message: bool = false,
 };
 
 /// Starts `git argv...` in the repository; when it ends the status is
@@ -408,7 +415,7 @@ pub fn run(ws: *Workspace, argv: []const []const u8, o: RunOptions) void {
     const root = st.root orelse return;
     const gpa = ws.gpa;
     const op = gpa.create(Op) catch return;
-    op.* = .{ .ws = ws, .job = undefined, .label = gpa.dupe(u8, o.label) catch &.{}, .done = gpa.dupe(u8, o.done) catch &.{} };
+    op.* = .{ .ws = ws, .job = undefined, .label = gpa.dupe(u8, o.label) catch &.{}, .done = gpa.dupe(u8, o.done) catch &.{}, .clear_message = o.clear_message };
     op.job = git.Job.startWith(git_ui.runner(ws), argv, root, .{ .input = o.input, .capture = true, .batch = o.batch }, null, op, onOp) catch |err| {
         gpa.free(op.label);
         gpa.free(op.done);
@@ -443,8 +450,13 @@ fn onOp(ctx: *anyopaque, job: *git.Job) void {
     if (job.failed or job.output == null) {
         const msg = errorLine(job);
         ws.setStatus("Git: {s}", .{msg});
-    } else if (op.done.len > 0) {
-        ws.setStatus("{s}", .{op.done});
+    } else {
+        if (op.clear_message) {
+            const st = state(ws);
+            st.message.clearRetainingCapacity();
+            st.ui.caret = 0;
+        }
+        if (op.done.len > 0) ws.setStatus("{s}", .{op.done});
     }
     const st = state(ws);
     st.stale = true;

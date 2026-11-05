@@ -35,6 +35,7 @@ const groups = @import("groups.zig");
 const terminal_ui = @import("terminal_ui.zig");
 const settings_ui = @import("settings_ui.zig");
 const scm_state = @import("scm_state.zig");
+const scm_ui = @import("scm_ui.zig");
 const panel_ui = @import("panel_ui.zig");
 const search_ui = @import("search_ui.zig");
 const debug_ui = @import("debug_ui.zig");
@@ -1819,6 +1820,7 @@ pub const Workspace = struct {
         };
         if (ev == .mouse_down and self.restOfSidebarToggle(ev.mouse_down)) return;
         if (agenda_ui.handleEvent(self, ev)) return;
+        if (scm_ui.handleEvent(self, ev)) return;
         if (page_ui.handleEvent(self, ev)) return;
         if (settings_ui.handleEvent(self, ev)) return;
         if (terminal_ui.handleEvent(self, ev)) return;
@@ -2292,6 +2294,7 @@ pub const Workspace = struct {
             .lsp_list_diagnostics => lsp_ui.listDiagnostics(self),
             .git_toggle_blame, .git_toggle_inline_blame, .git_show_commit, .git_copy_commit_hash => git_ui.perform(self, action),
             .git_status => git_status_ui.open(self),
+            .scm_show => scm_ui.show(self),
             .lsp_restart => if (self.lsp) |l| {
                 l.restartAll();
                 for (self.buffers.items) |b| l.openBuffer(b);
@@ -3184,7 +3187,11 @@ pub const Workspace = struct {
         ctx.closeIcon(close.x + close.w / 2, close.y + close.h / 2, 8, theme.sidebar_foreground);
         const title_y = sb.y;
         defer agenda_ui.paintTabs(self, ctx);
-        _ = ctx.label(.{ .x = sb.x + 8, .y = title_y, .w = 120, .h = 30 }, if (self.agenda.tab == .agenda) "Org Agenda" else if (self.project != null) "Explorer" else "Open Files", self.fonts.ui, theme.sidebar_foreground);
+        _ = ctx.label(.{ .x = sb.x + 8, .y = title_y, .w = 120, .h = 30 }, switch (self.agenda.tab) {
+            .agenda => "Org Agenda",
+            .scm => "Source Control",
+            .explorer => if (self.project != null) "Explorer" else "Open Files",
+        }, self.fonts.ui, theme.sidebar_foreground);
         {
             const cy = title_y + 15;
             var gx = close.x - 14;
@@ -3197,6 +3204,7 @@ pub const Workspace = struct {
         }
         const heading_w = @max(0, close.x - 4 - (sb.x + 16));
         if (self.agenda.tab == .agenda) return agenda_ui.paintBody(self, ctx);
+        if (self.agenda.tab == .scm) return scm_ui.paintBody(self, ctx);
         const p = self.project orelse {
             var y = sb.y + 34;
             const active_ed = self.activeEditor();

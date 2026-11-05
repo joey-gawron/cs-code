@@ -256,6 +256,7 @@ pub const Action = enum {
     git_show_commit,
     git_copy_commit_hash,
     git_status,
+    scm_show,
 
     // Org mode.
     org_agenda,
@@ -654,7 +655,7 @@ const defaults = [_]DefaultBinding{
     .{ "shift+f8", .lsp_prev_diagnostic, .editor },
     .{ "ctrl+space", .lsp_complete, .editor },
     .{ "ctrl+k ctrl+g", .git_toggle_blame, .editor },
-    .{ "ctrl+shift+g", .git_status, .global },
+    .{ "ctrl+shift+g", .scm_show, .global },
     .{ "ctrl+k ctrl+b", .toggle_sidebar, .global },
     .{ "ctrl+shift+y", .toggle_panel, .global },
     .{ "ctrl+=", .increase_font, .global },
