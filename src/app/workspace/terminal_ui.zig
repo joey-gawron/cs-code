@@ -200,8 +200,8 @@ fn groupAt(ws: *Workspace, pos: platform.Vec2) ?u8 {
     const area = ws.editor_rect;
     for (ws.group_editor_rects[0..ws.groupCount()], 0..) |r, g| {
         if (!r.contains(pos.x, pos.y)) continue;
-        if ((r.x > area.x + 1 or ws.sidebar_rect.w > 0) and pos.x < r.x + 4) return null;
-        if (r.right() < area.right() - 1 and pos.x > r.right() - 4) return null;
+        if (r.x > area.x + 1 and pos.x < r.x + 4) return null;
+        if ((r.right() < area.right() - 1 or ws.sidebar_rect.w > 0) and pos.x > r.right() - 4) return null;
         if (r.bottom() < area.bottom() - 1 and pos.y > r.bottom() - 4) return null;
         return @intCast(g);
     }

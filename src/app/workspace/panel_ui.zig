@@ -643,18 +643,18 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     const header: Rect = .{ .x = r.x, .y = r.y, .w = r.w, .h = header_h };
     scene.fill(header, theme.tabbar_background);
     const tabs = [_]struct { label: []const u8, view: View }{
-        .{ .label = "TERMINAL", .view = .terminal },
-        .{ .label = "SOURCE CONTROL", .view = .source_control },
-        .{ .label = "LANGUAGE SERVERS", .view = .language_servers },
+        .{ .label = "Terminal", .view = .terminal },
+        .{ .label = "Source Control", .view = .source_control },
+        .{ .label = "Language Servers", .view = .language_servers },
     };
     var tx = r.x + 14;
     for (tabs) |t| {
-        const w = ctx.text.measure(t.label, ws.fonts.ui_small);
+        const w = ctx.text.measure(t.label, ws.fonts.ui);
         const hit: Rect = .{ .x = tx - 8, .y = r.y, .w = w + 16, .h = header_h };
         const active = st.view == t.view;
         const fg = if (active or ctx.hovered(hit)) theme.tab_active_foreground else theme.tab_inactive_foreground;
-        _ = ctx.label(.{ .x = tx, .y = r.y, .w = w, .h = header_h }, t.label, ws.fonts.ui_small, fg);
-        if (active) scene.fill(.{ .x = tx, .y = header.bottom() - 2, .w = w, .h = 2 }, theme.tab_active_foreground);
+        _ = ctx.label(.{ .x = tx, .y = r.y, .w = w, .h = header_h }, t.label, ws.fonts.ui, fg);
+        if (active) scene.fill(.{ .x = tx - 8, .y = header.bottom() - 2, .w = w + 16, .h = 2 }, theme.input_border_focus);
         addHit(ws, hit, .{ .view = t.view });
         tx += w + 26;
     }

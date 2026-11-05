@@ -20,6 +20,7 @@ const quick_panel = @import("quick_panel.zig");
 const find_panel = @import("find_panel.zig");
 const commands = @import("commands.zig");
 const menu = @import("menu.zig");
+const toolbar = @import("toolbar.zig");
 const context_menu = @import("context_menu.zig");
 const symbols = @import("../../model/project/symbols.zig");
 const search = @import("../../model/project/search.zig");
@@ -47,6 +48,7 @@ const Editor = editor_mod.Editor;
 const Buffer = buffer_mod.Buffer;
 const Action = keymap_mod.Action;
 const Rect = scene_mod.Rect;
+const Color = scene_mod.Color;
 const Scene = scene_mod.Scene;
 const Theme = theme_mod.Theme;
 const QuickPanel = quick_panel.QuickPanel;
@@ -201,11 +203,14 @@ pub const todo_pattern = "\\b(TODO|FIXME|HACK|BUG|XXX)\\b";
 /// How much bigger SPC t b (Doom's big-font-mode) makes the editor font.
 const big_font_step: f32 = 4;
 
-pub const tabbar_h: f32 = 36;
-const status_h: f32 = 24;
-const menubar_h: f32 = 26;
-const sidebar_row_h: f32 = 24;
-const sidebar_header_h: f32 = 34;
+pub const tabbar_h: f32 = 26;
+pub const status_h: f32 = 22;
+/// The title row (menus and Quick Launch) and the toolbar under it, as in cs-code.
+pub const menubar_h: f32 = 30;
+pub const toolbar_h: f32 = 30;
+const sidebar_row_h: f32 = 22;
+/// The Explorer's header: title row, tool row and filter box, above the tree.
+const sidebar_header_h: f32 = 96;
 /// The narrowest the side bar's edge drags it to; below half of that it
 /// collapses, and closes if the drag ends there.
 const sidebar_min_w: f32 = 120;
@@ -323,6 +328,7 @@ pub const Workspace = struct {
     pressed_tab: ?usize = null,
 
     menubar_rect: Rect = .{},
+    toolbar_rect: Rect = .{},
     sidebar_rect: Rect = .{},
     /// The strip that reopens the hidden side bar (empty while it shows).
     sidebar_strip_rect: Rect = .{},
@@ -1073,7 +1079,7 @@ pub const Workspace = struct {
     /// the minimum width it collapses; dragged back out, it shows again at
     /// the dragged width.
     fn dragSidebarEdge(self: *Workspace, x: f32) void {
-        const st = sidebarDrag(self.sidebar_drag_from, x, self.size.x);
+        const st = sidebarDrag(self.sidebar_drag_from, self.size.x - x, self.size.x);
         self.sidebar_visible = st.sidebar_visible;
         self.sidebar_width = st.sidebar_width;
     }
@@ -2465,6 +2471,7 @@ pub const Workspace = struct {
                 return;
             }
         }
+        if (toolbar.onMouseDown(self, m)) return;
         if (self.menu_visible and self.menubar_rect.contains(x, y)) {
             for (self.menu_title_rects, 0..) |r, i| if (r.contains(x, y)) {
                 self.menu_open = if (self.menu_open == i) null else i;
@@ -2502,7 +2509,7 @@ pub const Workspace = struct {
             }
             return;
         }
-        if (m.button == .left and self.sidebar_visible and !self.distraction_free and @abs(x - self.sidebar_rect.right()) < 4 and self.sidebar_rect.contains(x - 4, y)) {
+        if (m.button == .left and self.sidebar_visible and !self.distraction_free and @abs(x - self.sidebar_rect.x) < 4 and self.sidebar_rect.contains(x + 4, y)) {
             self.mouse_down_in = .sidebar_edge;
             self.sidebar_drag_from = self.sidebar_width;
             return;
@@ -2660,7 +2667,7 @@ pub const Workspace = struct {
             };
             if (over_panel) |ps| {
                 shape = ps;
-            } else if (self.mouse_down_in == .sidebar_edge or (self.sidebar_visible and @abs(m.pos.x - self.sidebar_rect.right()) < 4 and self.sidebar_rect.contains(m.pos.x - 4, m.pos.y))) {
+            } else if (self.mouse_down_in == .sidebar_edge or (self.sidebar_visible and @abs(m.pos.x - self.sidebar_rect.x) < 4 and self.sidebar_rect.contains(m.pos.x + 4, m.pos.y))) {
                 shape = .ew_resize;
             } else if (self.sidebar_strip_rect.contains(m.pos.x, m.pos.y) or (self.sidebar_visible and self.sidebarCloseRect().contains(m.pos.x, m.pos.y))) {
                 shape = .pointer;
@@ -2798,7 +2805,7 @@ pub const Workspace = struct {
     /// The × at the right end of the side bar's header row.
     fn sidebarCloseRect(self: *const Workspace) Rect {
         const sb = self.sidebar_rect;
-        return .{ .x = sb.right() - 31, .y = sb.y + 7, .w = 24, .h = 24 };
+        return .{ .x = sb.right() - 26, .y = sb.y + 3, .w = 22, .h = 24 };
     }
 
     fn onSidebarClick(self: *Workspace, m: platform.MouseEvent) void {
@@ -2879,13 +2886,19 @@ pub const Workspace = struct {
         const df = self.distraction_free;
         if (self.menu_visible and !df) {
             self.menubar_rect = .{ .x = 0, .y = 0, .w = self.size.x, .h = menubar_h };
-            top = menubar_h;
-        } else self.menubar_rect = .{};
+            self.toolbar_rect = .{ .x = 0, .y = menubar_h, .w = self.size.x, .h = toolbar_h };
+            top = menubar_h + toolbar_h;
+        } else {
+            self.menubar_rect = .{};
+            self.toolbar_rect = .{};
+        }
         if (self.status_visible and !df) {
             self.status_rect = .{ .x = 0, .y = bottom - status_h, .w = self.size.x, .h = status_h };
             bottom -= status_h;
         } else self.status_rect = .{};
-        var left: f32 = 0;
+        // The Explorer is docked on the right, as in cs-code.
+        const left: f32 = 0;
+        var right: f32 = 0;
         self.sidebar_rect = .{};
         self.sidebar_strip_rect = .{};
         if (!df) {
@@ -2894,24 +2907,24 @@ pub const Workspace = struct {
                 // kept from a wider one doesn't crowd out the editors. In a
                 // window narrower than the minimum it takes the whole width,
                 // so its × stays in view.
-                left = @min(sidebarFit(self.sidebar_width, self.size.x), self.size.x);
-                self.sidebar_rect = .{ .x = 0, .y = top, .w = left, .h = bottom - top };
+                right = @min(sidebarFit(self.sidebar_width, self.size.x), self.size.x);
+                self.sidebar_rect = .{ .x = self.size.x - right, .y = top, .w = right, .h = bottom - top };
             } else {
-                left = sidebar_strip_w;
-                self.sidebar_strip_rect = .{ .x = 0, .y = top, .w = left, .h = bottom - top };
+                right = sidebar_strip_w;
+                self.sidebar_strip_rect = .{ .x = self.size.x - right, .y = top, .w = right, .h = bottom - top };
             }
         }
         if (self.panel.visible and !df) {
             const h = panel_ui.height(self, bottom - top);
-            self.panel.rect = .{ .x = left, .y = bottom - h, .w = self.size.x - left, .h = h };
+            self.panel.rect = .{ .x = left, .y = bottom - h, .w = self.size.x - left - right, .h = h };
             bottom -= h;
         } else self.panel.rect = .{};
         if (self.find_visible and self.find != null) {
             const h = self.find.?.height();
-            self.find_rect = .{ .x = left, .y = bottom - h, .w = self.size.x - left, .h = h };
+            self.find_rect = .{ .x = left, .y = bottom - h, .w = self.size.x - left - right, .h = h };
             bottom -= h;
         } else self.find_rect = .{};
-        self.editor_rect = .{ .x = left, .y = top, .w = self.size.x - left, .h = @max(0, bottom - top) };
+        self.editor_rect = .{ .x = left, .y = top, .w = @max(0, self.size.x - left - right), .h = @max(0, bottom - top) };
         if (df and self.groupCount() == 1) {
             // Distraction free: a centered column of text.
             const max_w: f32 = 900;
@@ -2993,7 +3006,10 @@ pub const Workspace = struct {
         if (self.find_visible) if (self.find) |f| f.paint(&ctx, self.find_rect);
         self.panel.status_item = .{};
         if (self.status_visible and !self.distraction_free) self.paintStatus(&ctx);
-        if (self.menu_visible and !self.distraction_free) self.paintMenuBar(&ctx);
+        if (self.menu_visible and !self.distraction_free) {
+            self.paintMenuBar(&ctx);
+            toolbar.paint(self, &ctx);
+        }
 
         {
             scene.pushLayer() catch return;
@@ -3023,22 +3039,23 @@ pub const Workspace = struct {
         const scene = ctx.scene;
         const bar = self.group_tabbar_rects[group];
         scene.fill(bar, theme.tabbar_background);
+        scene.fill(.{ .x = bar.x, .y = bar.bottom() - 1, .w = bar.w, .h = 1 }, theme.tab_separator);
         var index_buf: [256]usize = undefined;
         const indices = self.groupTabs(group, &index_buf);
         const n = indices.len;
         if (n == 0) return;
 
-        const pad_x: f32 = 16;
-        const close_w: f32 = 22;
+        const pad_x: f32 = 10;
+        const close_w: f32 = 16;
         var widths = self.gpa.alloc(f32, n) catch return;
         defer self.gpa.free(widths);
         var total: f32 = 0;
         for (indices, 0..) |ti, i| {
             const title = tabTitle(self.tabs.items[ti].editor);
-            widths[i] = std.math.clamp(self.env.text.measure(title, self.fonts.ui) + pad_x * 2 + close_w, 110, 240);
+            widths[i] = std.math.clamp(self.env.text.measure(title, self.fonts.ui) + pad_x * 2 + close_w + 8, 80, 260);
             total += widths[i];
         }
-        const avail = bar.w - 8;
+        const avail = bar.w;
         if (total > avail) {
             const each = @max(70, avail / @as(f32, @floatFromInt(n)));
             for (widths) |*w| w.* = @min(w.*, each);
@@ -3046,36 +3063,34 @@ pub const Workspace = struct {
 
         scene.pushClip(bar) catch return;
         defer scene.popClip();
-        var x = bar.x + 4;
-        const top = bar.y + 6;
+        var x = bar.x;
         const group_focused = group == self.focused_group or self.groupCount() == 1;
         for (indices, 0..) |ti, i| {
             const t = self.tabs.items[ti];
             const w = widths[i];
-            const r: Rect = .{ .x = x, .y = top, .w = w - 2, .h = bar.bottom() - top };
+            const r: Rect = .{ .x = x, .y = bar.y, .w = w, .h = bar.h };
             const active = t.editor == self.group_active[group];
             const hovered = ctx.hovered(r);
             const bg = if (active) theme.background else if (hovered) theme.tab_hover else theme.tab_inactive;
-            scene.quad(r, .{ .color = bg, .radii = .{ 5, 5, 0, 0 } });
+            scene.fill(r, bg);
+            // The active tab carries the accent along its top edge and joins the editor below.
+            if (active) scene.fill(.{ .x = r.x, .y = r.y, .w = r.w, .h = 2 }, if (group_focused) theme.input_border_focus else theme.tab_separator);
 
-            const title = tabTitle(t.editor);
-            const font = if (t.transient) self.fonts.ui_bold else self.fonts.ui;
-            const fg = if (active and group_focused) theme.tab_active_foreground else if (active) theme.tab_active_foreground.withAlpha(0.7) else theme.tab_inactive_foreground;
-            const label_rect: Rect = .{ .x = r.x + pad_x, .y = r.y, .w = r.w - pad_x * 2 - close_w + 8, .h = r.h };
+            var title_buf: [300]u8 = undefined;
+            const base = tabTitle(t.editor);
+            const dirty = t.editor.buffer.isDirty();
+            const title = if (dirty) std.fmt.bufPrint(&title_buf, "{s} *", .{base}) catch base else base;
+            const fg = if (active) theme.tab_active_foreground else theme.tab_inactive_foreground;
+            const label_rect: Rect = .{ .x = r.x + pad_x, .y = r.y + 1, .w = r.w - pad_x - close_w - 12, .h = r.h - 1 };
             scene.pushClip(label_rect) catch {};
-            _ = ctx.labelFit(label_rect, title, font, if (t.transient) fg.withAlpha(0.8) else fg);
+            _ = ctx.labelFit(label_rect, title, self.fonts.ui, if (t.transient) fg.withAlpha(0.8) else fg);
             scene.popClip();
 
-            const close: Rect = .{ .x = r.right() - close_w - 6, .y = r.y + (r.h - close_w) / 2, .w = close_w, .h = close_w };
+            const close: Rect = .{ .x = r.right() - close_w - 6, .y = r.y + (r.h - close_w) / 2 + 1, .w = close_w, .h = close_w };
             self.tab_hits.append(self.gpa, .{ .rect = r, .close = close, .index = ti }) catch {};
-            const dirty = t.editor.buffer.isDirty();
             const close_hovered = ctx.hovered(close);
-            if (close_hovered) scene.quad(close, .{ .color = theme.tab_hover.lighten(0.08), .radius = 4 });
-            if (dirty and !close_hovered) {
-                ctx.dot(close.x + close.w / 2, close.y + close.h / 2, 4, if (active) theme.tab_active_foreground else theme.tab_inactive_foreground);
-            } else if (active or hovered) {
-                ctx.closeIcon(close.x + close.w / 2, close.y + close.h / 2, 8, fg);
-            }
+            if (close_hovered) scene.quad(close, .{ .color = theme.tab_hover.lighten(0.08), .radius = 3 });
+            ctx.closeIcon(close.x + close.w / 2, close.y + close.h / 2, 8, if (active or hovered) fg else fg.withAlpha(0.85));
             x += w;
         }
     }
@@ -3089,13 +3104,25 @@ pub const Workspace = struct {
         const scene = ctx.scene;
         const sb = self.sidebar_rect;
         scene.fill(sb, theme.sidebar_background);
-        scene.fill(.{ .x = sb.right() - 1, .y = sb.y, .w = 1, .h = sb.h }, theme.tab_separator);
+        scene.fill(.{ .x = sb.x, .y = sb.y, .w = 1, .h = sb.h }, theme.tab_separator);
+        // Title row: the Explorer's name, and a drop-down, pin and close on the right.
         const close = self.sidebarCloseRect();
-        if (ctx.hovered(close)) scene.quad(close, .{ .color = theme.sidebar_hover, .radius = 4 });
-        ctx.closeIcon(close.x + close.w / 2, close.y + close.h / 2, 8, theme.sidebar_heading);
+        if (ctx.hovered(close)) scene.quad(close, .{ .color = theme.sidebar_hover, .radius = 3 });
+        ctx.closeIcon(close.x + close.w / 2, close.y + close.h / 2, 8, theme.sidebar_foreground);
+        const title_y = sb.y;
+        _ = ctx.label(.{ .x = sb.x + 8, .y = title_y, .w = 120, .h = 30 }, if (self.project != null) "Explorer" else "Open Files", self.fonts.ui, theme.sidebar_foreground);
+        {
+            const cy = title_y + 15;
+            var gx = close.x - 14;
+            // Pin: a small tilted pin drawn with a head and a shaft.
+            scene.quad(.{ .x = gx - 2, .y = cy - 5, .w = 4, .h = 6 }, .{ .color = theme.sidebar_foreground, .radius = 1 });
+            scene.fill(.{ .x = gx - 3.5, .y = cy + 1, .w = 7, .h = 1.5 }, theme.sidebar_foreground);
+            scene.fill(.{ .x = gx - 0.5, .y = cy + 2.5, .w = 1, .h = 4 }, theme.sidebar_foreground);
+            gx -= 20;
+            ctx.chevron(gx, cy, true, theme.sidebar_foreground);
+        }
         const heading_w = @max(0, close.x - 4 - (sb.x + 16));
         const p = self.project orelse {
-            _ = ctx.labelFit(.{ .x = sb.x + 16, .y = sb.y + 8, .w = heading_w, .h = 24 }, "OPEN FILES", self.fonts.ui_small, theme.sidebar_heading);
             var y = sb.y + 34;
             const active_ed = self.activeEditor();
             for (0..self.groupCount()) |g| {
@@ -3106,7 +3133,7 @@ pub const Workspace = struct {
                     y += sidebar_row_h;
                 }
                 for (self.tabs.items) |t| if (t.group == g) {
-                    const row: Rect = .{ .x = sb.x, .y = y, .w = sb.w - 1, .h = sidebar_row_h };
+                    const row: Rect = .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h };
                     if (t.editor == active_ed) scene.fill(row, theme.sidebar_selected) else if (ctx.hovered(row)) scene.fill(row, theme.sidebar_hover);
                     _ = ctx.labelFit(.{ .x = sb.x + 22, .y = y, .w = sb.w - 30, .h = sidebar_row_h }, tabTitle(t.editor), self.fonts.ui, theme.sidebar_foreground);
                     y += sidebar_row_h;
@@ -3114,10 +3141,41 @@ pub const Workspace = struct {
             }
             return;
         };
+        _ = heading_w;
         self.refreshSidebarRows();
-        // The header row stays put; the tree scrolls under it.
-        _ = ctx.labelFit(.{ .x = sb.x + 16, .y = sb.y + 6, .w = heading_w, .h = sidebar_header_h - 8 }, "FOLDERS", self.fonts.ui_small, theme.sidebar_heading);
-        const body: Rect = .{ .x = sb.x, .y = sb.y + sidebar_header_h, .w = sb.w - 1, .h = @max(0, sb.h - sidebar_header_h) };
+        // Tool row (new file, new folder, refresh, collapse all) and the filter box.
+        {
+            const cy = sb.y + 30 + 15;
+            var ix = sb.right() - 20;
+            const dim = Color.hex(0xc5c5c5);
+            // Collapse all: two overlapping boxes.
+            scene.quad(.{ .x = ix - 3, .y = cy - 5, .w = 8, .h = 8 }, .{ .border_color = dim, .border_width = 1.25, .radius = 1 });
+            scene.quad(.{ .x = ix - 6, .y = cy - 2, .w = 8, .h = 8 }, .{ .color = theme.sidebar_background, .border_color = dim, .border_width = 1.25, .radius = 1 });
+            ix -= 22;
+            // Refresh: an open ring.
+            scene.quad(.{ .x = ix - 5, .y = cy - 5, .w = 10, .h = 10 }, .{ .border_color = dim, .border_width = 1.5, .radius = 5 });
+            scene.fill(.{ .x = ix + 1, .y = cy - 6, .w = 6, .h = 3 }, theme.sidebar_background);
+            scene.fill(.{ .x = ix + 1, .y = cy - 7, .w = 5, .h = 1.5 }, dim);
+            scene.fill(.{ .x = ix + 4.5, .y = cy - 7, .w = 1.5, .h = 4.5 }, dim);
+            ix -= 22;
+            ctx.folderIcon(ix - 7, cy + 1, theme.folder_icon, false);
+            scene.fill(.{ .x = ix + 4, .y = cy - 7, .w = 1.5, .h = 6 }, Color.hex(0x75beff));
+            scene.fill(.{ .x = ix + 1.75, .y = cy - 4.75, .w = 6, .h = 1.5 }, Color.hex(0x75beff));
+            ix -= 22;
+            ctx.fileIcon(ix - 6, cy, dim);
+            scene.fill(.{ .x = ix + 3, .y = cy - 7, .w = 1.5, .h = 6 }, Color.hex(0x75beff));
+            scene.fill(.{ .x = ix + 0.75, .y = cy - 4.75, .w = 6, .h = 1.5 }, Color.hex(0x75beff));
+            const filter: Rect = .{ .x = sb.x + 8, .y = sb.y + 64, .w = sb.w - 16, .h = 24 };
+            scene.quad(filter, .{ .color = theme.input_background, .radius = 3 });
+            const mc = filter.y + filter.h / 2;
+            scene.quad(.{ .x = filter.x + 8, .y = mc - 5, .w = 8, .h = 8 }, .{ .border_color = theme.list_foreground_dim, .border_width = 1.25, .radius = 4 });
+            for (0..3) |i| {
+                const t: f32 = @floatFromInt(i);
+                scene.fill(.{ .x = filter.x + 15 + t, .y = mc + 2 + t, .w = 1.5, .h = 1.5 }, theme.list_foreground_dim);
+            }
+            _ = ctx.label(.{ .x = filter.x + 26, .y = filter.y, .w = filter.w - 30, .h = filter.h }, "Filter", self.fonts.ui, theme.list_foreground_dim);
+        }
+        const body: Rect = .{ .x = sb.x + 1, .y = sb.y + sidebar_header_h, .w = sb.w - 1, .h = @max(0, sb.h - sidebar_header_h) };
         scene.pushClip(body) catch return;
         defer scene.popClip();
 
@@ -3127,11 +3185,11 @@ pub const Workspace = struct {
         };
 
         const indent: f32 = 14;
-        const base_x = sb.x + 10;
+        const base_x = sb.x + 6;
         var y = sb.y + sidebar_header_h - self.sidebar_scroll;
 
         // Root folder row.
-        self.paintSidebarRow(ctx, .{ .x = sb.x, .y = y, .w = sb.w - 1, .h = sidebar_row_h }, base_x, p.name, .dir, self.root_expanded, false, false);
+        self.paintSidebarRow(ctx, .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h }, base_x, p.name, .dir, self.root_expanded, false, false);
         y += sidebar_row_h;
 
         const snap = p.snapshot orelse return;
@@ -3143,7 +3201,7 @@ pub const Workspace = struct {
             }
             const e = snap.entries[idx];
             const x = base_x + indent * @as(f32, @floatFromInt(e.depth + 1));
-            const row: Rect = .{ .x = sb.x, .y = y, .w = sb.w - 1, .h = sidebar_row_h };
+            const row: Rect = .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h };
             const selected = active_rel != null and std.mem.eql(u8, active_rel.?, e.path);
             self.paintSidebarRow(ctx, row, x, e.name, e.kind, e.kind == .dir and p.isExpanded(e.path), selected, e.ignored);
             y += sidebar_row_h;
@@ -3152,19 +3210,18 @@ pub const Workspace = struct {
 
     fn paintSidebarRow(self: *Workspace, ctx: *const ui.Ctx, row: Rect, x: f32, name: []const u8, kind: project_mod.Kind, expanded: bool, selected: bool, dim: bool) void {
         const theme = ctx.theme;
-        // Not from the pinned header row over a row scrolled part-way under it.
+        // Not from the pinned header over a row scrolled part-way under it.
         const hovered = ctx.hovered(row) and ctx.mouse.y >= self.sidebar_rect.y + sidebar_header_h;
         if (selected) ctx.scene.fill(row, theme.sidebar_selected) else if (hovered) ctx.scene.fill(row, theme.sidebar_hover);
         const cy = row.y + row.h / 2;
-        const fg = if (dim) theme.sidebar_foreground_dim.withAlpha(0.6) else if (selected) theme.tab_active_foreground else theme.sidebar_foreground;
-        var tx = x + 22;
+        const fg = if (dim) theme.sidebar_foreground_dim.withAlpha(0.6) else theme.sidebar_foreground;
         if (kind == .dir) {
             ctx.chevron(x + 4, cy, expanded, theme.sidebar_foreground_dim);
             ctx.folderIcon(x + 14, cy, if (dim) theme.folder_icon.withAlpha(0.5) else theme.folder_icon, expanded);
-            tx = x + 34;
         } else {
-            tx = x + 18;
+            ctx.fileIcon(x + 13, cy, if (dim) theme.sidebar_foreground_dim.withAlpha(0.5) else Color.hex(0xc5c5c5));
         }
+        const tx = x + 34;
         _ = ctx.labelFit(.{ .x = tx, .y = row.y, .w = row.right() - tx - 8, .h = row.h }, name, self.fonts.ui, fg);
     }
 
@@ -3175,13 +3232,13 @@ pub const Workspace = struct {
         const r = self.sidebar_strip_rect;
         const hot = ctx.hovered(r) or self.mouse_down_in == .sidebar_strip;
         ctx.scene.fill(r, if (hot) theme.sidebar_hover else theme.sidebar_background);
-        ctx.scene.fill(.{ .x = r.right() - 1, .y = r.y, .w = 1, .h = r.h }, theme.tab_separator);
-        // A small ▸ (the tree's glyph is too wide for the strip), a pixel column at a time.
+        ctx.scene.fill(.{ .x = r.x, .y = r.y, .w = 1, .h = r.h }, theme.tab_separator);
+        // A small ◂ (the tree's glyph is too wide for the strip), a pixel column at a time.
         const color = if (hot) theme.sidebar_foreground else theme.sidebar_foreground_dim;
         const cy = @round(r.y + r.h / 2);
         for (0..4) |i| {
             const t: f32 = @floatFromInt(i);
-            ctx.scene.fill(.{ .x = r.x + 2 + t, .y = cy - 3 + t, .w = 1, .h = 7 - 2 * t }, color);
+            ctx.scene.fill(.{ .x = r.x + 5 - t, .y = cy - 3 + t, .w = 1, .h = 7 - 2 * t }, color);
         }
     }
 
@@ -3190,23 +3247,42 @@ pub const Workspace = struct {
         const r = self.status_rect;
         if (self.key_hook) |hook| if (hook.enabled and hook.paintCommandLine(hook.ctx, ctx, r)) return;
         ctx.scene.fill(r, theme.statusbar_background);
-        const font = self.fonts.ui_small;
-        var x = r.x + 12;
+        const font = self.fonts.ui;
+        const fg = theme.statusbar_foreground;
+        // The remote indicator, a green block at the left edge as in cs-code.
+        const remote: Rect = .{ .x = r.x, .y = r.y, .w = 26, .h = r.h };
+        ctx.scene.fill(remote, Color.hex(0x16825d));
+        ctx.labelCentered(remote, "><", self.fonts.ui_bold, Color.hex(0xffffff));
+        var x = r.x + 26 + 10;
         var buf: [256]u8 = undefined;
-        if (remote_ui.statusLabel(self, &buf)) |t| x += ctx.label(.{ .x = x, .y = r.y, .w = 320, .h = r.h }, t, self.fonts.ui_bold, theme.syntax.function) + 16;
+        if (remote_ui.statusLabel(self, &buf)) |t| x += ctx.label(.{ .x = x, .y = r.y, .w = 320, .h = r.h }, t, self.fonts.ui_bold, fg) + 16;
 
         if (self.key_hook) |hook| if (hook.enabled) {
             const t = hook.statusText(hook.ctx, &buf);
-            if (t.len > 0) x += ctx.label(.{ .x = x, .y = r.y, .w = 200, .h = r.h }, t, self.fonts.ui_bold, theme.syntax.function) + 16;
+            if (t.len > 0) x += ctx.label(.{ .x = x, .y = r.y, .w = 200, .h = r.h }, t, self.fonts.ui_bold, fg) + 16;
         };
-        if (leader_ui.statusText(self, &buf)) |t| x += ctx.label(.{ .x = x, .y = r.y, .w = 200, .h = r.h }, t, self.fonts.ui_bold, theme.syntax.function) + 16;
+        if (leader_ui.statusText(self, &buf)) |t| x += ctx.label(.{ .x = x, .y = r.y, .w = 200, .h = r.h }, t, self.fonts.ui_bold, fg) + 16;
         if (self.recording) {
-            ctx.dot(x + 4, r.y + r.h / 2, 4, theme.syntax.constant);
-            x += 12 + ctx.label(.{ .x = x + 12, .y = r.y, .w = 200, .h = r.h }, "Recording macro", font, theme.statusbar_foreground) + 16;
+            ctx.dot(x + 4, r.y + r.h / 2, 4, Color.hex(0xff6b6b));
+            x += 12 + ctx.label(.{ .x = x + 12, .y = r.y, .w = 200, .h = r.h }, "Recording macro", font, fg) + 16;
+        }
+
+        // Diagnostics of the active file: errors and warnings.
+        var errors: usize = 0;
+        var warnings: usize = 0;
+        if (self.activeEditor()) |ed| for (ed.buffer.diagnostics.items) |d| switch (d.severity) {
+            .err => errors += 1,
+            .warning => warnings += 1,
+            else => {},
+        };
+        {
+            var dbuf: [48]u8 = undefined;
+            const dtext = std.fmt.bufPrint(&dbuf, "✖ {d}   ⚠ {d}", .{ errors, warnings }) catch "";
+            x += ctx.label(.{ .x = x, .y = r.y, .w = 120, .h = r.h }, dtext, font, fg) + 16;
         }
 
         if (terminal_ui.statusText(self, &buf)) |t| {
-            x += ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, t, font, theme.statusbar_foreground) + 20;
+            x += ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, t, font, fg) + 20;
             _ = panel_ui.paintStatusItem(self, ctx, r, r.right() - 14);
         } else if (self.activeEditor()) |ed| {
             const sel = ed.primarySelection();
@@ -3224,46 +3300,34 @@ pub const Workspace = struct {
                     text = std.fmt.bufPrint(&buf, "{d} lines, {d} characters selected", .{ b.row - a.row + 1, sel.len() }) catch "";
                 }
             } else {
-                text = std.fmt.bufPrint(&buf, "Line {d}, Column {d}", .{ p.row + 1, col + 1 }) catch "";
+                text = std.fmt.bufPrint(&buf, "Ln {d}, Col {d}", .{ p.row + 1, col + 1 }) catch "";
             }
-            x += ctx.label(.{ .x = x, .y = r.y, .w = 300, .h = r.h }, text, font, theme.statusbar_foreground) + 20;
-
-            // Diagnostics summary and the message under the caret.
-            var errors: usize = 0;
-            var warnings: usize = 0;
-            for (ed.buffer.diagnostics.items) |d| switch (d.severity) {
-                .err => errors += 1,
-                .warning => warnings += 1,
-                else => {},
-            };
-            if (errors + warnings > 0) {
-                var dbuf: [48]u8 = undefined;
-                const dtext = std.fmt.bufPrint(&dbuf, "✖ {d}  ⚠ {d}", .{ errors, warnings }) catch "";
-                x += ctx.label(.{ .x = x, .y = r.y, .w = 120, .h = r.h }, dtext, font, if (errors > 0) theme.syntax.constant else theme.syntax.number) + 16;
-            }
+            // The message under the caret.
             if (lsp_ui.diagnosticAt(ed, sel.head)) |d| {
                 const msg = d.message[0..@min(d.message.len, 120)];
                 const nl = std.mem.indexOfScalar(u8, msg, '\n') orelse msg.len;
-                x += ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, msg[0..nl], font, theme.statusbar_foreground) + 16;
+                x += ctx.label(.{ .x = x, .y = r.y, .w = 600, .h = r.h }, msg[0..nl], font, fg) + 16;
             }
 
-            // Right side: indentation and syntax.
+            // Right side, rightmost first: position, indentation, encoding, line ending, language.
             var rx = r.right() - 14;
-            var lbuf: [96]u8 = undefined;
-            const lang_label = if (ed.buffer.syntax_skipped) std.fmt.bufPrint(&lbuf, "{s} (large file: no highlighting)", .{ed.buffer.language.name}) catch ed.buffer.language.name else ed.buffer.language.name;
-            rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, lang_label, font, theme.statusbar_foreground) + 24;
+            rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, text, font, fg) + 20;
             var ibuf: [32]u8 = undefined;
             const indent = std.fmt.bufPrint(&ibuf, "{s}: {d}", .{ if (ed.buffer.translate_tabs_to_spaces) "Spaces" else "Tab Size", ed.buffer.tab_size }) catch "";
-            rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, indent, font, theme.statusbar_foreground) + 24;
-            if (ed.buffer.line_ending == .crlf) rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, "Windows", font, theme.statusbar_foreground) + 24;
+            rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, indent, font, fg) + 20;
+            rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, "UTF-8", font, fg) + 20;
+            rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, if (ed.buffer.line_ending == .crlf) "CRLF" else "LF", font, fg) + 20;
+            var lbuf: [96]u8 = undefined;
+            const lang_label = if (ed.buffer.syntax_skipped) std.fmt.bufPrint(&lbuf, "{s} (large file: no highlighting)", .{ed.buffer.language.name}) catch ed.buffer.language.name else ed.buffer.language.name;
+            rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, lang_label, font, fg) + 20;
             // A running org clock: its heading and time so far.
             var cbuf: [160]u8 = undefined;
-            if (org_ui.clockStatus(self, &cbuf)) |ct| rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, ct, font, theme.syntax.string) + 24;
+            if (org_ui.clockStatus(self, &cbuf)) |ct| rx -= ctx.labelRight(.{ .x = r.x, .y = r.y, .w = rx - r.x, .h = r.h }, ct, font, fg) + 20;
             // The language server: its state and progress; a click opens its log.
             _ = panel_ui.paintStatusItem(self, ctx, r, rx);
         }
         if (self.status_message_len > 0 and platform.nowMs() < self.status_message_until) {
-            _ = ctx.label(.{ .x = x, .y = r.y, .w = 500, .h = r.h }, self.status_message[0..self.status_message_len], font, theme.statusbar_foreground);
+            _ = ctx.label(.{ .x = x, .y = r.y, .w = 500, .h = r.h }, self.status_message[0..self.status_message_len], font, fg);
         }
     }
 

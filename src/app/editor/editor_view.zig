@@ -725,12 +725,15 @@ fn paintGutter(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRa
         if (diagnostic_rows.get(row)) |sev| {
             scene.quad(.{ .x = g.x + 4, .y = y + lh / 2 - 3, .w = 6, .h = 6 }, .{ .color = diagnosticColor(theme, sev), .radius = 3 });
         }
-        // Fold markers: always on folded headers, on hover for foldable lines.
+        // Fold markers, as in cs-code: a boxed - on every foldable line, a boxed + on a folded one.
         const folded = self.display.folds.isFoldHeader(self.buffer, row);
-        if (folded or (hover and isFoldable(self, row))) {
-            const glyph = if (folded) "▸" else "▾";
-            const fw = self.env.text.measure(glyph, self.env.font);
-            _ = self.env.text.drawText(scene, glyph, self.env.font, g.right() - cw * 1.1 - fw / 2, y + baseline_off, if (folded) theme.caret else theme.gutter_foreground);
+        if (folded or isFoldable(self, row)) {
+            const cx = @round(g.right() - cw * 1.1);
+            const cy = @round(y + lh / 2);
+            const col = if (hover or folded) theme.gutter_foreground_active else theme.gutter_foreground;
+            scene.quad(.{ .x = cx - 4.5, .y = cy - 4.5, .w = 9, .h = 9 }, .{ .border_color = col, .border_width = 1, .radius = 1 });
+            scene.fill(.{ .x = cx - 2.5, .y = cy - 0.5, .w = 5, .h = 1 }, col);
+            if (folded) scene.fill(.{ .x = cx - 0.5, .y = cy - 2.5, .w = 1, .h = 5 }, col);
         }
     }
 }

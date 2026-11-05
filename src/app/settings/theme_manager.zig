@@ -32,9 +32,9 @@ pub const Name = struct {
 };
 
 pub const ThemeSettings = struct {
-    color_scheme: Name = .init("Mariana"),
+    color_scheme: Name = .init("Visual Studio Dark"),
     light_color_scheme: Name = .init("Breakers"),
-    dark_color_scheme: Name = .init("Mariana"),
+    dark_color_scheme: Name = .init("Visual Studio Dark"),
     auto_by: AutoBy = .sun,
     /// Minutes after midnight.
     day_start: f64 = 7 * 60,
@@ -46,7 +46,7 @@ pub const ThemeManager = struct {
     /// The live theme; everything holds a pointer to this.
     theme: theme_mod.Theme,
     settings: ThemeSettings = .{},
-    current: Name = .init("Mariana"),
+    current: Name = .init("Visual Studio Dark"),
     /// Location guessed from the time zone (looked up once).
     tz_location: ?sun.Location = null,
     tz_looked_up: bool = false,
