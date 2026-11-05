@@ -43,13 +43,54 @@ pub const Target = struct {
 
 const deadline_warning_days = 14;
 
+/// How a docked agenda row colours its second line: overdue things in the
+/// error colour, deadlines coming up in the warning colour.
+pub const ItemKind = enum { normal, overdue, upcoming };
+
+/// One agenda entry as the docked window shows it.
+pub const Item = struct {
+    /// The TODO keyword, "" when the heading has none.
+    todo: []const u8 = "",
+    done: bool = false,
+    priority: ?u8 = null,
+    /// The title without its timestamps.
+    title: []const u8 = "",
+    /// The heading's own tags, ":a:b:" or "".
+    tags: []const u8 = "",
+    category: []const u8 = "",
+    /// Why the entry is on its day: "09:30", "Scheduled", "Overdue 2 d.".
+    label: []const u8 = "",
+    kind: ItemKind = .normal,
+    target: Target,
+    /// 0-based row of the heading in its file.
+    line: u32 = 0,
+    /// The ancestors' titles, "Project / Phase", "" at the top level.
+    outline: []const u8 = "",
+    scheduled: []const u8 = "",
+    deadline: []const u8 = "",
+    closed: []const u8 = "",
+    /// The entry's own text: planning lines and drawers left out.
+    notes: []const u8 = "",
+};
+
+/// A day (week and day views), a file (the to-do list) or everything (search).
+pub const Group = struct {
+    header: []const u8,
+    day: ?Date = null,
+    items: []const Item,
+};
+
 const Entry = struct {
     sort_time: i32,
     priority: u8,
     kind_rank: u8,
     text: []const u8,
     target: Target,
+    item: Item,
 };
+
+/// A parsed source kept for the length of a build.
+const DocRef = struct { doc: parser.Document, path: []const u8, text: []const u8 };
 
 pub const Agenda = struct {
     gpa: Allocator,
@@ -60,6 +101,9 @@ pub const Agenda = struct {
     text: std.ArrayList(u8) = .empty,
     /// Target for each line of `text` (null for headers / blank lines).
     targets: std.ArrayList(?Target) = .empty,
+    /// The same entries grouped for the docked window; the items live in
+    /// `arena` and last until the next build.
+    groups: std.ArrayList(Group) = .empty,
     /// The search words, tag expression or TODO keywords (owned).
     query: []u8 = &.{},
     /// Owned strings.
@@ -75,6 +119,7 @@ pub const Agenda = struct {
     pub fn deinit(self: *Agenda) void {
         self.text.deinit(self.gpa);
         self.targets.deinit(self.gpa);
+        self.groups.deinit(self.gpa);
         self.arena.deinit();
         self.gpa.free(self.query);
         self.gpa.free(self.title);
@@ -157,16 +202,17 @@ pub const Agenda = struct {
         _ = self.arena.reset(.retain_capacity);
         self.text.clearRetainingCapacity();
         self.targets.clearRetainingCapacity();
+        self.groups.clearRetainingCapacity();
         const alloc = self.arena.allocator();
 
-        var docs: std.ArrayList(struct { doc: parser.Document, path: []const u8 }) = .empty;
+        var docs: std.ArrayList(DocRef) = .empty;
         defer {
             for (docs.items) |*d| d.doc.deinit();
             docs.deinit(self.gpa);
         }
         for (sources) |src| {
             const doc = try parser.parse(self.gpa, src.text, std.fs.path.basename(src.path));
-            try docs.append(self.gpa, .{ .doc = doc, .path = try alloc.dupe(u8, src.path) });
+            try docs.append(self.gpa, .{ .doc = doc, .path = try alloc.dupe(u8, src.path), .text = src.text });
         }
 
         const today = Date.today();
@@ -183,7 +229,7 @@ pub const Agenda = struct {
                     try self.line(null, "Search words: {s}", .{self.query});
                 } else try self.line(null, "{s}Headlines with TAGS match: {s}", .{ self.title, self.query });
                 var entries: std.ArrayList(Entry) = .empty;
-                for (docs.items) |d| for (d.doc.headings.items) |h| {
+                for (docs.items) |*d| for (d.doc.headings.items, 0..) |h, hi| {
                     const hit = if (self.view == .search) containsWords(h.title, self.query) else tagMatch(self.query, h.all_tags);
                     if (!hit or !self.passes(h)) continue;
                     try entries.append(alloc, .{
@@ -192,17 +238,19 @@ pub const Agenda = struct {
                         .kind_rank = 0,
                         .text = try formatEntry(alloc, h.category, "", h),
                         .target = .{ .path = d.path, .offset = h.offset, .category = try alloc.dupe(u8, h.category) },
+                        .item = try makeItem(alloc, d, hi, "", .normal),
                     });
                 };
                 for (entries.items) |e| try self.line(e.target, "{s}", .{e.text});
                 if (entries.items.len == 0) try self.line(null, "  (nothing matches)", .{});
+                try self.addGroup(alloc, "", null, entries.items, null);
             },
             .todo => {
                 if (self.query.len > 0) {
                     try self.line(null, "{s}Global list of TODO items of type: {s}", .{ self.title, self.query });
                 } else try self.line(null, "Global list of TODO items of type: ALL", .{});
                 var entries: std.ArrayList(Entry) = .empty;
-                for (docs.items) |d| for (d.doc.headings.items) |h| {
+                for (docs.items) |*d| for (d.doc.headings.items, 0..) |h, hi| {
                     const kw = h.todo orelse continue;
                     if (d.doc.keywords.isDone(kw)) continue;
                     if (self.query.len > 0 and !keywordIn(kw, self.query)) continue;
@@ -213,11 +261,14 @@ pub const Agenda = struct {
                         .kind_rank = 0,
                         .text = try formatEntry(alloc, h.category, "", h),
                         .target = .{ .path = d.path, .offset = h.offset, .category = try alloc.dupe(u8, h.category) },
+                        .item = try makeItem(alloc, d, hi, "", .normal),
                     });
                 };
                 sortEntries(entries.items);
                 for (entries.items) |e| try self.line(e.target, "{s}", .{e.text});
                 if (entries.items.len == 0) try self.line(null, "  (no open TODO items)", .{});
+                // The window lists them file by file.
+                for (docs.items) |d| try self.addGroup(alloc, std.fs.path.basename(d.path), null, entries.items, d.path);
             },
             .week, .day => {
                 const days: i64 = if (self.view == .week) 7 else 1;
@@ -231,15 +282,29 @@ pub const Agenda = struct {
                         try self.line(null, "{s: <10} {d: >2} {s} {d}", .{ date.day_names[day.weekday()], day.day, date.month_names[day.month - 1], @as(u32, @intCast(day.year)) });
                     }
                     var entries: std.ArrayList(Entry) = .empty;
-                    for (docs.items) |d| for (d.doc.headings.items) |h| {
+                    for (docs.items) |*d| for (d.doc.headings.items, 0..) |h, hi| {
                         if (!self.passes(h)) continue;
-                        try collectDay(alloc, &entries, d.doc, d.path, h, day, today);
+                        try collectDay(alloc, &entries, d, hi, day, today);
                     };
                     sortEntries(entries.items);
                     for (entries.items) |e| try self.line(e.target, "{s}", .{e.text});
+                    const header = try std.fmt.allocPrint(alloc, "{s} {d} {s}", .{ date.day_names[day.weekday()], day.day, date.month_names[day.month - 1] });
+                    try self.addGroup(alloc, header, day, entries.items, null);
                 }
             },
         }
+    }
+
+    /// Appends a group of `entries`' items (only those in `path`, when given).
+    fn addGroup(self: *Agenda, alloc: Allocator, header: []const u8, day: ?Date, entries: []const Entry, path: ?[]const u8) !void {
+        var items: std.ArrayList(Item) = .empty;
+        for (entries) |e| {
+            if (path) |p| if (!std.mem.eql(u8, p, e.target.path)) continue;
+            try items.append(alloc, e.item);
+        }
+        // A file with nothing to do has no group; a day always has one.
+        if (path != null and items.items.len == 0) return;
+        try self.groups.append(self.gpa, .{ .header = header, .day = day, .items = items.items });
     }
 };
 
@@ -334,10 +399,12 @@ fn timeLabel(buf: []u8, ts: date.Timestamp) []const u8 {
     return std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}......", .{ t.hour, t.minute }) catch "";
 }
 
-fn collectDay(alloc: Allocator, out: *std.ArrayList(Entry), doc: parser.Document, path: []const u8, h: parser.Heading, day: Date, today: Date) !void {
+fn collectDay(alloc: Allocator, out: *std.ArrayList(Entry), d: *const DocRef, hi: usize, day: Date, today: Date) !void {
+    const doc = &d.doc;
+    const h = doc.headings.items[hi];
     const done = if (h.todo) |kw| doc.keywords.isDone(kw) else false;
     const is_today = day.eql(today);
-    const target: Target = .{ .path = path, .offset = h.offset, .category = try alloc.dupe(u8, h.category) };
+    const target: Target = .{ .path = d.path, .offset = h.offset, .category = try alloc.dupe(u8, h.category) };
     const prio = h.priority orelse 'B';
     var buf: [32]u8 = undefined;
 
@@ -348,30 +415,161 @@ fn collectDay(alloc: Allocator, out: *std.ArrayList(Entry), doc: parser.Document
         const delta = dl.date.toDays() - day.toDays();
         const warn: i64 = dl.warn_days orelse deadline_warning_days;
         if (dl.occursOn(day)) {
-            try out.append(alloc, .{ .sort_time = timeKey(dl), .priority = prio, .kind_rank = 1, .text = try formatEntry(alloc, h.category, "Deadline:", h), .target = target });
+            try out.append(alloc, .{ .sort_time = timeKey(dl), .priority = prio, .kind_rank = 1, .text = try formatEntry(alloc, h.category, "Deadline:", h), .target = target, .item = try makeItem(alloc, d, hi, if (dl.time != null) timeLabel(&buf, dl) else "Deadline", .normal) });
         } else if (is_today and !done and delta > 0 and delta <= warn) {
             const label = std.fmt.bufPrint(&buf, "Due in {d} d.", .{@as(u64, @intCast(delta))}) catch "";
-            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 4, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            var wbuf: [48]u8 = undefined;
+            const when = dl.date.format(&wbuf);
+            const long = try std.fmt.allocPrint(alloc, "{s} ({s} {d} {s})", .{ label, when[11..14], dl.date.day, date.month_names[dl.date.month - 1][0..3] });
+            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 4, .text = try formatEntry(alloc, h.category, label, h), .target = target, .item = try makeItem(alloc, d, hi, long, .upcoming) });
         } else if (is_today and !done and delta < 0 and dl.repeat == null) {
             const label = std.fmt.bufPrint(&buf, "Overdue {d} d.", .{@as(u64, @intCast(-delta))}) catch "";
-            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 0, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 0, .text = try formatEntry(alloc, h.category, label, h), .target = target, .item = try makeItem(alloc, d, hi, label, .overdue) });
         }
     }
     if (h.scheduled) |sc| {
         const overdue = today.toDays() - sc.date.toDays();
         if (sc.occursOn(day)) {
             const label = if (sc.time != null) timeLabel(&buf, sc) else "Scheduled:";
-            try out.append(alloc, .{ .sort_time = timeKey(sc), .priority = prio, .kind_rank = 3, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            const short = if (sc.time != null) std.mem.trimEnd(u8, label, ".") else "Scheduled";
+            try out.append(alloc, .{ .sort_time = timeKey(sc), .priority = prio, .kind_rank = 3, .text = try formatEntry(alloc, h.category, label, h), .target = target, .item = try makeItem(alloc, d, hi, short, .normal) });
         } else if (is_today and !done and overdue > 0 and sc.repeat == null) {
             const label = std.fmt.bufPrint(&buf, "Scheduled {d} d. ago", .{@as(u64, @intCast(overdue))}) catch "";
-            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 2, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+            const short = try std.fmt.allocPrint(alloc, "Scheduled {d} d. ago", .{@as(u64, @intCast(overdue))});
+            try out.append(alloc, .{ .sort_time = untimed, .priority = prio, .kind_rank = 2, .text = try formatEntry(alloc, h.category, label, h), .target = target, .item = try makeItem(alloc, d, hi, short, .overdue) });
         }
     }
     for (h.timestamps.items) |ts| {
         if (!ts.occursOn(day)) continue;
         const label = timeLabel(&buf, ts);
-        try out.append(alloc, .{ .sort_time = timeKey(ts), .priority = prio, .kind_rank = 5, .text = try formatEntry(alloc, h.category, label, h), .target = target });
+        try out.append(alloc, .{ .sort_time = timeKey(ts), .priority = prio, .kind_rank = 5, .text = try formatEntry(alloc, h.category, label, h), .target = target, .item = try makeItem(alloc, d, hi, std.mem.trimEnd(u8, label, "."), .normal) });
     }
+}
+
+/// The heading's row for the docked window; strings are copied into `alloc`.
+fn makeItem(alloc: Allocator, d: *const DocRef, hi: usize, label: []const u8, kind: ItemKind) !Item {
+    const h = d.doc.headings.items[hi];
+    var tbuf: [96]u8 = undefined;
+    return .{
+        .todo = if (h.todo) |kw| try alloc.dupe(u8, kw) else "",
+        .done = if (h.todo) |kw| d.doc.keywords.isDone(kw) else false,
+        .priority = h.priority,
+        .title = try cleanTitle(alloc, h.title),
+        .tags = try alloc.dupe(u8, h.tags),
+        .category = try alloc.dupe(u8, h.category),
+        .label = try alloc.dupe(u8, label),
+        .kind = kind,
+        .target = .{ .path = d.path, .offset = h.offset, .category = try alloc.dupe(u8, h.category) },
+        .line = h.line,
+        .outline = try outlinePath(alloc, d.doc.headings.items, hi),
+        .scheduled = if (h.scheduled) |t| try alloc.dupe(u8, formatTimestamp(&tbuf, t)) else "",
+        .deadline = if (h.deadline) |t| try alloc.dupe(u8, formatTimestamp(&tbuf, t)) else "",
+        .closed = if (h.closed) |t| try alloc.dupe(u8, formatTimestamp(&tbuf, t)) else "",
+        .notes = try notesOf(alloc, d.text, h.offset),
+    };
+}
+
+/// The title without its timestamps (the time is in the label), in `alloc`.
+fn cleanTitle(alloc: Allocator, title: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < title.len) {
+        if ((title[i] == '<' or title[i] == '[') and date.parseTimestamp(title, i) != null) {
+            i = date.parseTimestamp(title, i).?.end;
+            continue;
+        }
+        try out.append(alloc, title[i]);
+        i += 1;
+    }
+    return std.mem.trim(u8, out.items, " ");
+}
+
+/// "Project / Phase": the titles of the headings above `hi`, outermost first.
+fn outlinePath(alloc: Allocator, headings: []const parser.Heading, hi: usize) ![]const u8 {
+    var parts: [8][]const u8 = undefined;
+    var n: usize = 0;
+    var level = headings[hi].level;
+    var j = hi;
+    while (j > 0 and level > 1 and n < parts.len) {
+        j -= 1;
+        if (headings[j].level < level) {
+            parts[n] = headings[j].title;
+            n += 1;
+            level = headings[j].level;
+        }
+    }
+    var out: std.ArrayList(u8) = .empty;
+    while (n > 0) {
+        n -= 1;
+        if (out.items.len > 0) try out.appendSlice(alloc, " / ");
+        try out.appendSlice(alloc, parts[n]);
+    }
+    return out.items;
+}
+
+const max_notes = 2000;
+
+fn isHeadingLine(ln: []const u8) bool {
+    const stars = std.mem.indexOfNone(u8, ln, "*") orelse return false;
+    return stars > 0 and ln[stars] == ' ';
+}
+
+/// The text under the heading line at `offset`, up to the next heading:
+/// planning lines and drawers (:PROPERTIES:, :LOGBOOK:) are left out.
+fn notesOf(alloc: Allocator, text: []const u8, offset: usize) ![]const u8 {
+    if (offset >= text.len) return "";
+    var out: std.ArrayList(u8) = .empty;
+    var pos = std.mem.indexOfScalarPos(u8, text, offset, '\n') orelse return "";
+    pos += 1;
+    var in_drawer = false;
+    while (pos < text.len and out.items.len < max_notes) {
+        const end = std.mem.indexOfScalarPos(u8, text, pos, '\n') orelse text.len;
+        const ln = std.mem.trimEnd(u8, text[pos..end], "\r");
+        pos = end + 1;
+        if (isHeadingLine(ln)) break;
+        const t = std.mem.trim(u8, ln, " \t");
+        if (in_drawer) {
+            if (std.ascii.eqlIgnoreCase(t, ":END:")) in_drawer = false;
+            continue;
+        }
+        if (std.ascii.eqlIgnoreCase(t, ":PROPERTIES:") or std.ascii.eqlIgnoreCase(t, ":LOGBOOK:")) {
+            in_drawer = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, t, "SCHEDULED:") or std.mem.startsWith(u8, t, "DEADLINE:") or std.mem.startsWith(u8, t, "CLOSED:")) continue;
+        try out.appendSlice(alloc, t);
+        try out.append(alloc, '\n');
+    }
+    return std.mem.trim(u8, out.items, "\n");
+}
+
+/// "<2026-11-03 Tue 09:30-10:00 +1w -2d>", as org writes it.
+pub fn formatTimestamp(buf: []u8, ts: date.Timestamp) []const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    var dbuf: [24]u8 = undefined;
+    w.writeByte(if (ts.active) '<' else '[') catch return "";
+    w.writeAll(ts.date.format(&dbuf)) catch return "";
+    if (ts.time) |t| {
+        w.print(" {d:0>2}:{d:0>2}", .{ t.hour, t.minute }) catch return "";
+        if (ts.end_time) |e| w.print("-{d:0>2}:{d:0>2}", .{ e.hour, e.minute }) catch return "";
+    }
+    if (ts.repeat) |r| {
+        const prefix = switch (r.kind) {
+            .cumulate => "+",
+            .catch_up => "++",
+            .restart => ".+",
+        };
+        const unit: u8 = switch (r.unit) {
+            .day => 'd',
+            .week => 'w',
+            .month => 'm',
+            .year => 'y',
+        };
+        w.print(" {s}{d}{c}", .{ prefix, r.n, unit }) catch return "";
+    }
+    if (ts.warn_days) |n| w.print(" -{d}d", .{n}) catch return "";
+    w.writeByte(if (ts.active) '>' else ']') catch return "";
+    return w.buffered();
 }
 
 /// Timed entries sort by time; untimed (and the rows that are on a day for
@@ -587,4 +785,76 @@ test "agenda leaves overdue rows to today" {
     agenda.start = today.addDays(1);
     try agenda.build(&.{.{ .path = "/tmp/x.org", .text = text }});
     try std.testing.expect(indexOfText(&agenda, "Late") == std.math.maxInt(usize));
+}
+
+test "agenda groups: a group per day, items with their details" {
+    const gpa = std.testing.allocator;
+    var agenda = Agenda.init(gpa, .week);
+    defer agenda.deinit();
+    const today = Date.today();
+    var dbuf: [32]u8 = undefined;
+    var ybuf: [32]u8 = undefined;
+    const yesterday = today.addDays(-2).format(&ybuf);
+    const text = try std.fmt.allocPrint(gpa,
+        \\* Project :proj:
+        \\** TODO [#A] Ship it :release:
+        \\   SCHEDULED: <{s}>
+        \\   :PROPERTIES:
+        \\   :ID: abc
+        \\   :END:
+        \\   Remember the changelog.
+        \\   - [ ] notes
+        \\** TODO Pay rent
+        \\   DEADLINE: <{s}>
+        \\
+    , .{ today.format(&dbuf), yesterday });
+    defer gpa.free(text);
+    try agenda.build(&.{.{ .path = "/tmp/work.org", .text = text }});
+    try std.testing.expectEqual(@as(usize, 7), agenda.groups.items.len);
+    var found_today: ?Group = null;
+    for (agenda.groups.items) |g| if (g.day) |d| if (d.eql(today)) {
+        found_today = g;
+    };
+    const g = found_today.?;
+    try std.testing.expectEqual(@as(usize, 2), g.items.len);
+    // Overdue rows come first, then the scheduled one.
+    try std.testing.expectEqualStrings("Pay rent", g.items[0].title);
+    try std.testing.expectEqualStrings("Overdue 2 d.", g.items[0].label);
+    try std.testing.expectEqual(ItemKind.overdue, g.items[0].kind);
+    const ship = g.items[1];
+    try std.testing.expectEqualStrings("Ship it", ship.title);
+    try std.testing.expectEqualStrings("TODO", ship.todo);
+    try std.testing.expectEqual(@as(?u8, 'A'), ship.priority);
+    try std.testing.expectEqualStrings(":release:", ship.tags);
+    try std.testing.expectEqualStrings("Scheduled", ship.label);
+    try std.testing.expectEqualStrings("Project", ship.outline);
+    try std.testing.expectEqualStrings("work", ship.category);
+    try std.testing.expectEqual(@as(u32, 1), ship.line);
+    try std.testing.expect(std.mem.startsWith(u8, ship.scheduled, "<"));
+    try std.testing.expectEqualStrings("Remember the changelog.\n- [ ] notes", ship.notes);
+}
+
+test "agenda groups: the to-do list goes file by file" {
+    const gpa = std.testing.allocator;
+    var agenda = Agenda.init(gpa, .todo);
+    defer agenda.deinit();
+    try agenda.build(&.{
+        .{ .path = "/x/a.org", .text = "* TODO One\n* TODO Two\n" },
+        .{ .path = "/x/b.org", .text = "* DONE Finished\n" },
+        .{ .path = "/x/c.org", .text = "* NEXT Three\n" },
+    });
+    try std.testing.expectEqual(@as(usize, 2), agenda.groups.items.len);
+    try std.testing.expectEqualStrings("a.org", agenda.groups.items[0].header);
+    try std.testing.expectEqual(@as(usize, 2), agenda.groups.items[0].items.len);
+    try std.testing.expectEqualStrings("c.org", agenda.groups.items[1].header);
+}
+
+test "formatTimestamp writes what org writes" {
+    var buf: [64]u8 = undefined;
+    const ts = parser_ts("<2026-11-03 Tue 09:30-10:00 +1w -2d>");
+    try std.testing.expectEqualStrings("<2026-11-03 Tue 09:30-10:00 +1w -2d>", formatTimestamp(&buf, ts));
+}
+
+fn parser_ts(s: []const u8) date.Timestamp {
+    return date.parseTimestamp(s, 0).?;
 }
