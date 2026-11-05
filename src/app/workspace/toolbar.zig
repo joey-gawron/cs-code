@@ -2,8 +2,8 @@
 //! (menus on the left, a Quick Launch box in the middle, the folder's name)
 //! and the toolbar (back/forward, file and edit buttons, the run
 //! configuration box and Start). The buttons run the editor's own actions;
-//! the run configuration box and Start belong to debugger support and only
-//! sit in their place until it lands.
+//! the configuration box names the launch configuration F5 starts (a click
+//! picks the next one) and Start starts or continues debugging.
 
 const std = @import("std");
 const scene_mod = @import("../../framework/gpu/scene.zig");
@@ -72,6 +72,12 @@ fn configRect(ws: *const Workspace) Rect {
     return .{ .x = b.right() + group_gap + 6, .y = ws.toolbar_rect.y + 4, .w = 150, .h = ws.toolbar_rect.h - 8 };
 }
 
+/// Start, with its play triangle: right of the configuration box.
+fn startRect(ws: *const Workspace) Rect {
+    const cr = configRect(ws);
+    return .{ .x = cr.right() + 8, .y = ws.toolbar_rect.y + 2, .w = 84, .h = ws.toolbar_rect.h - 4 };
+}
+
 pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
     if (!ws.menu_visible or ws.distraction_free) return false;
     if (m.button != .left) return ws.toolbar_rect.contains(m.pos.x, m.pos.y);
@@ -85,6 +91,17 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
     }
     if (!ws.toolbar_rect.contains(m.pos.x, m.pos.y)) return false;
     ws.menu_open = null;
+    if (configRect(ws).contains(m.pos.x, m.pos.y)) {
+        if (ws.debug.debugger) |d| if (d.configs) |set| if (set.configs.len > 0) {
+            d.selected = (d.selected + 1) % set.configs.len;
+            ws.dirty = true;
+        };
+        return true;
+    }
+    if (startRect(ws).contains(m.pos.x, m.pos.y)) {
+        ws.perform(.debug_start);
+        return true;
+    }
     for (groups, 0..) |g, gi| for (g, 0..) |b, i| {
         if (buttonRect(ws, gi, i).contains(m.pos.x, m.pos.y)) {
             if (b.action) |a| ws.perform(a);
@@ -127,11 +144,13 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     };
     const cr = configRect(ws);
     scene.quad(cr, .{ .color = theme.menubar_background, .border_color = theme.input_border, .border_width = 1, .radius = 2 });
-    _ = ctx.labelFit(.{ .x = cr.x + 6, .y = cr.y, .w = cr.w - 28, .h = cr.h }, "No configurations", ws.fonts.ui_small, theme.list_foreground_dim);
+    const config_name: ?[]const u8 = if (ws.debug.debugger) |d| (if (d.selectedConfig()) |c| c.name else null) else null;
+    _ = ctx.labelFit(.{ .x = cr.x + 6, .y = cr.y, .w = cr.w - 28, .h = cr.h }, config_name orelse "No configurations", ws.fonts.ui_small, if (config_name != null) theme.menubar_foreground else theme.list_foreground_dim);
     drawChevronDown(ctx, cr.right() - 13, cr.y + cr.h / 2, theme.menubar_foreground);
     const start_x = cr.right() + 14;
     drawPlay(ctx, start_x + 4, tb.y + tb.h / 2, Color.hex(0x6cc667), true);
-    const sw = ctx.label(.{ .x = start_x + 18, .y = tb.y, .w = 60, .h = tb.h }, "Start", font, theme.menubar_foreground);
+    const start_label: []const u8 = if (ws.debug.debugger) |d| (if (d.session.state == .stopped) "Continue" else "Start") else "Start";
+    const sw = ctx.label(.{ .x = start_x + 18, .y = tb.y, .w = 70, .h = tb.h }, start_label, font, theme.menubar_foreground);
     drawPlay(ctx, start_x + 18 + sw + 18, tb.y + tb.h / 2, theme.list_foreground_dim, false);
 }
 
