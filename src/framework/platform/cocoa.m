@@ -812,6 +812,26 @@ char *je_get_clipboard(size_t *len) {
     }
 }
 
+char *je_pick_folder(const char *start, const char *title, size_t *len) {
+    @autoreleasepool {
+        NSOpenPanel *panel = [NSOpenPanel openPanel];
+        panel.canChooseFiles = NO;
+        panel.canChooseDirectories = YES;
+        panel.canCreateDirectories = YES;
+        panel.allowsMultipleSelection = NO;
+        if (title) panel.message = [NSString stringWithUTF8String:title];
+        if (start && start[0]) panel.directoryURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:start] isDirectory:YES];
+        if ([panel runModal] != NSModalResponseOK || !panel.URL) return NULL;
+        NSData *data = utf8(panel.URL.path);
+        char *out = malloc(data.length + 1);
+        if (!out) return NULL;
+        memcpy(out, data.bytes, data.length);
+        out[data.length] = 0;
+        *len = data.length;
+        return out;
+    }
+}
+
 char *je_take_opened_paths(size_t *len) {
     @autoreleasepool {
         if (opened_paths.count == 0) return NULL;

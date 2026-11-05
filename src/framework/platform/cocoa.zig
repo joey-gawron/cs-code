@@ -224,3 +224,11 @@ pub fn getSystemClipboard(gpa: Allocator) ?[]u8 {
     defer c.free(raw);
     return gpa.dupe(u8, raw[0..len]) catch null;
 }
+
+/// The folder panel: an absolute path, or null when cancelled.
+pub fn pickFolder(gpa: Allocator, start: [:0]const u8, title: [:0]const u8) ?[]u8 {
+    var len: usize = 0;
+    const raw = c.je_pick_folder(start.ptr, title.ptr, &len) orelse return null;
+    defer c.free(raw);
+    return gpa.dupe(u8, raw[0..len]) catch null;
+}

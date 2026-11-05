@@ -46,8 +46,14 @@ const sep: Item = .separator;
 pub const menus = [_]Menu{
     .{ .title = "File", .items = &.{
         a("New File", .new_file),
+        a("New Project…", .new_project),
+        sep,
         a("Open File…", .open_file),
         a("Open Folder…", .open_folder),
+        a("Open Recent…", .open_recent),
+        a("Clone Repository…", .clone_repository),
+        a("Close Folder", .close_folder),
+        a("Add Folder to Workspace…", .add_folder_to_workspace),
         a("Reopen Closed File", .reopen_closed),
         sep,
         a("Switch Session…", .session_switch),
@@ -209,6 +215,7 @@ pub const menus = [_]Menu{
     } },
     .{ .title = "Help", .items = &.{
         a("Command Palette…", .command_palette),
+        a("Welcome", .show_welcome),
         a("Show Leader Keys", .show_leader_keys),
     } },
 };
