@@ -68,6 +68,8 @@ public class BackgroundCommandLineTests
         var remote = LauncherEntry.ToRequest(CommandLineOptions.Parse(["ssh://me@box:2222/home/me/src", "proj"], dir.Path));
         Assert.Equal(["ssh://me@box:2222/home/me/src"], remote.RemoteTargets);
         Assert.Equal([new LaunchTarget(dir.Combine("proj"), true)], remote.Targets);
+        var lima = LauncherEntry.ToRequest(CommandLineOptions.Parse(["lima://nixos/home/lima.guest/src", "docker://c0ffee/srv"], dir.Path));
+        Assert.Equal(["lima://nixos/home/lima.guest/src", "docker://c0ffee/srv"], lima.RemoteTargets); // a Lima VM opens like any other remote folder
     }
 
     [Fact]

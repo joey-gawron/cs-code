@@ -326,10 +326,13 @@ public sealed class RemoteConnectionManager : IRemoteConnectionManager, IRemoteE
         };
         if (authority.Scheme != RemoteSchemes.Ssh)
         {
-            // A container (docker exec) or a WSL distribution (wsl.exe --exec): the same fixed scripts and bootstrap, another carrier.
-            IRemoteShell shell = authority.Scheme == RemoteSchemes.Docker
-                ? new DockerRemoteShell(config?.Get(RemoteSettings.DockerPath, "docker") ?? "docker", authority, _options.SshEnvironment)
-                : new WslRemoteShell(config?.Get(RemoteSettings.WslPath, "wsl.exe") ?? "wsl.exe", authority, _options.SshEnvironment);
+            // A container (docker exec), a Lima VM (limactl shell) or a WSL distribution (wsl.exe --exec): the same fixed scripts and bootstrap, another carrier.
+            IRemoteShell shell = authority.Scheme switch
+            {
+                RemoteSchemes.Docker => new DockerRemoteShell(config?.Get(RemoteSettings.DockerPath, "docker") ?? "docker", authority, _options.SshEnvironment),
+                RemoteSchemes.Lima => new LimaRemoteShell(config?.Get(RemoteSettings.LimaPath, "limactl") ?? "limactl", authority, _options.SshEnvironment),
+                _ => new WslRemoteShell(config?.Get(RemoteSettings.WslPath, "wsl.exe") ?? "wsl.exe", authority, _options.SshEnvironment),
+            };
             Log($"Connecting to {authority} with {shell.Description}; bundles: {bundles?.Directory ?? "(none found)"}");
             return new ShellServerTransport(shell, launch);
         }

@@ -32,18 +32,19 @@ public abstract class UriMapper
     }
 }
 
-/// <summary>URI schemes of remote workspaces: <c>ssh://[user@]host[:port]/path</c>, <c>docker://container/path</c>, <c>wsl://distro/path</c>.</summary>
+/// <summary>URI schemes of remote workspaces: <c>ssh://[user@]host[:port]/path</c>, <c>docker://container/path</c>, <c>wsl://distro/path</c>, <c>lima://instance/path</c>.</summary>
 public static class RemoteSchemes
 {
     public const string Ssh = "ssh";
     public const string Docker = "docker";
     public const string Wsl = "wsl";
+    public const string Lima = "lima";
 
-    public static IReadOnlyList<string> All { get; } = [Ssh, Docker, Wsl];
+    public static IReadOnlyList<string> All { get; } = [Ssh, Docker, Wsl, Lima];
 
     public static bool IsRemote(string scheme) =>
         string.Equals(scheme, Ssh, StringComparison.OrdinalIgnoreCase) || string.Equals(scheme, Docker, StringComparison.OrdinalIgnoreCase)
-        || string.Equals(scheme, Wsl, StringComparison.OrdinalIgnoreCase);
+        || string.Equals(scheme, Wsl, StringComparison.OrdinalIgnoreCase) || string.Equals(scheme, Lima, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -115,7 +116,7 @@ public sealed class SshUriMapper : UriMapper
 
 /// <summary>
 /// Who we are connected to: user, host (name, alias or IP literal) and port. Its <see cref="Root"/> is <c>ssh://user@host:port/</c>. The same shape
-/// names the other transports: <c>docker://[user@]container/</c> (a running container) and <c>wsl://[user@]distro/</c> (a WSL distribution).
+/// names the other transports: <c>docker://[user@]container/</c> (a running container) <c>wsl://[user@]distro/</c> (a WSL distribution) and <c>lima://instance/</c> (a Lima VM; its ssh user is the instance's own).
 /// </summary>
 public sealed record RemoteAuthority
 {
@@ -129,7 +130,7 @@ public sealed record RemoteAuthority
         // A destination is handed to ssh as one argument: refuse what could be read as an option or split into words (defence in depth: SshArgs checks again).
         if (Host.StartsWith('-') || Host.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '/' or '@' or '\\'))
             throw new ArgumentException($"Invalid host '{host}'", nameof(host));
-        // A container or distribution name goes to docker / wsl.exe as one argument: their own name rules (letters, digits, _ . -).
+        // A container, distribution or VM name goes to docker / wsl.exe / limactl as one argument: their own name rules (letters, digits, _ . -).
         if (Scheme != RemoteSchemes.Ssh && !Host.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or '-'))
             throw new ArgumentException($"Invalid {Scheme} name '{host}'", nameof(host));
         if (User is not null && (User.StartsWith('-') || User.Any(c => char.IsWhiteSpace(c) || char.IsControl(c))))
@@ -142,7 +143,7 @@ public sealed record RemoteAuthority
         Root = new Uri(sb.Append('/').ToString(), UriKind.Absolute);
     }
 
-    /// <summary><c>ssh</c>, <c>docker</c> or <c>wsl</c>: which transport reaches the host.</summary>
+    /// <summary><c>ssh</c>, <c>docker</c>, <c>wsl</c> or <c>lima</c>: which transport reaches the host.</summary>
     public string Scheme { get; }
     public string Host { get; }
     public string? User { get; }
@@ -163,7 +164,7 @@ public sealed record RemoteAuthority
 
     /// <summary>
     /// Parses <c>[user@]host[:port]</c> (IPv6 as <c>[::1]:22</c> or bare <c>::1</c>), an <c>ssh://</c> URI's authority, or a <c>docker://[user@]container</c>
-    /// / <c>wsl://[user@]distro</c> one.
+    /// / <c>wsl://[user@]distro</c> / <c>lima://instance</c> one.
     /// </summary>
     public static RemoteAuthority Parse(string text)
     {

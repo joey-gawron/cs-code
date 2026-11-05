@@ -1,7 +1,7 @@
 # Remote editing — `CsCode.Remote` + `CsCode.Server`
 
 VS Code Remote-SSH model: the GUI runs locally; the **workspace** — files, search, file watching, language servers, **terminals, debug adapters
-and tasks** — lives on a remote machine reached with the **system `ssh`** client, **inside a Docker container** (`docker exec`) or **in a WSL
+and tasks** — lives on a remote machine reached with the **system `ssh`** client, **inside a Docker container** (`docker exec`) **in a Lima VM** (`limactl shell`) or **in a WSL
 distribution** (`wsl.exe`, Windows). The same headless server doubles as the **out-of-process language host** (`cscode.languageHost = process`).
 Phases R1–R4 of `docs/briefs/remote.md` and the wave-3 brief (W3) are implemented; what is not is listed under [Limits](#limits-and-known-gaps).
 
@@ -313,15 +313,23 @@ connection that created or reattached it, so the replay always comes before newe
   output (remote-9). Every other failed install is retried: ssh's 255 (the link broke during the upload), an upload killed by the install timeout
   (a slow link), a container stopped mid-upload (docker's or wsl.exe's own codes), a full disk.
 
-## Transports: ssh, docker, wsl
+## Transports: ssh, docker, wsl, lima
 
-One authority shape names all three: `ssh://[user@]host[:port]/path`, `docker://[user@]container/path`, `wsl://[user@]distro/path` (*Remote: Connect to
-Host…* and the command line accept the `docker://` and `wsl://` forms). Every transport runs the same fixed start/install scripts, so bootstrap, upload,
-persistence and everything above work the same; the status-bar badge reads "SSH: …", "Docker: …" or "WSL: …".
+One authority shape names all four: `ssh://[user@]host[:port]/path`, `docker://[user@]container/path`, `wsl://[user@]distro/path`, `lima://instance/path` (*Remote: Connect to
+Host…* and the command line accept the `docker://`, `wsl://` and `lima://` forms). Every transport runs the same fixed start/install scripts, so bootstrap, upload,
+persistence and everything above work the same; the status-bar badge reads "SSH: …", "Docker: …", "WSL: …" or "Lima: …".
 
 * **ssh**: the system client as described above.
 * **Docker** (`DockerRemoteShell`): `docker exec -i` into a *running* container (`remote.docker.path`); the server installs under the container user's
   `$HOME/.cscode-server`. Tested against a real container (`mcr.microsoft.com/dotnet/runtime-deps:10.0`, pinned by digest).
+* **Lima** (`LimaRemoteShell`): `limactl shell --start --workdir / <instance> -- sh -c …` (`remote.lima.path`), for the NixOS (or any other) Lima VM you work
+  in. limactl connects with the instance's own ssh configuration (key, port, user), so `lima://nixos/home/me/src` needs no `~/.ssh/config` entry, and
+  `--start` boots a stopped instance first (the connection's 3-minute start timeout covers it). `--workdir /` keeps limactl from changing into the host's
+  working directory, which not every VM mounts. The server installs under the VM user's `$HOME/.cscode-server`, the self-contained linux-arm64 or
+  linux-x64 bundle by the VM's architecture (a NixOS VM needs `programs.nix-ld.enable = true` for it; otherwise the portable bundle with a .NET 10 runtime
+  in the VM). *Remote: Connect to Lima VM…* lists `limactl list --json` (name, status, architecture, VM type) and connects to the pick; *Connect to
+  Host…* lists the VMs beside the ssh_config hosts. A `lima://user@instance` user is ignored: limactl always uses the instance's user. Tested against a real
+  NixOS VM (`CSCODE_TEST_LIMA=nixos` with `CSCODE_SERVER_BUNDLES` set; skipped otherwise).
 * **WSL** (`WslRemoteShell`): `wsl.exe -d <distro> --exec sh -c …` (`remote.wsl.path`). Written behind the same seam and unit-tested for its argument
   vector, but **not run** (no Windows host here); WSL distributions are Linux, so the linux-x64/arm64 bundles apply.
 
@@ -373,7 +381,7 @@ mode (a composition that resolves every service), the host stays idle: it starts
 ## Shell glue
 
 `RemoteShellContributions.Start()` (called by `ShellController`) registers: `remote.connect` *Remote: Connect to Host…* (quick pick of the ssh_config `Host`
-names without wildcards, `Include`s followed, + *Add New SSH Host…*, which also takes `docker://container` / `wsl://distro`), `remote.openFolder`
+names without wildcards, `Include`s followed, + *Add New SSH Host…*, which also takes `docker://container` / `wsl://distro` / `lima://instance`; the Lima VMs `limactl list` reports are listed too), `remote.connectLima` *Remote: Connect to Lima VM…*, `remote.openFolder`
 *Remote: Open Remote Folder…* (File menu; takes a remote URI from the command line: `cscode ssh://me@box/home/me/src`, also through the launcher in
 background mode — T5), `remote.disconnect`, `remote.reconnect`, `remote.reinstallServer`, `remote.showLog`; the `remoteName` context key; the remote debug factory/provider; and the
 remote indicator at the left of the status bar, drawn as a **badge** in the theme's `statusBarItem.remoteBackground` / `statusBarItem.remoteForeground`
@@ -404,10 +412,11 @@ connection (server and ssh stopped).
 | `remote.ssh.reconnectGracePeriod` | 10800 | seconds the server keeps running for a client that lost its connection; 0 = it ends with the connection |
 | `remote.docker.path` | `docker` | docker CLI for `docker://` remotes |
 | `remote.wsl.path` | `wsl.exe` | for `wsl://` remotes (Windows) |
+| `remote.lima.path` | `limactl` | for `lima://` remotes (Lima VMs) |
 | `remote.ssh.hosts` | `{}` | per-host overrides of the keys above: `{"box": {"serverInstallPath": "/opt/cscode"}}` |
 | `cscode.languageHost` | `inProcess` | `process`: language client in a local child process |
 
-Every `remote.ssh.*` setting, `remote.docker.path` and `remote.wsl.path` is **machine-scoped** (remote-5, as VS Code's Remote-SSH settings are not
+Every `remote.ssh.*` setting, `remote.docker.path`, `remote.wsl.path` and `remote.lima.path` is **machine-scoped** (remote-5, as VS Code's Remote-SSH settings are not
 workspace settings): only the user settings.json sets them, so a local folder's `.vscode/settings.json` cannot pick the ssh binary, a
 `ProxyCommand`/`LocalCommand` option, the bundle directory or the docker CLI that *Connect to Host…* runs (ignored with a notice; docs/PLATFORM.md
 "Setting scopes"). `cscode.languageHost` is application-scoped. The remote server registers the terminal and debugger scopes itself, so a remote
@@ -430,7 +439,7 @@ values (`settings/setUser` carries `RemoteWindow`; an older client sends none an
 (Remote.Tests), `ConfigurationScopeTests.A_remote_window_takes_machine_settings…` (Platform.Tests).
 
 **Remote settings tab and Open Remote Settings** (VS Code's). While a host is connected the Settings page has a third scope tab, **Remote [SSH: box]**
-(`Docker: …`, `WSL: …`), and the palette offers *Preferences: Open Remote Settings* (`workbench.action.openRemoteSettings`: the page on that tab,
+(`Docker: …`, `WSL: …`, `Lima: …`), and the palette offers *Preferences: Open Remote Settings* (`workbench.action.openRemoteSettings`: the page on that tab,
 an optional search text as argument) and *Preferences: Open Remote Settings (JSON)* (`workbench.action.openRemoteSettingsFile`: the file in the
 editor, created with `{}` first). Both are enabled by VS Code's `remoteName` context key (`ssh-remote`, `attached-container`, `wsl`; set by
 `RemoteShellContributions` while connected, kept while reconnecting). The tab:

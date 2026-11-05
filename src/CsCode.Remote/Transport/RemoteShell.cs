@@ -63,6 +63,21 @@ public sealed class WslRemoteShell(string wslPath, RemoteAuthority distribution,
     }
 }
 
+/// <summary>
+/// Runs the scripts in a Lima VM (macOS and Linux hosts): <c>limactl shell --start --workdir / &lt;instance&gt; -- sh -c &lt;script&gt; cscode &lt;args…&gt;</c>.
+/// limactl connects with the instance's own ssh configuration (its key, port and user) and starts a stopped instance first; <c>--workdir /</c> keeps
+/// it from changing into the host's current directory, which is not shared with every VM. stdin/stdout stay the binary protocol stream; the script
+/// is constant and every value a positional argument, as over ssh. The server installs under the VM user's <c>$HOME/.cscode-server</c>.
+/// </summary>
+public sealed class LimaRemoteShell(string limactlPath, RemoteAuthority instance, IReadOnlyDictionary<string, string?>? environment = null) : IRemoteShell
+{
+    public RemoteAuthority Instance { get; } = instance.Scheme == RemoteSchemes.Lima ? instance : throw new ArgumentException("not a lima:// authority", nameof(instance));
+    public string Description => "lima " + Instance.Host;
+
+    public ProcessLaunch Launch(string script, IReadOnlyList<string> args) =>
+        new(limactlPath, ["shell", "--start", "--workdir", "/", Instance.Host, "--", "sh", "-c", script, "cscode", .. args]) { Environment = environment };
+}
+
 /// <summary>Runs scripts with this machine's <c>/bin/sh</c> (argument vector, no quoting involved).</summary>
 public sealed class LocalRemoteShell(string shell = "/bin/sh", IReadOnlyDictionary<string, string?>? environment = null) : IRemoteShell
 {
