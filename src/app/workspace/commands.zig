@@ -132,6 +132,7 @@ const base = [_]Command{
     .{ .caption = "LSP: Code Actions…", .action = .lsp_code_actions },
     .{ .caption = "LSP: Format Document", .action = .lsp_format },
     .{ .caption = "LSP: Show Hover", .action = .lsp_hover },
+    .{ .caption = "LSP: Show Signature Help", .action = .lsp_signature_help },
     .{ .caption = "LSP: Next Diagnostic", .action = .lsp_next_diagnostic },
     .{ .caption = "LSP: Previous Diagnostic", .action = .lsp_prev_diagnostic },
     .{ .caption = "LSP: Next Error", .action = .lsp_next_error },
