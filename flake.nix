@@ -10,7 +10,7 @@
         default = pkgs.mkShell {
           packages = with pkgs; [
             zig pkg-config wayland-scanner wayland wayland-protocols libxkbcommon
-            libGL libglvnd mesa freetype harfbuzz fontconfig
+            libGL libglvnd mesa freetype harfbuzz fontconfig tree-sitter libvterm-neovim
             xorg.libX11 xorg.libxcb xorg.libXcursor xorg.libXrandr xorg.libXi
           ];
           WAYLAND_PROTOCOLS_DIR = "${pkgs.wayland-protocols}/share/wayland-protocols";
