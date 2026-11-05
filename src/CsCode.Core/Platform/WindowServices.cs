@@ -116,7 +116,4 @@ public interface INavigationService
     /// back. Does nothing when no tab shows the document (the default).
     /// </summary>
     void SetEditorTitle(Uri document, string? title, Uri? suggestedSaveUri = null) { }
-
-    /// <summary>Raised on the UI thread when the active editor's caret moves or another editor becomes active (null: no editor is active).</summary>
-    IEventSource<TextPosition?> ActiveCaretChanged => EventSource.Never<TextPosition?>();
 }
