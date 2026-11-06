@@ -60,9 +60,13 @@ public sealed class QuickInputView : Grid
         _list.Bind(Avalonia.Controls.Primitives.SelectingItemsControl.SelectedIndexProperty, new Binding(nameof(QuickInputViewModel.SelectedIndex)) { Mode = BindingMode.TwoWay });
         _list.Tapped += (_, e) =>
         {
-            if (e.Source is Visual v && Ancestor<ListBoxItem>(v) is { DataContext: QuickPickEntry entry } && !entry.IsSeparator && !_vm.CanPickMany) _vm.Accept();
+            if (e.Source is Visual v && Ancestor<ListBoxItem>(v) is { DataContext: QuickPickEntry entry } && !entry.IsSeparator && !_vm.CanPickMany)
+            {
+                if (_vm.IsInput) { _vm.ApplyCompletion(entry); _input.Focus(); }
+                else _vm.Accept();
+            }
         };
-        _list.Bind(IsVisibleProperty, new Binding(nameof(QuickInputViewModel.IsInput)) { Converter = Avalonia.Data.Converters.BoolConverters.Not });
+        _list.Bind(IsVisibleProperty, new Binding(nameof(QuickInputViewModel.ShowList)));
 
         // The list fills what is left under the box (a short floating window): the box and title stay whole.
         var body = new DockPanel { LastChildFill = true };
@@ -136,7 +140,12 @@ public sealed class QuickInputView : Grid
             case Key.PageUp: for (var i = 0; i < 8; i++) _vm.MoveSelection(-1); e.Handled = true; break;
             case Key.Enter: _vm.Accept(); e.Handled = true; break;
             case Key.Escape: _vm.Cancel(); e.Handled = true; break;
-            case Key.Tab: _vm.MoveSelection(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : +1); e.Handled = true; break;
+            case Key.Tab:
+                if (_vm.IsInput && !e.KeyModifiers.HasFlag(KeyModifiers.Shift) && _vm.TryComplete())
+                    Dispatcher.UIThread.Post(() => _input.CaretIndex = _input.Text?.Length ?? 0, DispatcherPriority.Input); // after the box took the new text
+                else _vm.MoveSelection(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : +1);
+                e.Handled = true;
+                break;
             // Control on macOS too: ⌘Space is Spotlight's and never reaches the app (as VS Code's Ctrl+Space suggest). Unchecked on a Mac: ⌃Space is
             // also macOS's 'Select the previous input source', which takes it with two input sources (the row's check box still works by mouse).
             case Key.Space when e.KeyModifiers == KeyModifiers.Control: _vm.ToggleChecked(); e.Handled = true; break;

@@ -13,7 +13,7 @@ namespace CsCode.Server;
 /// the server's configuration service then serves (workspace settings are read here, next to the files). For a remote window it also turns on
 /// this host's machine settings file (<paramref name="machineSettingsPath"/>), where machine-scoped settings come from, as in VS Code.
 /// </summary>
-internal sealed class WorkspaceHandlers(WorkspaceService workspace, ConfigurationService configuration, IFileSystem fs, string machineSettingsPath)
+internal sealed class WorkspaceHandlers(WorkspaceService workspace, ConfigurationService configuration, IFileSystem fs, string machineSettingsPath, NixDevelopEnvironment? nix = null)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -54,6 +54,9 @@ internal sealed class WorkspaceHandlers(WorkspaceService workspace, Configuratio
         try
         {
             var wanted = folders.Select(f => FileUri.FromDirectoryPath(FileSystemHandlers.Uri(f).LocalPath)).Distinct().ToArray();
+            // The nix develop environment is requested before the folder opens, so the language servers that start with it wait for it (it is a no-op
+            // while nothing changed: also on a reconnect to the same workspace).
+            nix?.Begin(wanted.Length == 0 ? null : wanted[0].LocalPath);
             if (workspace.Folders.SequenceEqual(wanted)) return;
             if (wanted.Length == 0) { await workspace.CloseFolderAsync(ct).ConfigureAwait(false); return; }
             if (workspace.PrimaryFolder != wanted[0]) await workspace.OpenFolderAsync(wanted[0], ct).ConfigureAwait(false);

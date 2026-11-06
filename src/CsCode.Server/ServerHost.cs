@@ -111,8 +111,9 @@ public sealed class ServerHost : IAsyncDisposable
         var search = new SearchHandlers(sp.GetRequiredService<IFileSystem>(), sp.GetRequiredService<IFileWatcher>(), sp.GetRequiredService<IoLane>(), sp.GetRequiredService<PlatformOptions>());
         search.Register(_link);
         _handlers.Add(_searchHandlers = search);
+        _nix = new NixDevelopEnvironment(sp, _loggers.CreateLogger("CsCode.Server.Nix"));
         new WorkspaceHandlers(sp.GetRequiredService<WorkspaceService>(), sp.GetRequiredService<ConfigurationService>(), sp.GetRequiredService<IFileSystem>(),
-            MachineSettingsPath(_options.DataDir)).Register(_link);
+            MachineSettingsPath(_options.DataDir), _nix).Register(_link);
         var languages = new LanguageHost(sp, _link);
         languages.Register();
         _handlers.Add(_languages = languages);
@@ -120,12 +121,12 @@ public sealed class ServerHost : IAsyncDisposable
         // Setting scopes (lsp-core-1): the terminal and debugger settings are registered by services this process never creates (TerminalService,
         // DebugService). Register them here so a remote folder's .vscode/.cscode settings.json cannot choose the shell or debugger run on this host.
         if (sp.GetService<IConfigurationService>() is { } config)
-            _handlers.Add(config.RegisterProperties([.. Terminal.Sessions.TerminalSettingKeys.Properties, .. Dap.Service.DebugService.SettingProperties()]));
+            _handlers.Add(config.RegisterProperties([.. Terminal.Sessions.TerminalSettingKeys.Properties, .. Dap.Service.DebugService.SettingProperties(), .. NixDevelopEnvironment.Properties()]));
 
         // R3: channels (terminals, debug adapters) and tasks
         Channels.Register();
         _handlers.Add(Channels);
-        _terminals = new TerminalHandlers(sp, Channels, _loggers.CreateLogger("CsCode.Server.Terminals"), sp.GetRequiredService<ServerTaskTerminals>());
+        _terminals = new TerminalHandlers(sp, Channels, _loggers.CreateLogger("CsCode.Server.Terminals"), sp.GetRequiredService<ServerTaskTerminals>(), _nix);
         _terminals.Register(_link);
         _debug = new DebugHandlers(sp, Channels, _loggers.CreateLogger("CsCode.Server.Debug"));
         _debug.Register(_link);
@@ -142,6 +143,7 @@ public sealed class ServerHost : IAsyncDisposable
     private SearchHandlers? _searchHandlers;
     private LanguageHost? _languages;
     private TerminalHandlers? _terminals;
+    private NixDevelopEnvironment? _nix;
     private DebugHandlers? _debug;
     private TaskHandlers? _tasks;
 

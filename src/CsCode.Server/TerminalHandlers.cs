@@ -16,7 +16,7 @@ namespace CsCode.Server;
 /// (SIGHUP to the process group, SIGKILL after the grace period). A terminal the client opened for a task of the server's task runner
 /// (<see cref="ServerTaskTerminals"/>) is tagged: its PTY's output and exit also go to that task.
 /// </summary>
-internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILogger log, ServerTaskTerminals? tasks = null)
+internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILogger log, ServerTaskTerminals? tasks = null, NixDevelopEnvironment? nix = null)
 {
     private readonly ConcurrentDictionary<long, PtySource> _terminals = new();
     private readonly object _taskStarts = new(); // a task's term/create and its repetition never run at once
@@ -27,7 +27,14 @@ internal sealed class TerminalHandlers(IServiceProvider sp, ChannelHub hub, ILog
 
     public void Register(IRpcEndpoint link)
     {
-        link.OnRequest<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, (p, _) => ValueTask.FromResult(Create(p)));
+        link.OnRequest<TermCreateParams, TermCreateResult>(RemoteMethods.TermCreate, async (p, ct) =>
+        {
+            // The terminal may arrive before the client's workspace/setFolders does: ask for the folder's nix develop environment here too (a no-op when
+            // it is resolved or being resolved), and wait for it (and the login shell's) as the local terminal service does before it forks a program.
+            if (p.Folder is { IsFile: true } folder) nix?.Begin(folder.LocalPath);
+            await LoginShellEnvironment.WaitAsync(ct).ConfigureAwait(false);
+            return Create(p);
+        });
         link.OnNotification<TermResizeParams>(RemoteMethods.TermResize, p =>
         {
             if (_terminals.TryGetValue(p.Id, out var t)) t.Host.Resize(Math.Clamp(p.Columns, 1, 4096), Math.Clamp(p.Rows, 1, 4096));

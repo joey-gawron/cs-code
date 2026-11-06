@@ -43,6 +43,23 @@ public static class LoginShellEnvironment
     /// </summary>
     public static Task WaitAsync(CancellationToken ct = default) => Volatile.Read(ref s_pending).WaitAsync(ct);
 
+    /// <summary>
+    /// Makes <see cref="WaitAsync"/> also wait for <paramref name="work"/> (the server's <c>nix develop</c> environment, which changes this process's
+    /// environment too): everything that starts a child process waits for the earlier resolutions and for this one. A fault of the work is not the
+    /// waiters' (it never faults <see cref="WaitAsync"/>).
+    /// </summary>
+    public static void Also(Task work)
+    {
+        var previous = Volatile.Read(ref s_pending);
+        Volatile.Write(ref s_pending, Task.Run<Resolution?>(async () =>
+        {
+            var earlier = await previous.ConfigureAwait(false);
+            try { await work.ConfigureAwait(false); }
+            catch (Exception) { /* the owner of the work reports it */ }
+            return earlier;
+        }));
+    }
+
     /// <summary>The resolution started by <see cref="Start"/> (null result: none was started).</summary>
     public static Task<Resolution?> Pending => Volatile.Read(ref s_pending);
 

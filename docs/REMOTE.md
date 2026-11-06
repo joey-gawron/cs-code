@@ -330,6 +330,17 @@ persistence and everything above work the same; the status-bar badge reads "SSH:
   in the VM). *Remote: Connect to Lima VM…* lists `limactl list --json` (name, status, architecture, VM type) and connects to the pick; *Connect to
   Host…* lists the VMs beside the ssh_config hosts. A `lima://user@instance` user is ignored: limactl always uses the instance's user. Tested against a real
   NixOS VM (`CSCODE_TEST_LIMA=nixos` with `CSCODE_SERVER_BUNDLES` set; skipped otherwise).
+* **nix develop** (`remote.nix.develop` = `auto`, in the host's machine settings: *Remote settings* tab, or `~/.cscode-server/data/machine/settings.json`): a
+  Lima VM (or any host) whose dependencies come from the workspace's flake. When the primary folder has a `flake.nix`, the server (`NixDevelopEnvironment`,
+  asked from `workspace/setFolders` before the folder opens) runs `nix develop --no-write-lock-file <flake> --command sh -c 'env -0'` between two random
+  markers (the shellHook's chatter is ignored) and merges the dev shell's environment into its own, the way `LoginShellEnvironment` merges the login shell's,
+  so every terminal, language server, task and debug adapter it starts inherits the flake's toolchain (`PATH`, `IN_NIX_SHELL`, the shell hook's exports).
+  `LoginShellEnvironment.Also` makes everything that starts a child process wait for it; a progress notification shows "Entering nix develop". The shell's own
+  `HOME`, `USER`, `SHELL`, `TERM`, `TMPDIR` and the like are never taken (a terminal keeps the user's shell). It resolves again when the folder, `flake.nix`,
+  `flake.lock` or a setting changes (the previous values are put back first; an unchanged workspace costs two file stats), so reconnecting is enough
+  after a flake change; servers already running keep their environment until they restart (*Language: Restart All Language Servers*). A failure (no
+  `nix`, evaluation error, timeout) leaves the plain environment and says why in a warning. Needs flakes only through `--extra-experimental-features`, so no
+  `nix.conf` change. `shell.nix` / `default.nix` projects are not entered. Tested against a real NixOS Lima VM (`CSCODE_TEST_LIMA`).
 * **WSL** (`WslRemoteShell`): `wsl.exe -d <distro> --exec sh -c …` (`remote.wsl.path`). Written behind the same seam and unit-tested for its argument
   vector, but **not run** (no Windows host here); WSL distributions are Linux, so the linux-x64/arm64 bundles apply.
 
@@ -382,7 +393,7 @@ mode (a composition that resolves every service), the host stays idle: it starts
 
 `RemoteShellContributions.Start()` (called by `ShellController`) registers: `remote.connect` *Remote: Connect to Host…* (quick pick of the ssh_config `Host`
 names without wildcards, `Include`s followed, + *Add New SSH Host…*, which also takes `docker://container` / `wsl://distro` / `lima://instance`; the Lima VMs `limactl list` reports are listed too), `remote.connectLima` *Remote: Connect to Lima VM…*, `remote.openFolder`
-*Remote: Open Remote Folder…* (File menu; takes a remote URI from the command line: `cscode ssh://me@box/home/me/src`, also through the launcher in
+*Remote: Open Remote Folder…* (the path box completes: the folders under what is typed are listed below it, **Tab** extends the text to their common prefix — then highlights the first, and the next Tab, or a click, takes the highlighted one; `~` is the host's home; Enter keeps exactly what was typed) (File menu; takes a remote URI from the command line: `cscode ssh://me@box/home/me/src`, also through the launcher in
 background mode — T5), `remote.disconnect`, `remote.reconnect`, `remote.reinstallServer`, `remote.showLog`; the `remoteName` context key; the remote debug factory/provider; and the
 remote indicator at the left of the status bar, drawn as a **badge** in the theme's `statusBarItem.remoteBackground` / `statusBarItem.remoteForeground`
 (VS Code's ids; white on `#16825D` in the VS 2022 themes, 4.8:1) in every state (`$(remote)` when disconnected → click to connect;
@@ -413,10 +424,13 @@ connection (server and ssh stopped).
 | `remote.docker.path` | `docker` | docker CLI for `docker://` remotes |
 | `remote.wsl.path` | `wsl.exe` | for `wsl://` remotes (Windows) |
 | `remote.lima.path` | `limactl` | for `lima://` remotes (Lima VMs) |
+| `remote.nix.develop` | `off` | `auto`: run the host's terminals, language servers, tasks and debuggers inside the folder's `nix develop` environment |
+| `remote.nix.flake` | `` | the flake to enter: empty = the folder, `#name` = that devShell of it, else a reference as `nix develop` takes it |
+| `remote.nix.timeout` | `600` | seconds to wait for `nix develop` before the plain environment is used |
 | `remote.ssh.hosts` | `{}` | per-host overrides of the keys above: `{"box": {"serverInstallPath": "/opt/cscode"}}` |
 | `cscode.languageHost` | `inProcess` | `process`: language client in a local child process |
 
-Every `remote.ssh.*` setting, `remote.docker.path`, `remote.wsl.path` and `remote.lima.path` is **machine-scoped** (remote-5, as VS Code's Remote-SSH settings are not
+Every `remote.ssh.*` setting, `remote.docker.path`, `remote.wsl.path`, `remote.lima.path` and `remote.nix.*` is **machine-scoped** (remote-5, as VS Code's Remote-SSH settings are not
 workspace settings): only the user settings.json sets them, so a local folder's `.vscode/settings.json` cannot pick the ssh binary, a
 `ProxyCommand`/`LocalCommand` option, the bundle directory or the docker CLI that *Connect to Host…* runs (ignored with a notice; docs/PLATFORM.md
 "Setting scopes"). `cscode.languageHost` is application-scoped. The remote server registers the terminal and debugger scopes itself, so a remote

@@ -11,7 +11,9 @@ public sealed record QuickPickItem(string Label, string? Description = null, str
 
 public sealed record QuickPickOptions(string? Title = null, string? Placeholder = null, bool CanPickMany = false, bool MatchOnDescription = true, bool MatchOnDetail = false);
 
-public sealed record InputBoxOptions(string? Title = null, string? Prompt = null, string? Placeholder = null, string? Value = null, bool Password = false, Func<string, string?>? Validate = null);
+/// <param name="Complete">Candidates for the typed text (each a full replacement of it): listed under the box while typing, Tab completes to their common prefix. Null: no completion. Not carried to a client through the server link.</param>
+public sealed record InputBoxOptions(string? Title = null, string? Prompt = null, string? Placeholder = null, string? Value = null, bool Password = false, Func<string, string?>? Validate = null,
+    Func<string, CancellationToken, Task<IReadOnlyList<string>>>? Complete = null);
 
 public sealed record OpenDialogOptions(bool CanSelectFiles = true, bool CanSelectFolders = false, bool CanSelectMany = false, string? Title = null, IReadOnlyList<(string Name, string[] Extensions)>? Filters = null, Uri? DefaultUri = null);
 

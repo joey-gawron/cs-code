@@ -25,6 +25,12 @@ public static class RemoteSettings
     public const string WslPath = "remote.wsl.path";
     /// <summary>limactl for <c>lima://instance</c> remotes (Lima VMs).</summary>
     public const string LimaPath = "remote.lima.path";
+    /// <summary><c>auto</c>: the remote host's terminals, language servers, tasks and debuggers run inside the workspace flake's <c>nix develop</c> environment; <c>off</c> (default).</summary>
+    public const string NixDevelop = "remote.nix.develop";
+    /// <summary>Which flake's dev shell: empty = the workspace folder, <c>#name</c> = that devShell of it, else a flake reference as <c>nix develop</c> takes it.</summary>
+    public const string NixFlake = "remote.nix.flake";
+    /// <summary>Seconds to wait for <c>nix develop</c> before using the plain environment.</summary>
+    public const string NixTimeout = "remote.nix.timeout";
     /// <summary><c>inProcess</c> (default) or <c>process</c>: run the language client in a separate local cscode-server process (own heap/GC/CPU scheduling). Applies on restart.</summary>
     public const string LanguageHost = "cscode.languageHost";
 
@@ -47,8 +53,17 @@ public static class RemoteSettings
         M(DockerPath, "docker", "The docker CLI used for docker://container remotes (Remote: Connect to Host… accepts docker://container)."),
         M(WslPath, "wsl.exe", "wsl.exe used for wsl://distro remotes (Windows; WSL distributions run the Linux server)."),
         M(LimaPath, "limactl", "The limactl program used for lima://instance remotes (Remote: Connect to Lima VM… lists the instances 'limactl list' knows)."),
+        .. NixProperties(),
         P(LanguageHost, "inProcess", "Where language servers' clients run: 'inProcess' or 'process' (a separate local cscode-server: own heap, GC and CPU scheduling). Applies on restart.")
             with { Scope = ConfigurationScope.Application },
+    ];
+
+    /// <summary>The <c>remote.nix.*</c> settings (machine-scoped: read on the host the terminals and servers run on; the host registers them too).</summary>
+    public static IReadOnlyList<ConfigurationProperty> NixProperties() =>
+    [
+        M(NixDevelop, "off", "'auto': when the folder has a flake.nix, run terminals, language servers, tasks and debuggers inside its `nix develop` environment (resolved when the folder opens or flake.nix / flake.lock change). 'off': the plain environment."),
+        M(NixFlake, "", "The flake whose dev shell to enter: empty is the workspace folder; '#name' picks that devShell of the folder's flake; anything else (e.g. 'github:org/repo#dev') is passed to `nix develop` as it is."),
+        M(NixTimeout, 600, "Seconds to wait for `nix develop` (the first evaluation may build or download); then the plain environment is used."),
     ];
 
     private static ConfigurationProperty P(string key, object value, string description) =>

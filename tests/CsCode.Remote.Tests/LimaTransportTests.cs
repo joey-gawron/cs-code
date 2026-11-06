@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using CsCode.Core.Remote;
+using CsCode.Core.Terminal;
+using CsCode.Terminal.Sessions;
+using Microsoft.Extensions.DependencyInjection;
 using CsCode.Remote.Client;
 using CsCode.Remote.Install;
 using CsCode.Remote.Protocol;
@@ -135,6 +138,65 @@ public class LimaTransportTests
         finally
         {
             Limactl("shell", "--workdir", "/", instance, "--", "rm", "-rf", dir);
+        }
+    }
+
+    private const string ProbeFlake = """
+        {
+          inputs.nixpkgs.url = "nixpkgs";
+          outputs = { self, nixpkgs }: let
+            systems = [ "aarch64-linux" "x86_64-linux" ];
+          in {
+            devShells = nixpkgs.lib.genAttrs systems (system: {
+              default = nixpkgs.legacyPackages.${system}.mkShell { packages = [ nixpkgs.legacyPackages.${system}.hello ]; NIX_PROBE_VALUE = "inside-the-dev-shell"; };
+            });
+          };
+        }
+        """;
+
+    [Fact]
+    public async Task A_flake_workspace_in_a_real_lima_vm_gives_its_terminals_the_nix_develop_environment()
+    {
+        Assert.SkipWhen(RealInstance is null, "set CSCODE_TEST_LIMA=<running instance> to connect to a real Lima VM");
+        var instance = RealInstance!;
+        Assert.SkipWhen(InstallerTests.PublishedBundles() is null, "no server bundles: run tools/publish-server.sh or set CSCODE_SERVER_BUNDLES");
+        var dir = "/tmp/cscode-lima-nix-" + Guid.NewGuid().ToString("N")[..10];
+        const string machine = "$HOME/.cscode-server/data/machine/settings.json";
+        // the VM's own machine settings: turned on for the test, put back (or removed) afterwards
+        Assert.Equal(0, Limactl("shell", "--workdir", "/", instance, "--", "sh", "-c", $"mkdir -p {dir} \"$(dirname {machine})\" && cp {machine} {dir}/settings.backup 2>/dev/null; true").Code);
+        RemoteTestHost? hostRef = null;
+        try
+        {
+            Assert.Equal(0, Limactl("shell", "--workdir", "/", instance, "--", "sh", "-c", $"printf '%s' '{{ \"remote.nix.develop\": \"auto\" }}' > {machine}").Code);
+            await using var host = new RemoteTestHost(o =>
+            {
+                o.Bundles = InstallerTests.PublishedBundles();
+                o.GracePeriod = TimeSpan.Zero;
+            }, loopback: false, r3: true);
+            hostRef = host;
+            await host.Manager.ConnectAsync("lima://" + instance, TestEnv.Ct);
+            await host.FileSystem.WriteFileAsync(host.Manager.ToUri(dir + "/flake.nix")!, System.Text.Encoding.UTF8.GetBytes(ProbeFlake), true, TestEnv.Ct);
+            await host.WorkspaceService.OpenFolderAsync(host.Manager.ToUri(dir + "/")!, TestEnv.Ct);
+
+            var terminals = host.Services.GetRequiredService<TerminalService>();
+            var t = (TerminalSession)await terminals.CreateAsync(new TerminalCreateOptions
+            {
+                ShellPath = "/bin/sh", Show = false, InitialSize = (100, 30), Env = new Dictionary<string, string?> { ["PS1"] = "$ " },
+            }, TestEnv.Ct);
+            await t.SendTextAsync("echo PROBE=$NIX_PROBE_VALUE; hello --version | head -1; echo IN=$IN_NIX_SHELL", true, TestEnv.Ct);
+            var screen = await TerminalProbe.WaitForTextAsync(t, "IN=impure", TimeSpan.FromMinutes(8)); // the first nix develop may build or download
+            Assert.Contains("\nPROBE=inside-the-dev-shell", screen);
+            Assert.Contains("hello (GNU Hello)", screen);
+            await terminals.KillAsync(t, TestEnv.Ct);
+            await host.Manager.DisconnectAsync(TestEnv.Ct);
+        }
+        catch (Exception ex) when (ex is not Xunit.Sdk.SkipException)
+        {
+            throw new Xunit.Sdk.XunitException(ex + "\n--- client Remote log ---\n" + hostRef?.Output.Text(RemoteConnectionManager.OutputChannel));
+        }
+        finally
+        {
+            Limactl("shell", "--workdir", "/", instance, "--", "sh", "-c", $"if [ -f {dir}/settings.backup ]; then cp {dir}/settings.backup {machine}; else rm -f {machine}; fi; rm -rf {dir}");
         }
     }
 }

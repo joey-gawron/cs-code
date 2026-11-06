@@ -153,8 +153,10 @@ public sealed class RemoteShellContributions(IServiceProvider sp) : IDisposable
         if (path is null)
         {
             var home = manager.Session?.Server.Home ?? "/";
+            var start = home.EndsWith('/') ? home : home + "/";
             path = Window is { } w
-                ? await w.ShowInputBoxAsync(new InputBoxOptions("Open Remote Folder", $"Folder on {manager.HostName}", "/path/to/folder", home)).ConfigureAwait(false)
+                ? await w.ShowInputBoxAsync(new InputBoxOptions("Open Remote Folder", $"Folder on {manager.HostName} (Tab completes)", "/path/to/folder", start,
+                    Complete: (typed, ct) => RemotePathCompletion.CompleteAsync(manager.FileSystem.ReadDirectoryAsync, manager.ToUri, home, typed, ct))).ConfigureAwait(false)
                 : home;
             if (string.IsNullOrWhiteSpace(path)) return;
         }

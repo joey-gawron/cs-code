@@ -105,12 +105,19 @@ public sealed class QuickInputViewModel : ObservableObject, IDisposable
     private string? _validation;
     private int _selectedIndex = -1;
 
-    public QuickInputViewModel(IUiDispatcher ui) => _ui = ui;
+    public QuickInputViewModel(IUiDispatcher ui)
+    {
+        _ui = ui;
+        Items.CollectionChanged += (_, _) => OnPropertyChanged(nameof(ShowList));
+    }
+
+    /// <summary>The list under the box: always for a pick, for an input only while it has completion candidates.</summary>
+    public bool ShowList => !_isInput || Items.Count > 0;
 
     public BulkObservableCollection<QuickPickEntry> Items { get; } = new();
 
     public bool IsVisible { get => _isVisible; private set => SetProperty(ref _isVisible, value); }
-    public bool IsInput { get => _isInput; private set => SetProperty(ref _isInput, value); }
+    public bool IsInput { get => _isInput; private set { if (SetProperty(ref _isInput, value)) OnPropertyChanged(nameof(ShowList)); } }
     public bool CanPickMany { get => _canPickMany; private set => SetProperty(ref _canPickMany, value); }
     public bool IsBusy { get => _isBusy; private set => SetProperty(ref _isBusy, value); }
     public string Title { get => _title; private set => SetProperty(ref _title, value); }
@@ -142,7 +149,11 @@ public sealed class QuickInputViewModel : ObservableObject, IDisposable
         {
             if (!SetProperty(ref _text, value)) return;
             if (_session is null) return;
-            if (_session.Input is { } input) Validation = input.Validate?.Invoke(value);
+            if (_session.Input is { } input)
+            {
+                Validation = input.Validate?.Invoke(value);
+                if (input.Complete is not null) RequestCompletions(_session);
+            }
             else RequestQuery();
         }
     }
@@ -190,8 +201,87 @@ public sealed class QuickInputViewModel : ObservableObject, IDisposable
         Items.Clear();
         SetProperty(ref _text, initialText, nameof(Text));
         IsVisible = true;
-        if (session.Input is { } input) Validation = input.Validate?.Invoke(initialText);
+        if (session.Input is { } input)
+        {
+            Validation = input.Validate?.Invoke(initialText);
+            if (input.Complete is not null) RequestCompletions(session);
+        }
         else RequestQuery();
+    }
+
+    /// <summary>How long typing must pause before an input box asks for completion candidates (a remote directory listing per keystroke is wasted).</summary>
+    private static readonly TimeSpan CompletionDelay = TimeSpan.FromMilliseconds(120);
+
+    /// <summary>Asks the input box's completion callback for candidates of the current text; the newest request wins.</summary>
+    private void RequestCompletions(Session session)
+    {
+        if (session.Input?.Complete is not { } complete) return;
+        var gen = ++_generation;
+        session.QueryCts?.Cancel();
+        session.QueryCts?.Dispose();
+        var cts = session.QueryCts = new CancellationTokenSource();
+        var token = cts.Token;
+        var text = _text;
+        _ = Task.Run(async () =>
+        {
+            IReadOnlyList<string> candidates;
+            try
+            {
+                await Task.Delay(CompletionDelay, token).ConfigureAwait(false);
+                candidates = await complete(text, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception) { candidates = []; } // a failing source offers nothing; the typed text is still accepted
+            _ui.Post(() =>
+            {
+                if (gen != _generation || !ReferenceEquals(_session, session)) return;
+                Items.ReplaceAll(candidates.Select(c => new QuickPickEntry(DisplayName(c)) { Tag = c }));
+                _selectedIndex = -2;
+                SelectedIndex = -1; // nothing highlighted until the user moves or presses Tab again
+            });
+        }, token);
+    }
+
+    /// <summary>The last path segment of a candidate (<c>/home/me/src/</c> is shown as <c>src/</c>).</summary>
+    private static string DisplayName(string candidate)
+    {
+        var trimmed = candidate.TrimEnd('/');
+        var slash = trimmed.LastIndexOf('/');
+        return slash < 0 ? candidate : candidate[(slash + 1)..];
+    }
+
+    /// <summary>
+    /// Tab in an input box with completion: takes the highlighted candidate; else extends the text to the candidates' common prefix; else (several
+    /// candidates and nothing to add) highlights the first, which the next Tab takes. False when this box has no completion (Tab then moves the highlight).
+    /// </summary>
+    public bool TryComplete()
+    {
+        if (_session?.Input?.Complete is null) return false;
+        if (_selectedIndex >= 0 && ActiveEntry?.Tag is string chosen) { Text = chosen; return true; }
+        var all = Items.Select(i => i.Tag).OfType<string>().ToArray();
+        if (all.Length == 0) return true;
+        var prefix = CommonPrefix(all);
+        if (prefix.Length > _text.Length) Text = prefix;
+        else SelectedIndex = NextSelectable(-1, +1);
+        return true;
+    }
+
+    /// <summary>Clicking a candidate: it replaces the typed text (the box stays open).</summary>
+    public void ApplyCompletion(QuickPickEntry entry)
+    {
+        if (_session?.Input?.Complete is not null && entry.Tag is string text) Text = text;
+    }
+
+    internal static string CommonPrefix(IReadOnlyList<string> values)
+    {
+        var prefix = values[0];
+        foreach (var v in values.Skip(1))
+        {
+            var n = 0;
+            while (n < prefix.Length && n < v.Length && prefix[n] == v[n]) n++;
+            prefix = prefix[..n];
+        }
+        return prefix;
     }
 
     private void RequestQuery()
