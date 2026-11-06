@@ -114,6 +114,7 @@ start-up can never leave a dead session marked Running.
 `maxRestarts` (5) crashes per `restartWindowSeconds` (180 s)** with exponential backoff `restartBackoffMs`, then `Faulted` + `LastError` and **one**
 `IWindowService` message with a "Restart" action), the "binary not found" state (`Stopped` + one friendly message with an install hint, never retried
 automatically) and the user-stop rule (a stopped server is not auto-started by new documents until `StartAsync`).
+*Language: Restart Language Server...* (pick one of the known servers, a faulted or hung one included) and *Language: Restart All Language Servers* (`languages.restartServer`, `languages.restartAllServers`, `App/Services/LanguageServerCommands`) call `ILanguageServerManager.RestartAsync`, so they serve the local servers, the process language host and a remote workspace's servers alike.
 
 ## 5. Document synchronisation
 

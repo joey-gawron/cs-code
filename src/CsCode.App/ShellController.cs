@@ -222,6 +222,7 @@ public sealed class ShellController : IDisposable
         StatusItems = new ShellStatusItems(_sp.GetRequiredService<IStatusBarService>(), _ui, nav, _sp.GetRequiredService<NotificationCenter>(), config,
             _sp.GetService<ILanguageService>(), _sp.GetService<IDiagnosticService>(), debug, _sp.GetService<IMemoryMonitor>(), _sp.GetService<ILanguageServerManager>());
         _disposables.Add(StatusItems);
+        _disposables.Add(LanguageServerCommands.Register(commands, _sp.GetService<ILanguageServerManager>(), _sp.GetService<IWindowService>()));
 
         // files.autoSave (docs/SHELL.md, "Auto save"): saves through the well; follows the keyboard focus and the activation of every shell window.
         if (config is not null)
