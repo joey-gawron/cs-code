@@ -27,6 +27,8 @@ const status_mod = @import("../../model/git/status.zig");
 const rpath = @import("../../model/remote/path.zig");
 const git_ui = @import("git_ui.zig");
 const git_popup = @import("git_popup.zig");
+const scm_state = @import("scm_state.zig");
+const scm_ui = @import("scm_ui.zig");
 const panel_ui = @import("panel_ui.zig");
 const Palette = @import("../terminal/palette.zig").Palette;
 
@@ -482,6 +484,7 @@ fn onStatus(ctx: *anyopaque, job: *git.Job) void {
 
 /// A file changed on disk (from the file watcher).
 pub fn onDiskChange(ws: *Workspace, path: []const u8) void {
+    scm_state.onDiskChange(ws, path);
     const p = ws.panel.source_control orelse return;
     if (p.view.root) |root| if (isUnder(path, root)) {
         p.stale = true;
@@ -717,6 +720,7 @@ pub fn confirm(p: *Panel, question: []const u8, r: *Request) void {
 
 /// Lists (yes/no questions, pickers). Returns false for other lists.
 pub fn confirmList(ws: *Workspace, tag: u32, item: ?quick_panel.Item, query: []const u8) bool {
+    if (scm_ui.confirmList(ws, tag, item, query)) return true;
     const p = ws.panel.source_control orelse return false;
     if (tag == @intFromEnum(PromptKind.pick)) {
         git_popup.picked(p, if (item) |it| it.payload.value else null, query);
@@ -733,6 +737,7 @@ pub fn confirmList(ws: *Workspace, tag: u32, item: ?quick_panel.Item, query: []c
 
 /// Prompts of the popups. Returns false for other prompts.
 pub fn confirmPrompt(ws: *Workspace, tag: u32, input: []const u8) bool {
+    if (scm_ui.confirmPrompt(ws, tag, input)) return true;
     if (tag < @intFromEnum(PromptKind.branch_create) or tag > @intFromEnum(PromptKind.tag_name)) return false;
     const p = ws.panel.source_control orelse return true;
     git_popup.prompted(p, @enumFromInt(tag), std.mem.trim(u8, input, " \t"));

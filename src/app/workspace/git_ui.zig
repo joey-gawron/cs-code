@@ -12,6 +12,11 @@ const keymap = @import("../settings/keymap.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const git = @import("../../model/git/git.zig");
 const blame_mod = @import("../../model/git/blame.zig");
+const scm_state = @import("scm_state.zig");
+const scm_ui = @import("scm_ui.zig");
+const diff_view = @import("diff_view.zig");
+const quick_diff_mod = @import("../editor/quick_diff.zig");
+const rpath = @import("../../model/remote/path.zig");
 
 const Workspace = workspace_mod.Workspace;
 const Editor = editor_mod.Editor;
@@ -44,10 +49,18 @@ pub const State = struct {
     /// A popup waiting for `git show`.
     popup: ?Popup = null,
     show_job: ?*git.Job = null,
+    /// The repository's status, decorations and commands (scm_state.zig).
+    scm: scm_state.State = .{},
+    /// The change markers of open files (editors point at them).
+    quick: std.ArrayList(*quick_diff_mod.QuickDiff) = .empty,
 };
 
 pub fn deinit(ws: *Workspace) void {
+    scm_state.deinit(ws);
     const st = &ws.git_state;
+    for (ws.tabs.items) |t| t.editor.quick_diff = null;
+    for (st.quick.items) |q| q.destroy();
+    st.quick.deinit(ws.gpa);
     if (st.show_job) |j| j.detach();
     for (st.blames.items) |b| b.destroy();
     st.blames.deinit(ws.gpa);
@@ -110,6 +123,74 @@ fn ensureBlame(ws: *Workspace, ed: *Editor) ?*Blame {
     return b;
 }
 
+// ---- Change markers -----------------------------------------------------------------
+
+fn quickFor(ws: *Workspace, buffer: *const editor_mod.Buffer) ?*quick_diff_mod.QuickDiff {
+    for (ws.git_state.quick.items) |q| if (q.buffer == buffer) return q;
+    return null;
+}
+
+fn isUnder(path: []const u8, root: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, root)) return false;
+    return path.len > root.len and path[root.len] == '/';
+}
+
+fn onOriginal(ctx: *anyopaque, job: *git.Job) void {
+    const q: *quick_diff_mod.QuickDiff = @ptrCast(@alignCast(ctx));
+    defer job.destroy();
+    q.job = null;
+    // A file git doesn't know (untracked) has no original: no markers.
+    q.setOriginal(job.output);
+}
+
+/// Gives the visible file editors of the repository their change markers,
+/// reads each one's original again when the repository changed, and
+/// recomputes the marks once edits have paused.
+fn syncQuickDiffs(ws: *Workspace) void {
+    const st = &ws.git_state;
+    var i: usize = 0;
+    while (i < st.quick.items.len) {
+        const q = st.quick.items[i];
+        const alive = for (ws.buffers.items) |b| {
+            if (b == q.buffer) break if (b.path) |p| std.mem.eql(u8, p, q.path) else false;
+        } else false;
+        if (alive) {
+            i += 1;
+            continue;
+        }
+        for (ws.tabs.items) |t| if (t.editor.quick_diff == q) {
+            t.editor.quick_diff = null;
+        };
+        _ = st.quick.swapRemove(i);
+        q.destroy();
+    }
+    const scm = &st.scm;
+    const root = scm.root orelse return;
+    for (ws.group_active[0..ws.groupCount()]) |maybe| {
+        const ed = maybe orelse continue;
+        if (ed.mode != .full or ed.plain) continue;
+        const path = ed.buffer.path orelse continue;
+        if (rpath.isRemote(path) or !isUnder(path, root) or quickFor(ws, ed.buffer) != null) continue;
+        const q = quick_diff_mod.QuickDiff.create(ws.gpa, ed.buffer, path) catch continue;
+        st.quick.append(ws.gpa, q) catch {
+            q.destroy();
+            continue;
+        };
+    }
+    const now = platform.nowMs();
+    for (ws.tabs.items) |t| t.editor.quick_diff = quickFor(ws, t.editor.buffer);
+    for (st.quick.items) |q| {
+        if (q.job == null and q.generation != scm.generation and scm.snapshot != null and q.path.len > root.len) {
+            q.generation = scm.generation;
+            var arg_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
+            if (std.fmt.bufPrint(&arg_buf, ":{s}", .{q.path[root.len + 1 ..]})) |arg| {
+                q.job = git.Job.start(runner(ws), &.{ "show", arg }, root, null, null, q, onOriginal) catch null;
+            } else |_| {}
+        }
+        if (q.update(now)) ws.dirty = true;
+    }
+}
+
 /// Matches blames to open buffers and views, starting runs where needed.
 fn sync(ws: *Workspace) void {
     const st = &ws.git_state;
@@ -154,6 +235,10 @@ fn pollRepos(ws: *Workspace) void {
 }
 
 pub fn tick(ws: *Workspace) void {
+    scm_state.tick(ws);
+    scm_ui.tick(ws);
+    diff_view.tick(ws);
+    syncQuickDiffs(ws);
     sync(ws);
     pollRepos(ws);
     const st = &ws.git_state;
@@ -185,9 +270,15 @@ pub fn tick(ws: *Workspace) void {
 /// Time until the next blame timer (inline blame, hover popup).
 pub fn nextTimer(ws: *Workspace) ?i64 {
     const st = &ws.git_state;
-    var soonest: ?i64 = null;
+    var soonest: ?i64 = scm_state.nextTimer(ws);
+    {
+        const now = platform.nowMs();
+        for (st.quick.items) |q| if (q.dueIn(now)) |ms| {
+            soonest = if (soonest) |s| @min(s, ms) else ms;
+        };
+    }
     if (ws.activeEditor()) |ed| if (blame_view.inlineDueIn(ed)) |ms| {
-        soonest = @max(1, ms);
+        soonest = if (soonest) |s| @min(s, @max(1, ms)) else @max(1, ms);
     };
     if (!st.rest_done) if (ws.activeEditor()) |ed| if (ed.blame != null) {
         const ms = @max(1, st.rest_since + hover_delay_ms - platform.nowMs());

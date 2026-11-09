@@ -18,6 +18,7 @@ const Executor = @import("../../framework/util/executor.zig").Executor;
 const long_line = @import("long_line.zig");
 const blame_mod = @import("../../model/git/blame.zig");
 const blame_view = @import("blame_view.zig");
+const quick_diff = @import("quick_diff.zig");
 
 const Allocator = std.mem.Allocator;
 pub const Buffer = buffer_mod.Buffer;
@@ -208,6 +209,8 @@ pub const Editor = struct {
 
     /// Git blame of the buffer (owned by the workspace, see git_ui.zig).
     blame: ?*blame_mod.Blame = null,
+    /// The change markers of the buffer's file (owned by the workspace, see git_ui.zig).
+    quick_diff: ?*quick_diff.QuickDiff = null,
     /// This view shows the blame column in its gutter.
     show_blame: bool = false,
     inline_blame: blame_view.InlineState = .{},

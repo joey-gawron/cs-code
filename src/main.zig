@@ -419,6 +419,13 @@ fn keyEvent(spec: []const u8) !platform.KeyEvent {
 
 test {
     _ = @import("model/text/selection.zig");
+    _ = @import("model/text/linediff.zig");
+    _ = @import("app/workspace/scm_state.zig");
+    _ = @import("app/editor/quick_diff.zig");
+    _ = @import("app/workspace/scm_ui.zig");
+    _ = @import("app/workspace/diff_view.zig");
+    _ = @import("app/workspace/graph_view.zig");
+    _ = @import("model/git/history.zig");
     _ = @import("model/lsp/signature.zig");
     _ = @import("model/syntax/grammar_tests.zig");
     _ = @import("app/session/store.zig");

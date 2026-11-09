@@ -12,6 +12,7 @@ const platform = @import("../../framework/platform/platform.zig");
 const syntax_mod = @import("../../model/syntax/syntax.zig");
 const org_src_highlight = @import("../../model/org/src_highlight.zig");
 const blame_view = @import("blame_view.zig");
+const quick_diff_mod = @import("quick_diff.zig");
 const long_line = @import("long_line.zig");
 const line_index = @import("../../framework/text/line_index.zig");
 
@@ -45,6 +46,7 @@ pub fn layout(self: *Editor, bounds: Rect) void {
         gutter_w = @max(digits, 3) * cw + cw * 3;
     }
     gutter_w += blame_view.columnWidth(self);
+    gutter_w += quickDiffWidth(self);
     if (hasDebugMargin(self)) gutter_w += cw * 2;
     const minimap_w: f32 = if (settings.show_minimap and !self.plain) @round(@min(120, bounds.w * 0.12)) else 0;
     self.gutter_rect = .{ .x = bounds.x, .y = bounds.y, .w = gutter_w, .h = bounds.h };
@@ -743,6 +745,12 @@ fn paintDebugMark(scene: *Scene, cx: f32, cy: f32, mark: editor_mod.DebugMark) v
     }
 }
 
+/// Room in the gutter for the change markers, between the numbers and the fold boxes.
+fn quickDiffWidth(self: *const Editor) f32 {
+    if (self.quick_diff == null or !self.env.settings.show_line_numbers or self.plain) return 0;
+    return quick_diff_mod.gutter_width;
+}
+
 fn paintGutter(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRange, caret_rows: *std.AutoHashMapUnmanaged(u32, void)) void {
     const g = self.gutter_rect;
     scene.fill(g, theme.background);
@@ -765,9 +773,29 @@ fn paintGutter(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRa
         if (!gop.found_existing or @intFromEnum(d.severity) < @intFromEnum(gop.value_ptr.*)) gop.value_ptr.* = d.severity;
     }
     var d = vis.first_d;
+    const qd_w = quickDiffWidth(self);
+    var mark_hint: usize = 0;
     while (d <= vis.last_d) : (d += 1) {
-        // Wrapped continuation rows get no number.
         const seg = self.segmentAt(d);
+        // The change bar runs the whole of a wrapped line.
+        if (self.quick_diff) |qd| if (qd_w > 0) {
+            if (qd.markAt(seg.row, &mark_hint)) |mark| {
+                const bar_x = g.right() - cw * 2 - qd_w + 3;
+                const my = rowY(self, d);
+                const mc = quick_diff_mod.color(theme, mark.kind);
+                if (mark.kind == .deleted) {
+                    if (seg.index == 0) {
+                        // A wedge at the line the deleted ones were above.
+                        scene.fill(.{ .x = bar_x, .y = my - 1, .w = 6, .h = 2 }, mc);
+                        scene.fill(.{ .x = bar_x, .y = my + 1, .w = 4, .h = 1.5 }, mc);
+                        scene.fill(.{ .x = bar_x, .y = my + 2.5, .w = 2, .h = 1.5 }, mc);
+                    }
+                } else {
+                    scene.fill(.{ .x = bar_x, .y = my, .w = 3, .h = lh }, mc);
+                }
+            }
+        };
+        // Wrapped continuation rows get no number.
         if (seg.index != 0) continue;
         const row = seg.row;
         const label = std.fmt.bufPrint(&buf, "{d}", .{row + 1}) catch continue;
@@ -775,7 +803,7 @@ fn paintGutter(self: *Editor, scene: *Scene, theme: *const Theme, vis: VisibleRa
         const active = caret_rows.contains(row);
         const color = if (active) theme.gutter_foreground_active else theme.gutter_foreground;
         const y = rowY(self, d);
-        _ = self.env.text.drawText(scene, label, self.env.font, g.right() - cw * 2 - w, y + baseline_off, color);
+        _ = self.env.text.drawText(scene, label, self.env.font, g.right() - cw * 2 - qd_w - w, y + baseline_off, color);
         if (diagnostic_rows.get(row)) |sev| {
             scene.quad(.{ .x = g.x + 4, .y = y + lh / 2 - 3, .w = 6, .h = 6 }, .{ .color = diagnosticColor(theme, sev), .radius = 3 });
         }

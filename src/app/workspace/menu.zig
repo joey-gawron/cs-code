@@ -181,6 +181,8 @@ pub const menus = [_]Menu{
         a("Restart Language Servers", .lsp_restart),
         a("Language Server Status", .lsp_show_status),
         sep,
+        a("Source Control", .scm_show),
+        a("Git Graph", .scm_graph),
         a("Git Status", .git_status),
         a("Git Blame", .git_toggle_blame),
         a("Inline Git Blame", .git_toggle_inline_blame),

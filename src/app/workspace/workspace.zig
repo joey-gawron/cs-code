@@ -35,6 +35,10 @@ const groups = @import("groups.zig");
 const terminal_ui = @import("terminal_ui.zig");
 const settings_ui = @import("settings_ui.zig");
 const markdown_ui = @import("markdown_ui.zig");
+const scm_state = @import("scm_state.zig");
+const scm_ui = @import("scm_ui.zig");
+const diff_view = @import("diff_view.zig");
+const graph_view = @import("graph_view.zig");
 const panel_ui = @import("panel_ui.zig");
 const search_ui = @import("search_ui.zig");
 const debug_ui = @import("debug_ui.zig");
@@ -99,6 +103,10 @@ pub const Tab = struct {
     settings: ?*settings_ui.View = null,
     /// Set for a Markdown preview tab (markdown_ui.zig).
     markdown: ?*markdown_ui.View = null,
+    /// Set for the Git Graph tab (graph_view.zig).
+    graph: ?*graph_view.View = null,
+    /// Set for a diff editor tab (diff_view.zig).
+    diff_view: ?*diff_view.View = null,
     /// Set for Diff, Log and Git Output tabs (opened from Source Control; git_status_ui.zig).
     git_diff: ?*git_status_ui.Diff = null,
     /// Set for a commit message (COMMIT_EDITMSG) tab (git_popup.zig).
@@ -457,6 +465,8 @@ pub const Workspace = struct {
             if (t.terminal) |tv| tv.destroy();
             if (t.settings) |sv| sv.destroy();
             if (t.markdown) |mv| mv.destroy();
+            if (t.diff_view) |dv| dv.destroy();
+            if (t.graph) |gv| gv.destroy();
             if (t.git_diff) |d| d.destroy(null);
             if (t.git_commit) |c| c.destroy();
         }
@@ -980,6 +990,8 @@ pub const Workspace = struct {
         if (tab.terminal) |tv| tv.destroy();
         if (tab.settings) |sv| sv.destroy();
         if (tab.markdown) |mv| mv.destroy();
+        if (tab.diff_view) |dv| dv.destroy();
+        if (tab.graph) |gv| gv.destroy();
         if (tab.git_diff) |d| d.destroy(ed.buffer);
         if (tab.git_commit) |c| git_status_ui.commitTabClosed(self, c, ed.buffer);
         for (self.mru.items, 0..) |e, i| if (e == ed) {
@@ -1826,9 +1838,12 @@ pub const Workspace = struct {
         };
         if (ev == .mouse_down and self.restOfSidebarToggle(ev.mouse_down)) return;
         if (agenda_ui.handleEvent(self, ev)) return;
+        if (scm_ui.handleEvent(self, ev)) return;
         if (page_ui.handleEvent(self, ev)) return;
         if (settings_ui.handleEvent(self, ev)) return;
         if (markdown_ui.handleEvent(self, ev)) return;
+        if (diff_view.handleEvent(self, ev)) return;
+        if (graph_view.handleEvent(self, ev)) return;
         if (terminal_ui.handleEvent(self, ev)) return;
         switch (ev) {
             .key_down => |k| self.onKey(k),
@@ -2301,6 +2316,9 @@ pub const Workspace = struct {
             .lsp_list_diagnostics => lsp_ui.listDiagnostics(self),
             .git_toggle_blame, .git_toggle_inline_blame, .git_show_commit, .git_copy_commit_hash => git_ui.perform(self, action),
             .git_status => git_status_ui.open(self),
+            .scm_show => scm_ui.show(self),
+            .scm_graph => graph_view.open(self),
+            .scm_timeline => scm_ui.showTimeline(self),
             .lsp_restart => if (self.lsp) |l| {
                 l.restartAll();
                 for (self.buffers.items) |b| l.openBuffer(b);
@@ -3071,6 +3089,8 @@ pub const Workspace = struct {
             if (terminal_ui.paint(self, ed, er, scene)) continue;
             if (settings_ui.paint(self, ed, er, scene)) continue;
             if (markdown_ui.paint(self, ed, er, scene)) continue;
+            if (diff_view.paint(self, ed, er, scene)) continue;
+            if (graph_view.paint(self, ed, er, scene)) continue;
             if (focused_group and self.find_visible) if (self.find) |f| if (f.mode == .buffer) f.update(ed);
             if (isFindResults(ed) and ed.highlights.items.len != self.result_ranges.items.len and !(focused_group and self.find_visible)) {
                 ed.highlights.clearRetainingCapacity();
@@ -3200,7 +3220,11 @@ pub const Workspace = struct {
         ctx.closeIcon(close.x + close.w / 2, close.y + close.h / 2, 8, theme.sidebar_foreground);
         const title_y = sb.y;
         defer agenda_ui.paintTabs(self, ctx);
-        _ = ctx.label(.{ .x = sb.x + 8, .y = title_y, .w = 120, .h = 30 }, if (self.agenda.tab == .agenda) "Org Agenda" else if (self.project != null) "Explorer" else "Open Files", self.fonts.ui, theme.sidebar_foreground);
+        _ = ctx.label(.{ .x = sb.x + 8, .y = title_y, .w = 120, .h = 30 }, switch (self.agenda.tab) {
+            .agenda => "Org Agenda",
+            .scm => "Source Control",
+            .explorer => if (self.project != null) "Explorer" else "Open Files",
+        }, self.fonts.ui, theme.sidebar_foreground);
         {
             const cy = title_y + 15;
             var gx = close.x - 14;
@@ -3213,6 +3237,7 @@ pub const Workspace = struct {
         }
         const heading_w = @max(0, close.x - 4 - (sb.x + 16));
         if (self.agenda.tab == .agenda) return agenda_ui.paintBody(self, ctx);
+        if (self.agenda.tab == .scm) return scm_ui.paintBody(self, ctx);
         const p = self.project orelse {
             var y = sb.y + 34;
             const active_ed = self.activeEditor();
@@ -3280,7 +3305,7 @@ pub const Workspace = struct {
         var y = sb.y + sidebar_header_h - self.sidebar_scroll;
 
         // Root folder row.
-        self.paintSidebarRow(ctx, .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h }, base_x, p.name, .dir, self.root_expanded, false, false);
+        self.paintSidebarRow(ctx, .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h }, base_x, p.name, .dir, self.root_expanded, false, false, null);
         y += sidebar_row_h;
 
         const snap = p.snapshot orelse return;
@@ -3294,18 +3319,21 @@ pub const Workspace = struct {
             const x = base_x + indent * @as(f32, @floatFromInt(e.depth + 1));
             const row: Rect = .{ .x = sb.x + 1, .y = y, .w = sb.w - 1, .h = sidebar_row_h };
             const selected = active_rel != null and std.mem.eql(u8, active_rel.?, e.path);
-            self.paintSidebarRow(ctx, row, x, e.name, e.kind, e.kind == .dir and p.isExpanded(e.path), selected, e.ignored);
+            var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const deco = if (std.fmt.bufPrint(&abs_buf, "{s}/{s}", .{ p.root, std.mem.trimEnd(u8, e.path, "/") })) |abs| scm_state.decoration(self, abs) else |_| null;
+            self.paintSidebarRow(ctx, row, x, e.name, e.kind, e.kind == .dir and p.isExpanded(e.path), selected, e.ignored, deco);
             y += sidebar_row_h;
         }
     }
 
-    fn paintSidebarRow(self: *Workspace, ctx: *const ui.Ctx, row: Rect, x: f32, name: []const u8, kind: project_mod.Kind, expanded: bool, selected: bool, dim: bool) void {
+    fn paintSidebarRow(self: *Workspace, ctx: *const ui.Ctx, row: Rect, x: f32, name: []const u8, kind: project_mod.Kind, expanded: bool, selected: bool, dim: bool, deco: ?scm_state.Decoration) void {
         const theme = ctx.theme;
         // Not from the pinned header over a row scrolled part-way under it.
         const hovered = ctx.hovered(row) and ctx.mouse.y >= self.sidebar_rect.y + sidebar_header_h;
         if (selected) ctx.scene.fill(row, theme.sidebar_selected) else if (hovered) ctx.scene.fill(row, theme.sidebar_hover);
         const cy = row.y + row.h / 2;
-        const fg = if (dim) theme.sidebar_foreground_dim.withAlpha(0.6) else theme.sidebar_foreground;
+        var fg = if (dim) theme.sidebar_foreground_dim.withAlpha(0.6) else theme.sidebar_foreground;
+        if (deco) |d| fg = scm_state.kindColor(theme, d.kind);
         if (kind == .dir) {
             ctx.chevron(x + 4, cy, expanded, theme.sidebar_foreground_dim);
             ctx.folderIcon(x + 14, cy, if (dim) theme.folder_icon.withAlpha(0.5) else theme.folder_icon, expanded);
@@ -3313,7 +3341,18 @@ pub const Workspace = struct {
             ctx.fileIcon(x + 13, cy, if (dim) theme.sidebar_foreground_dim.withAlpha(0.5) else Color.hex(0xc5c5c5));
         }
         const tx = x + 34;
-        _ = ctx.labelFit(.{ .x = tx, .y = row.y, .w = row.right() - tx - 8, .h = row.h }, name, self.fonts.ui, fg);
+        // A changed file's letter (a folder's dot) at the right edge.
+        const badge_w: f32 = if (deco != null) 22 else 0;
+        const shown_w = ctx.labelFit(.{ .x = tx, .y = row.y, .w = row.right() - tx - 8 - badge_w, .h = row.h }, name, self.fonts.ui, fg);
+        if (deco) |d| {
+            if (d.kind == .deleted and d.letter != 0) ctx.scene.fill(.{ .x = tx, .y = @round(cy), .w = shown_w, .h = 1 }, fg);
+            if (d.letter == 0) {
+                ctx.dot(row.right() - 14, cy, 3, fg);
+            } else {
+                const letter = [_]u8{d.letter};
+                _ = ctx.labelRight(.{ .x = row.x, .y = row.y, .w = row.w - 10, .h = row.h }, &letter, self.fonts.ui, fg);
+            }
+        }
     }
 
     /// The strip standing in for the hidden side bar: a click brings it back,
@@ -3347,6 +3386,14 @@ pub const Workspace = struct {
         var x = r.x + remote_indicator_w + 10;
         var buf: [256]u8 = undefined;
         if (remote_ui.statusLabel(self, &buf)) |t| x += ctx.label(.{ .x = x, .y = r.y, .w = 320, .h = r.h }, t, self.fonts.ui_bold, fg) + 16;
+        if (scm_state.branchLabel(self, &buf)) |t| {
+            // A branch: two commits joined by a line.
+            const cy = r.y + r.h / 2;
+            ctx.scene.fill(.{ .x = x + 3.5, .y = cy - 4, .w = 1.2, .h = 8 }, fg);
+            ctx.dot(x + 4, cy - 4.5, 2, fg);
+            ctx.dot(x + 4, cy + 4.5, 2, fg);
+            x += 14 + ctx.label(.{ .x = x + 14, .y = r.y, .w = 320, .h = r.h }, t, font, fg) + 16;
+        }
 
         if (self.key_hook) |hook| if (hook.enabled) {
             const t = hook.statusText(hook.ctx, &buf);
