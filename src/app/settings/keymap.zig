@@ -318,6 +318,7 @@ pub const Action = enum {
     debug_add_watch,
     debug_evaluate,
     debug_show_panel,
+    show_memory,
 
     // The panel under the editor (Terminal, Language Servers).
     toggle_panel,

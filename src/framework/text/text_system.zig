@@ -178,6 +178,26 @@ pub const TextSystem = struct {
         return .{ .gpa = gpa, .ft_lib = lib, .atlas = atlas, .hb_buffer = buffer };
     }
 
+    pub const Stats = struct {
+        faces: usize,
+        glyph_entries: usize,
+        line_layouts: usize,
+        advance_entries: usize,
+        /// The glyph atlas texture's side, in pixels.
+        atlas_side: u32,
+    };
+
+    /// Sizes of the caches, for the Memory view and the growth checks.
+    pub fn stats(self: *const TextSystem) Stats {
+        return .{
+            .faces = self.faces.items.len,
+            .glyph_entries = self.glyphs.count(),
+            .line_layouts = self.lines_current.count() + self.lines_previous.count(),
+            .advance_entries = self.advances.count(),
+            .atlas_side = self.atlas.size,
+        };
+    }
+
     pub fn deinit(self: *TextSystem) void {
         self.clearLineCache();
         self.lines_current.deinit(self.gpa);

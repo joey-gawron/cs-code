@@ -10,6 +10,7 @@ const session_store = @import("app/session/store.zig");
 const persist = @import("app/session/persist.zig");
 const askpass = @import("model/remote/askpass.zig");
 const login_path = @import("framework/platform/login_path.zig");
+const mem_stats = @import("framework/util/mem_stats.zig");
 
 const usage =
     \\Usage: cs-zig [options] [path[:line[:col]]...]
@@ -49,6 +50,8 @@ const usage =
     \\                      right or middle, optionally +shift, +ctrl, +alt, +super)
     \\  --action NAME       Run an action, e.g. toggle_sidebar
     \\  --pump MS           Keep processing background work (LSP) for MS ms
+    \\  --script FILE       Steps from a file, one per line: `key CHORD`, `type TEXT`,
+    \\                      `click X,Y`, `action NAME` or `pump MS` (`#` starts a comment)
     \\  --screenshot PATH   Write the final frame as PNG and exit
     \\                      (a step that quits the editor ends the steps)
     \\
@@ -63,7 +66,7 @@ const Step = union(enum) {
 };
 
 pub fn main(init: std.process.Init) !void {
-    const gpa = init.gpa;
+    const gpa = mem_stats.install(init.gpa);
     const io = init.io;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
@@ -145,6 +148,25 @@ pub fn main(init: std.process.Init) !void {
             try steps.append(gpa, .{ .action = try next(args, &i) });
         } else if (eql(u8, arg, "--pump")) {
             try steps.append(gpa, .{ .pump = try next(args, &i) });
+        } else if (eql(u8, arg, "--script")) {
+            // The steps point into the text, which lives as long as the process.
+            const path = try next(args, &i);
+            const text = std.Io.Dir.cwd().readFileAlloc(io, path, init.arena.allocator(), .limited(256 << 20)) catch |err| {
+                std.debug.print("--script {s}: {t}\n", .{ path, err });
+                std.process.exit(2);
+            };
+            var lines = std.mem.splitScalar(u8, text, '\n');
+            while (lines.next()) |raw| {
+                const line = std.mem.trimEnd(u8, raw, "\r");
+                if (line.len == 0 or line[0] == '#') continue;
+                const sp = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
+                const value = if (sp < line.len) line[sp + 1 ..] else "";
+                const kind = line[0..sp];
+                if (eql(u8, kind, "key")) try steps.append(gpa, .{ .key = value }) else if (eql(u8, kind, "type")) try steps.append(gpa, .{ .type = value }) else if (eql(u8, kind, "click")) try steps.append(gpa, .{ .click = value }) else if (eql(u8, kind, "action")) try steps.append(gpa, .{ .action = value }) else if (eql(u8, kind, "pump")) try steps.append(gpa, .{ .pump = value }) else {
+                    std.debug.print("--script {s}: unknown step `{s}`\n", .{ path, kind });
+                    std.process.exit(2);
+                }
+            }
         } else if (eql(u8, arg, "--vim")) {
             vim = true;
         } else if (eql(u8, arg, "--no-lsp")) {
@@ -434,6 +456,9 @@ test {
     _ = @import("framework/util/regex.zig");
     _ = @import("framework/util/png.zig");
     _ = @import("framework/platform/login_path.zig");
+    _ = @import("framework/util/mem_stats.zig");
+    _ = @import("framework/platform/proc_stats.zig");
+    _ = @import("app/workspace/memory_ui.zig");
     _ = @import("model/org/table.zig");
     _ = @import("framework/util/executor.zig");
     _ = @import("model/project/fuzzy.zig");

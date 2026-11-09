@@ -83,7 +83,7 @@ pub fn build(b: *std.Build) void {
     }
     editor.c = translate_c.createModule();
 
-    const exe_mod = editor.module(b, "src/main.zig", optimize);
+    const exe_mod = editor.module(b, "src/main.zig", optimize, false);
     const exe = b.addExecutable(.{ .name = "cs", .root_module = exe_mod });
     b.installArtifact(exe);
     // The code font, found by fontconfig next to the binary (fontconfig.zig).
@@ -126,6 +126,48 @@ pub fn build(b: *std.Build) void {
     layers_run.addDirectoryArg(b.path("src"));
     b.step("layers", "Check that imports respect framework <- model <- app").dependOn(&layers_run.step);
 
+    // The big generated inputs of `zig build profile`, the performance tests and `zig build leaks`.
+    const fixtures_mod = b.createModule(.{ .root_source_file = b.path("tools/fixtures.zig") });
+
+    // `zig build leaks [-- options]`: scripted headless sessions of every
+    // feature under the allocator's leak checking (tools/leaks.zig), on the
+    // installed zig-out/bin/cs (`-- --bin PATH` for another prefix). `-- --tool
+    // leaks` runs them under macOS's `leaks` instead, which also sees C libraries.
+    const leaks_tool = b.addExecutable(.{ .name = "leaks", .root_module = b.createModule(.{
+        .root_source_file = b.path("tools/leaks.zig"),
+        .target = b.graph.host,
+        .optimize = .safe,
+        .imports = &.{.{ .name = "fixtures", .module = fixtures_mod }},
+    }) });
+    const leaks_run = b.addRunArtifact(leaks_tool);
+    leaks_run.step.dependOn(b.getInstallStep());
+    if (grammar_dir.len > 0) leaks_run.addArgs(&.{ "--grammars", grammar_dir });
+    if (optimize == .fast or optimize == .small) leaks_run.addArg("--unchecked-build");
+    leaks_run.stdio = .inherit; // progress while it runs
+    leaks_run.addPassthruArgs();
+    b.step("leaks", "Run scripted headless sessions of every feature under leak checking (tools/leaks.zig)").dependOn(&leaks_run.step);
+
+    // `zig build profile -- [--bin PATH] [--runs N] [--out FILE] [--compare FILE]`:
+    // peak and steady RSS, memory footprint, wall and CPU time of headless
+    // scenarios, for checking a build against a recorded baseline
+    // (tools/profile.zig, docs/MEMORY.md). Measure a ReleaseFast build.
+    const proc_stats_mod = b.createModule(.{ .root_source_file = b.path("src/framework/platform/proc_stats.zig") });
+    const profile_tool = b.addExecutable(.{ .name = "profile", .root_module = b.createModule(.{
+        .root_source_file = b.path("tools/profile.zig"),
+        .target = b.graph.host,
+        // macOS: proc_pid_rusage and wait4 come from libSystem.
+        .link_libc = b.graph.host.result.os.tag.isDarwin(),
+        .optimize = .safe,
+        .imports = &.{
+            .{ .name = "fixtures", .module = fixtures_mod },
+            .{ .name = "proc_stats", .module = proc_stats_mod },
+        },
+    }) });
+    const profile_run = b.addRunArtifact(profile_tool);
+    profile_run.stdio = .inherit; // progress while it runs
+    profile_run.addPassthruArgs();
+    b.step("profile", "Measure memory and speed of headless scenarios (tools/profile.zig)").dependOn(&profile_run.step);
+
     const test_step = b.step("test", "Run unit tests");
     const exe_tests = b.addTest(.{ .root_module = exe_mod });
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
@@ -136,6 +178,30 @@ pub fn build(b: *std.Build) void {
     }) });
     test_step.dependOn(&b.addRunArtifact(core_tests).step);
     test_step.dependOn(&layers_run.step);
+
+    // Performance tests (src/perf_tests.zig): the memory and complexity
+    // claims of docs/MEMORY.md as allocation and byte budgets, on the
+    // profile's 100 MiB log and 20 MiB one-line JSON. A binary of their own,
+    // so `zig build test` runs them beside the other tests; the filter keeps
+    // the tests of the files they import from running twice. LLVM builds it
+    // even in Debug: its vector code runs the passes over 100 MiB about ten
+    // times as fast as the self-hosted backend's. `zig build perf` builds
+    // them in ReleaseFast with build_options.perf, which also checks budgets
+    // of CPU time and prints the times.
+    const perf_filters: []const []const u8 = &.{"perf: "};
+    const perf_mod = editor.module(b, "src/perf_tests.zig", optimize, false);
+    perf_mod.addImport("fixtures", fixtures_mod);
+    const perf_tests = b.addTest(.{ .name = "perf", .root_module = perf_mod, .filters = perf_filters, .use_llvm = true });
+    test_step.dependOn(&b.addRunArtifact(perf_tests).step);
+    const perf_release_mod = editor.module(b, "src/perf_tests.zig", .fast, true);
+    perf_release_mod.addImport("fixtures", fixtures_mod);
+    const perf_release = b.addTest(.{ .name = "perf", .root_module = perf_release_mod, .filters = perf_filters });
+    // Run as a plain command, outside the build runner's test protocol, so
+    // the times show as they are measured.
+    const perf_run = std.Build.Step.Run.create(b, "run perf tests");
+    perf_run.addArtifactArg(perf_release);
+    perf_run.stdio = .inherit;
+    b.step("perf", "Run the performance tests in ReleaseFast, with time budgets").dependOn(&perf_run.step);
 
     // Remote tests: protocol units plus client <-> cs-zig-server integration
     // (the server runs as a local subprocess instead of over ssh). Linux only, like the server.
@@ -182,11 +248,11 @@ const Editor = struct {
     // macOS.
     sdk: ?[]const u8 = null,
 
-    fn module(e: Editor, b: *std.Build, root: []const u8, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+    fn module(e: Editor, b: *std.Build, root: []const u8, optimize: std.builtin.OptimizeMode, perf: bool) *std.Build.Module {
         const options = b.addOptions();
         options.addOption([]const u8, "grammar_dir", e.grammar_dir);
         options.addOption(bool, "toplevel_icon", e.toplevel_icon_source != null);
-        options.addOption(bool, "perf", false);
+        options.addOption(bool, "perf", perf);
 
         const mod = b.createModule(.{
             .root_source_file = b.path(root),

@@ -120,6 +120,22 @@ pub const Buffer = struct {
     listeners: std.ArrayList(Listener) = .empty,
     diagnostics: std.ArrayList(Diagnostic) = .empty,
 
+    pub const UndoStats = struct { steps: usize, bytes: usize };
+
+    /// What the undo and redo history holds, for the Memory view and the
+    /// growth checks: transactions, and the bytes of text they keep.
+    pub fn undoStats(self: *const Buffer) UndoStats {
+        var out: UndoStats = .{ .steps = 0, .bytes = 0 };
+        for ([_][]const Transaction{ self.undo_stack.items, self.redo_stack.items }) |stack| {
+            out.steps += stack.len;
+            for (stack) |t| {
+                for (t.records.items) |r| out.bytes += r.old_text.len + r.new_text.len;
+                out.bytes += (t.selections_before.len + t.selections_after.len) * @sizeOf(Selection);
+            }
+        }
+        return out;
+    }
+
     pub fn initEmpty(gpa: Allocator, id: u32) !Buffer {
         return .{ .gpa = gpa, .id = id, .rope = Rope.init() };
     }

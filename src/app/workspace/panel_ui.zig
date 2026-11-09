@@ -41,6 +41,7 @@ const editor_view = @import("../editor/editor_view.zig");
 const terminal_ui = @import("terminal_ui.zig");
 const git_status_ui = @import("git_status_ui.zig");
 const problems_ui = @import("problems_ui.zig");
+const memory_ui = @import("memory_ui.zig");
 const search_ui = @import("search_ui.zig");
 const context_menu = @import("context_menu.zig");
 const rpath = @import("../../model/remote/path.zig");
@@ -63,7 +64,7 @@ const all_row_h: f32 = 28;
 const row_h: f32 = 42;
 const term_row_h: f32 = 26;
 
-pub const View = enum { terminal, source_control, language_servers, problems, search, debug };
+pub const View = enum { terminal, source_control, language_servers, problems, search, debug, memory };
 
 /// A clickable part of the panel, from the last paint.
 const Hit = union(enum) {
@@ -212,6 +213,11 @@ pub fn showProblems(ws: *Workspace, focus: bool) void {
     show(ws, .problems, focus);
 }
 
+/// Shows the Memory view (memory_ui.zig).
+pub fn showMemory(ws: *Workspace, focus: bool) void {
+    show(ws, .memory, focus);
+}
+
 pub fn hide(ws: *Workspace) void {
     ws.panel.visible = false;
     if (ws.focus == .panel) ws.focus = .editor;
@@ -233,7 +239,7 @@ fn focusPanel(ws: *Workspace) void {
 pub fn viewEditor(ws: *Workspace) ?*Editor {
     const st = &ws.panel;
     return switch (st.view) {
-        .terminal, .debug => null,
+        .terminal, .debug, .memory => null,
         .source_control => if (st.source_control) |p| p.editor else null,
         .language_servers => st.log,
         .problems => null,
@@ -252,6 +258,7 @@ pub fn focusedEditor(ws: *Workspace) ?*Editor {
 pub fn handleKey(ws: *Workspace, k: platform.KeyEvent) bool {
     const st = &ws.panel;
     if (st.visible and st.view == .problems) return problems_ui.viewKey(ws, k);
+    if (st.visible and st.view == .memory) return memory_ui.viewKey(ws, k);
     if (st.visible and st.view == .search) return search_ui.key(ws, k);
     if (!st.visible or st.view != .source_control) return false;
     return git_status_ui.viewKey(ws, k);
@@ -705,6 +712,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
         .{ .label = "Source Control", .view = .source_control },
         .{ .label = "Language Servers", .view = .language_servers },
         .{ .label = "Search", .view = .search },
+        .{ .label = "Memory", .view = .memory },
     };
     var tx = r.x + 14;
     for (tabs) |t| {
@@ -732,7 +740,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
             &.{ .{ .label = "Run…", .hit = .run_command }, .{ .label = "+", .hit = .new_terminal } },
         .source_control => &.{ .{ .label = "Refresh", .hit = .refresh }, .{ .label = "?", .hit = .git_help } },
         .language_servers => &.{ .{ .label = "Clear", .hit = .clear }, .{ .label = "Restart", .hit = .restart } },
-        .problems => &.{},
+        .problems, .memory => &.{},
         .search => &.{
             .{ .label = "Clear", .hit = .{ .search_action = .clear } },
             .{ .label = "Collapse All", .hit = .{ .search_action = .collapse_all } },
@@ -765,6 +773,7 @@ pub fn paint(ws: *Workspace, ctx: *const ui.Ctx) void {
     const body: Rect = .{ .x = r.x, .y = header.bottom(), .w = r.w, .h = @max(0, r.h - header_h) };
     switch (st.view) {
         .problems => problems_ui.paint(ws, ctx, body),
+        .memory => memory_ui.paint(ws, ctx, body),
         .terminal => paintTerminals(ws, ctx, body),
         .source_control => if (st.source_control) |p| {
             const ed = p.editor;
@@ -992,6 +1001,7 @@ pub fn onMouseDown(ws: *Workspace, m: platform.MouseEvent) bool {
         return true;
     };
     if (st.view == .problems and problems_ui.onMouseDown(ws, m)) return true;
+    if (st.view == .memory and memory_ui.onMouseDown(ws, m)) return true;
     if (st.view == .debug and debug_ui.onMouseDown(ws, m)) return true;
     if (st.log_rect.contains(pos.x, pos.y)) if (st.log) |ed| {
         focusPanel(ws);

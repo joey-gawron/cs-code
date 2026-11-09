@@ -223,6 +223,7 @@ const base = [_]Command{
     .{ .caption = "Markdown: Open Preview", .action = .markdown_open_preview },
     .{ .caption = "Markdown: Open Preview to the Side", .action = .markdown_open_preview_side },
     .{ .caption = "Markdown: Show Source", .action = .markdown_show_source },
+    .{ .caption = "Developer: Show Memory", .action = .show_memory },
     .{ .caption = "UI: Select Color Scheme", .action = .select_color_scheme },
     .{ .caption = "Preferences: Settings", .action = .open_settings },
     .{ .caption = "Preferences: Key Bindings", .action = .open_keymap },
