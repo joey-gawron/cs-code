@@ -13,6 +13,7 @@ const linediff = @import("../../model/text/linediff.zig");
 const git = @import("../../model/git/git.zig");
 const git_ui = @import("git_ui.zig");
 const scm_state = @import("scm_state.zig");
+const scm_ui = @import("scm_ui.zig");
 const platform = @import("../../framework/platform/platform.zig");
 const scene_mod = @import("../../framework/gpu/scene.zig");
 const ui = @import("../../framework/ui/ui.zig");
@@ -37,6 +38,16 @@ pub const Source = union(enum) {
     file: []const u8,
 };
 
+/// What is compared, which decides what a hunk's buttons do.
+pub const Kind = enum {
+    /// A commit's change (read only).
+    commit,
+    /// The index against the file: hunks can be staged or reverted.
+    worktree,
+    /// HEAD against the index: hunks can be unstaged.
+    staged,
+};
+
 pub const Request = struct {
     /// The tab's name.
     title: []const u8,
@@ -50,6 +61,7 @@ pub const Request = struct {
     open_path: ?[]const u8 = null,
     /// A single click's tab, replaced by the next one.
     preview: bool = true,
+    kind: Kind = .commit,
 };
 
 const RowKind = enum { same, removed, added, changed };
@@ -60,13 +72,15 @@ const Row = struct {
     kind: RowKind,
     /// The first row of a change (for F7).
     start: bool = false,
+    /// Which change the row belongs to (for its buttons).
+    hunk: u32 = 0,
 };
 
 const Mode = enum { side_by_side, inline_ };
 
-const What = enum { mode, previous, next, open_file };
+const What = enum { mode, previous, next, open_file, hunk_stage, hunk_unstage, hunk_revert };
 
-const Hit = struct { rect: Rect, what: What };
+const Hit = struct { rect: Rect, what: What, hunk: u32 = 0 };
 
 pub const View = struct {
     gpa: Allocator,
@@ -76,6 +90,13 @@ pub const View = struct {
     right_label: []u8,
     open_path: ?[]u8,
     preview: bool,
+    kind: Kind,
+    /// What it was opened with, to read it again when the repository changes.
+    req_arena: std.heap.ArenaAllocator,
+    req: Request,
+    /// The repository state it shows (scm_state generation).
+    generation: u32 = 0,
+    reloading: bool = false,
     left_text: []u8,
     right_text: []u8,
     left_lines: [][]const u8,
@@ -105,6 +126,7 @@ pub const View = struct {
         gpa.free(self.left_lines);
         gpa.free(self.right_lines);
         gpa.free(self.hunks);
+        self.req_arena.deinit();
         self.rows.deinit(gpa);
         self.hits.deinit(gpa);
         gpa.destroy(self);
@@ -121,7 +143,7 @@ pub const View = struct {
         const gpa = self.gpa;
         var li: u32 = 0;
         var ri: u32 = 0;
-        for (self.hunks) |h| {
+        for (self.hunks, 0..) |h, hi| {
             while (li < h.a_start) : ({
                 li += 1;
                 ri += 1;
@@ -134,11 +156,11 @@ pub const View = struct {
                     const l: ?u32 = if (kk < h.a_len) h.a_start + kk else null;
                     const r: ?u32 = if (kk < h.b_len) h.b_start + kk else null;
                     const kind: RowKind = if (l != null and r != null) .changed else if (l != null) .removed else .added;
-                    self.rows.append(gpa, .{ .l = l, .r = r, .kind = kind }) catch return;
+                    self.rows.append(gpa, .{ .l = l, .r = r, .kind = kind, .hunk = @intCast(hi) }) catch return;
                 }
             } else {
-                for (0..h.a_len) |k| self.rows.append(gpa, .{ .l = h.a_start + @as(u32, @intCast(k)), .r = null, .kind = .removed }) catch return;
-                for (0..h.b_len) |k| self.rows.append(gpa, .{ .l = null, .r = h.b_start + @as(u32, @intCast(k)), .kind = .added }) catch return;
+                for (0..h.a_len) |k| self.rows.append(gpa, .{ .l = h.a_start + @as(u32, @intCast(k)), .r = null, .kind = .removed, .hunk = @intCast(hi) }) catch return;
+                for (0..h.b_len) |k| self.rows.append(gpa, .{ .l = null, .r = h.b_start + @as(u32, @intCast(k)), .kind = .added, .hunk = @intCast(hi) }) catch return;
             }
             if (self.rows.items.len > first) self.rows.items[first].start = true;
             li = h.a_start + h.a_len;
@@ -198,6 +220,8 @@ pub const Loader = struct {
     right_job: ?*git.Job = null,
     left_done: bool = false,
     right_done: bool = false,
+    /// A view this one takes the place of (a refresh), keeping its scroll.
+    replace: ?*View = null,
 };
 
 pub fn deinitLoaders(ws: *Workspace) void {
@@ -218,6 +242,10 @@ fn destroyLoader(ws: *Workspace, l: *Loader) void {
 
 /// Opens the comparison (or refreshes the preview tab with it).
 pub fn open(ws: *Workspace, req: Request) void {
+    openReplacing(ws, req, null);
+}
+
+fn openReplacing(ws: *Workspace, req: Request, replace: ?*View) void {
     const gpa = ws.gpa;
     const l = gpa.create(Loader) catch return;
     l.* = .{ .ws = ws, .req = undefined, .arena = .init(gpa) };
@@ -231,7 +259,9 @@ pub fn open(ws: *Workspace, req: Request) void {
         .right = dupSource(a, req.right),
         .open_path = if (req.open_path) |p| a.dupe(u8, p) catch null else null,
         .preview = req.preview,
+        .kind = req.kind,
     };
+    l.replace = replace;
     const st = scm_state.state(ws);
     st.loaders.append(gpa, l) catch return destroyLoader(ws, l);
     start(l, true);
@@ -309,7 +339,7 @@ fn maybeFinish(l: *Loader) void {
     defer destroyLoader(ws, l);
     const gpa = ws.gpa;
     const view = createView(gpa, l) orelse return;
-    show(ws, view);
+    show(ws, view, l.replace);
 }
 
 fn createView(gpa: Allocator, l: *Loader) ?*View {
@@ -327,12 +357,28 @@ fn createView(gpa: Allocator, l: *Loader) ?*View {
         .right_label = gpa.dupe(u8, l.req.right_label) catch return fail(gpa, view),
         .open_path = if (l.req.open_path) |p| gpa.dupe(u8, p) catch null else null,
         .preview = l.req.preview,
+        .kind = l.req.kind,
+        .req_arena = .init(gpa),
+        .req = undefined,
         .left_text = left_text,
         .right_text = right_text,
         .left_lines = left_lines,
         .right_lines = right_lines,
         .hunks = hunks,
     };
+    const ra = view.req_arena.allocator();
+    view.req = .{
+        .title = ra.dupe(u8, l.req.title) catch "",
+        .path = ra.dupe(u8, l.req.path) catch "",
+        .left_label = ra.dupe(u8, l.req.left_label) catch "",
+        .right_label = ra.dupe(u8, l.req.right_label) catch "",
+        .left = dupSource(ra, l.req.left),
+        .right = dupSource(ra, l.req.right),
+        .open_path = if (l.req.open_path) |p| ra.dupe(u8, p) catch null else null,
+        .preview = l.req.preview,
+        .kind = l.req.kind,
+    };
+    view.generation = scm_state.state(l.ws).generation;
     return view;
 }
 
@@ -342,7 +388,25 @@ fn fail(gpa: Allocator, view: *View) ?*View {
 }
 
 /// Puts the view in the preview diff tab (reused), or a new tab.
-fn show(ws: *Workspace, view: *View) void {
+fn show(ws: *Workspace, view: *View, replace: ?*View) void {
+    if (replace) |old| for (ws.tabs.items) |t| if (t.diff_view == old) {
+        // The same comparison read again: where it was scrolled stays.
+        view.scroll_y = old.scroll_y;
+        view.scroll_x = old.scroll_x;
+        view.mode = old.mode;
+        view.preview = old.preview;
+        view.current = old.current;
+        view.rect = old.rect;
+        view.body = old.body;
+        const i = ws.tabIndexOf(t.editor).?;
+        ws.tabs.items[i].diff_view = view;
+        // The tab's name points into the view's title: before the old one goes.
+        t.editor.buffer.display_name = view.title;
+        old.destroy();
+        return;
+    };
+    // The tab it was to refresh is gone.
+    if (replace != null) return view.destroy();
     if (view.preview) for (ws.tabs.items, 0..) |t, i| if (t.diff_view) |old| if (old.preview) {
         ws.tabs.items[i].diff_view = view;
         t.editor.buffer.display_name = view.title;
@@ -561,6 +625,29 @@ pub fn paint(ws: *Workspace, ed: *Editor, rect: Rect, scene: *scene_mod.Scene) b
                 }
             }
         }
+        // A change's buttons, on its first row, at the pane's right edge.
+        if (v.kind != .commit and pi == panes - 1) {
+            var bi = first;
+            while (bi < last) : (bi += 1) {
+                const row = v.rows.items[bi];
+                if (!row.start) continue;
+                const y = body.y + @as(f32, @floatFromInt(bi)) * lh - v.scroll_y;
+                var bx = pane.right() - 14;
+                const labels: []const struct { text: []const u8, what: What } = if (v.kind == .worktree)
+                    &.{ .{ .text = "Revert", .what = .hunk_revert }, .{ .text = "Stage", .what = .hunk_stage } }
+                else
+                    &.{.{ .text = "Unstage", .what = .hunk_unstage }};
+                for (labels) |b| {
+                    const w = ctx.text.measure(b.text, ws.fonts.ui_small) + 16;
+                    const br: Rect = .{ .x = bx - w, .y = y + 2, .w = w, .h = @max(16, lh - 4) };
+                    const hov = ctx.hovered(br);
+                    scene.quad(br, .{ .color = if (hov) theme.sidebar_selected else theme.tabbar_background, .border_color = theme.tab_separator, .border_width = 1, .radius = 3 });
+                    ctx.labelCentered(br, b.text, ws.fonts.ui_small, theme.sidebar_foreground);
+                    v.hits.append(v.gpa, .{ .rect = br, .what = b.what, .hunk = row.hunk }) catch {};
+                    bx -= w + 6;
+                }
+            }
+        }
         scene.fill(.{ .x = pane.x + gutter_w - 1, .y = pane.y, .w = 1, .h = pane.h }, theme.tab_separator);
     }
     if (side) scene.fill(.{ .x = body.x + pane_w - 1, .y = body.y, .w = 1, .h = body.h }, theme.tab_separator);
@@ -594,7 +681,7 @@ pub fn handleEvent(ws: *Workspace, ev: platform.Event) bool {
             ws.focus = .editor;
             if (m.button != .left) return true;
             for (v.hits.items) |h| if (h.rect.contains(m.pos.x, m.pos.y)) {
-                perform(ws, v, h.what);
+                perform(ws, v, h.what, h.hunk);
                 return true;
             };
             // A click in the tab keeps it.
@@ -622,7 +709,7 @@ fn lineHeightOf(ws: *Workspace) f32 {
     return ed.lineHeight();
 }
 
-fn perform(ws: *Workspace, v: *View, what: What) void {
+fn perform(ws: *Workspace, v: *View, what: What, hunk: u32) void {
     const lh = lineHeightOf(ws);
     switch (what) {
         .mode => {
@@ -634,6 +721,10 @@ fn perform(ws: *Workspace, v: *View, what: What) void {
         .next => v.jump(lh, true),
         .open_file => if (v.open_path) |p| {
             _ = ws.openFile(p, false) catch return;
+        },
+        .hunk_stage, .hunk_unstage, .hunk_revert => {
+            hunkAction(ws, v, what, hunk);
+            return;
         },
     }
     v.preview = false;
@@ -673,6 +764,40 @@ fn handleKey(ws: *Workspace, v: *View, k: platform.KeyEvent) bool {
 
 // ---- Tests -----------------------------------------------------------------------------
 
+/// Stages, unstages or reverts one change: its patch goes to `git apply`.
+fn hunkAction(ws: *Workspace, v: *View, what: What, hunk: u32) void {
+    if (hunk >= v.hunks.len) return;
+    const patch = linediff.hunkPatch(ws.gpa, v.path, v.left_text, v.right_text, v.hunks[hunk]) catch return;
+    defer ws.gpa.free(patch);
+    switch (what) {
+        .hunk_stage => scm_state.run(ws, &.{ "apply", "--cached", "--unidiff-zero", "-" }, .{ .input = patch, .done = "Change staged" }),
+        .hunk_unstage => scm_state.run(ws, &.{ "apply", "--cached", "--unidiff-zero", "-R", "-" }, .{ .input = patch, .done = "Change unstaged" }),
+        .hunk_revert => {
+            // The file on disk is what the patch is made from.
+            if (v.open_path) |p| for (ws.buffers.items) |b| if (b.path) |bp| if (std.mem.eql(u8, bp, p) and b.isDirty()) {
+                return ws.setStatus("Save {s} first: reverting a change works on the file on disk.", .{std.fs.path.basename(p)});
+            };
+            scm_ui.askWithInput(ws, "Revert this change in the file? This is irreversible.", &.{ "apply", "--unidiff-zero", "-R", "-" }, patch);
+        },
+        else => {},
+    }
+}
+
+/// Reads a comparison of the working tree or the index again when the
+/// repository changed (a hunk was staged, the file was saved).
+pub fn tick(ws: *Workspace) void {
+    const st = scm_state.state(ws);
+    if (st.snapshot == null) return;
+    for (ws.tabs.items) |t| {
+        const v = t.diff_view orelse continue;
+        if (v.kind == .commit or v.reloading or v.generation == st.generation) continue;
+        v.reloading = true;
+        openReplacing(ws, v.req, v);
+        // The tab list may have changed under us.
+        return;
+    }
+}
+
 const testing = std.testing;
 
 fn testView(left: []const u8, right: []const u8) !*View {
@@ -690,6 +815,9 @@ fn testView(left: []const u8, right: []const u8) !*View {
         .right_label = try gpa.dupe(u8, "r"),
         .open_path = null,
         .preview = true,
+        .kind = .commit,
+        .req_arena = .init(gpa),
+        .req = undefined,
         .left_text = lt,
         .right_text = rt,
         .left_lines = ll,

@@ -201,6 +201,47 @@ pub fn marksOf(gpa: Allocator, old: []const u8, new: []const u8) ![]Mark {
     return marks(gpa, hunks);
 }
 
+/// The lines of `text` split at '\n' only, so a CRLF file keeps its '\r'
+/// (`splitLines` strips it); the same count as `splitLines`.
+pub fn rawLines(gpa: Allocator, text: []const u8) ![][]const u8 {
+    var lines: std.ArrayList([]const u8) = .empty;
+    errdefer lines.deinit(gpa);
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| {
+        if (it.peek() == null and l.len == 0) break;
+        try lines.append(gpa, l);
+    }
+    return lines.toOwnedSlice(gpa);
+}
+
+/// A unified diff of one hunk with no context lines, for
+/// `git apply --unidiff-zero` (with `--cached` to stage it, `-R` to undo
+/// it). `left` and `right` are the whole texts the hunk was found in.
+pub fn hunkPatch(gpa: Allocator, path: []const u8, left: []const u8, right: []const u8, h: Hunk) ![]u8 {
+    const a = try rawLines(gpa, left);
+    defer gpa.free(a);
+    const b = try rawLines(gpa, right);
+    defer gpa.free(b);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.print(gpa, "diff --git a/{s} b/{s}\n--- a/{s}\n+++ b/{s}\n", .{ path, path, path, path });
+    // An empty range is named by the line before it.
+    const a_start = if (h.a_len == 0) h.a_start else h.a_start + 1;
+    const b_start = if (h.b_len == 0) h.b_start else h.b_start + 1;
+    try out.print(gpa, "@@ -{d},{d} +{d},{d} @@\n", .{ a_start, h.a_len, b_start, h.b_len });
+    const left_no_eol = left.len > 0 and left[left.len - 1] != '\n';
+    const right_no_eol = right.len > 0 and right[right.len - 1] != '\n';
+    for (a[h.a_start .. h.a_start + h.a_len], h.a_start..) |l, i| {
+        try out.print(gpa, "-{s}\n", .{l});
+        if (left_no_eol and i + 1 == a.len) try out.appendSlice(gpa, "\\ No newline at end of file\n");
+    }
+    for (b[h.b_start .. h.b_start + h.b_len], h.b_start..) |l, i| {
+        try out.print(gpa, "+{s}\n", .{l});
+        if (right_no_eol and i + 1 == b.len) try out.appendSlice(gpa, "\\ No newline at end of file\n");
+    }
+    return out.toOwnedSlice(gpa);
+}
+
 const testing = std.testing;
 
 /// Applies `hunks` to `a`, which must give `b`.
@@ -350,4 +391,34 @@ test "gutter marks: added, modified, deleted, and a longer replacement" {
             .{ .kind = .deleted, .row = 2, .rows = 0 },
         }, m);
     }
+}
+
+test "a hunk's patch: replaced lines, with the ranges git expects" {
+    const gpa = testing.allocator;
+    const p = try hunkPatch(gpa, "src/a.zig", "a\nb\nc\n", "a\nB\nc\n", .{ .a_start = 1, .a_len = 1, .b_start = 1, .b_len = 1 });
+    defer gpa.free(p);
+    try testing.expectEqualStrings(
+        "diff --git a/src/a.zig b/src/a.zig\n--- a/src/a.zig\n+++ b/src/a.zig\n@@ -2,1 +2,1 @@\n-b\n+B\n",
+        p,
+    );
+}
+
+test "a hunk's patch: a pure insertion is named by the line before, a pure deletion likewise" {
+    const gpa = testing.allocator;
+    const ins = try hunkPatch(gpa, "f", "a\nb\n", "a\nx\nb\n", .{ .a_start = 1, .a_len = 0, .b_start = 1, .b_len = 1 });
+    defer gpa.free(ins);
+    try testing.expect(std.mem.indexOf(u8, ins, "@@ -1,0 +2,1 @@\n+x\n") != null);
+    const del = try hunkPatch(gpa, "f", "a\nx\nb\n", "a\nb\n", .{ .a_start = 1, .a_len = 1, .b_start = 1, .b_len = 0 });
+    defer gpa.free(del);
+    try testing.expect(std.mem.indexOf(u8, del, "@@ -2,1 +1,0 @@\n-x\n") != null);
+}
+
+test "a hunk's patch keeps CRLF and marks a missing final newline" {
+    const gpa = testing.allocator;
+    const crlf = try hunkPatch(gpa, "f", "a\r\nb\r\n", "a\r\nB\r\n", .{ .a_start = 1, .a_len = 1, .b_start = 1, .b_len = 1 });
+    defer gpa.free(crlf);
+    try testing.expect(std.mem.indexOf(u8, crlf, "-b\r\n+B\r\n") != null);
+    const eol = try hunkPatch(gpa, "f", "a\nb", "a\nB", .{ .a_start = 1, .a_len = 1, .b_start = 1, .b_len = 1 });
+    defer gpa.free(eol);
+    try testing.expect(std.mem.indexOf(u8, eol, "-b\n\\ No newline at end of file\n+B\n\\ No newline at end of file\n") != null);
 }

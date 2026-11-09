@@ -92,8 +92,11 @@ const Pending = struct {
     label: []u8,
     owned: [][]u8,
     clear: bool = false,
+    /// Sent to the command's stdin (a patch).
+    input: ?[]u8 = null,
 
     fn destroy(self: *Pending, gpa: Allocator) void {
+        if (self.input) |i| gpa.free(i);
         for (self.owned) |s| gpa.free(s);
         gpa.free(self.owned);
         gpa.free(self.argv);
@@ -1084,6 +1087,13 @@ const AskOptions = struct {
     also_clean: bool = false,
 };
 
+/// A question whose yes runs `argv` with `input` on its stdin.
+pub fn askWithInput(ws: *Workspace, question: []const u8, argv: []const []const u8, input: []const u8) void {
+    ask(ws, question, argv, .{});
+    const u = ui_(ws);
+    if (u.pending) |p| p.input = ws.gpa.dupe(u8, input) catch null;
+}
+
 /// Opens a Yes/No question; yes runs `argv`.
 fn ask(ws: *Workspace, question: []const u8, argv: []const []const u8, o: AskOptions) void {
     const u = ui_(ws);
@@ -1133,7 +1143,7 @@ fn answer(ws: *Workspace, yes: bool) void {
         scm_state.run(ws, p.argv, .{ .input = message, .label = "Committing", .done = "Committed", .clear_message = true });
         return;
     }
-    scm_state.run(ws, p.argv, .{});
+    scm_state.run(ws, p.argv, .{ .input = p.input });
     if (std.mem.eql(u8, p.label, "clean")) scm_state.run(ws, &.{ "clean", "-f", "-d", "-q" }, .{});
 }
 
@@ -1195,6 +1205,7 @@ pub fn openChange(ws: *Workspace, e: *const Entry, group: Group, preview: bool) 
             .right = if (e.x == 'D') .empty else .{ .git = index_spec },
             .open_path = if (e.x == 'D') null else abs,
             .preview = preview,
+            .kind = .staged,
         });
         return;
     }
@@ -1208,6 +1219,7 @@ pub fn openChange(ws: *Workspace, e: *const Entry, group: Group, preview: bool) 
         .right = if (deleted_on_disk) .empty else .{ .file = abs },
         .open_path = if (deleted_on_disk) null else abs,
         .preview = preview,
+        .kind = if (e.kind == .untracked) .commit else .worktree,
     });
 }
 
