@@ -56,6 +56,8 @@ pub const Settings = struct {
     git_blame_inline: bool = true,
     /// Show the org agenda when cs-zig starts without files.
     org_agenda_on_startup: bool = false,
+    /// Opening a folder with a README.md shows its preview.
+    markdown_open_readme: bool = false,
     /// Where org capture files TODOs ("~/" is the home folder), and under
     /// which heading ("" for top level).
     org_capture_file: []const u8 = "~/org/inbox.org",

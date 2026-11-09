@@ -753,6 +753,54 @@ void je_set_app_icon(const unsigned char *rgba, int size) {
     }
 }
 
+int je_image_decode(const unsigned char *data, size_t len, int max_width, int *out_w, int *out_h, unsigned char **out_rgba) {
+    @autoreleasepool {
+        NSData *bytes = [NSData dataWithBytesNoCopy:(void *)data length:len freeWhenDone:NO];
+        NSBitmapImageRep *src = [NSBitmapImageRep imageRepWithData:bytes];
+        if (!src) return 0;
+        NSInteger w = src.pixelsWide, h = src.pixelsHigh;
+        if (w <= 0 || h <= 0 || w > 32768 || h > 32768) return 0;
+        NSInteger tw = w, th = h;
+        if (max_width > 0 && w > max_width) {
+            tw = max_width;
+            th = h * max_width / w;
+            if (th < 1) th = 1;
+        }
+        NSBitmapImageRep *dst = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:tw pixelsHigh:th
+            bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+            bytesPerRow:tw * 4 bitsPerPixel:32];
+        if (!dst) return 0;
+        memset(dst.bitmapData, 0, (size_t)dst.bytesPerRow * (size_t)th);
+        NSGraphicsContext *ctx = [NSGraphicsContext graphicsContextWithBitmapImageRep:dst];
+        if (!ctx) return 0;
+        [NSGraphicsContext saveGraphicsState];
+        [NSGraphicsContext setCurrentContext:ctx];
+        ctx.imageInterpolation = NSImageInterpolationHigh;
+        [src drawInRect:NSMakeRect(0, 0, tw, th) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
+            fraction:1.0 respectFlipped:NO hints:nil];
+        [NSGraphicsContext restoreGraphicsState];
+        unsigned char *out = malloc((size_t)tw * (size_t)th * 4);
+        if (!out) return 0;
+        // The bitmap is premultiplied; hand back straight alpha.
+        for (NSInteger y = 0; y < th; y++) {
+            const unsigned char *row = dst.bitmapData + (size_t)y * dst.bytesPerRow;
+            unsigned char *o = out + (size_t)y * tw * 4;
+            for (NSInteger x = 0; x < tw; x++) {
+                unsigned a = row[x * 4 + 3];
+                for (int c = 0; c < 3; c++) {
+                    unsigned v = row[x * 4 + c];
+                    o[x * 4 + c] = a == 0 ? 0 : (a == 255 ? v : (unsigned char)((v * 255 + a / 2) / a > 255 ? 255 : (v * 255 + a / 2) / a));
+                }
+                o[x * 4 + 3] = (unsigned char)a;
+            }
+        }
+        *out_w = (int)tw;
+        *out_h = (int)th;
+        *out_rgba = out;
+        return 1;
+    }
+}
+
 void je_set_title(JeWindow *w, const char *title) {
     @autoreleasepool {
         w->window.title = [NSString stringWithUTF8String:title] ?: @"";

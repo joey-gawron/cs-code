@@ -86,6 +86,10 @@ void je_present(JeWindow *w);
 void je_set_title(JeWindow *w, const char *title);
 /// The Dock icon: `size`×`size` straight-alpha RGBA.
 void je_set_app_icon(const unsigned char *rgba, int size);
+/// Decodes a PNG, JPEG, GIF, TIFF, BMP or other image AppKit reads to
+/// straight-alpha RGBA, scaled down to `max_width` pixels wide if it is wider
+/// (0: no limit). `*out_rgba` is malloc'd (free it); returns 0 on failure.
+int je_image_decode(const unsigned char *data, size_t len, int max_width, int *out_w, int *out_h, unsigned char **out_rgba);
 /// platform.CursorShape's order.
 void je_set_cursor(JeWindow *w, int shape);
 void je_toggle_fullscreen(JeWindow *w);
