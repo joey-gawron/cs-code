@@ -151,7 +151,7 @@ pub const App = struct {
         self.keymap.loadUserFile(gpa, io) catch |err| log.warn("keymap.json: {t}", .{err});
         self.text.setScale(self.scale);
         self.registry = .init(gpa, self.theme);
-        if (std.c.getenv("CS_ZIG_GRAMMARS") == null) if (bundledGrammars(io)) |dir| {
+        if (std.c.getenv("CS_ZIG_GRAMMARS") == null) if (bundledGrammars(io, self.registry.grammar_dir)) |dir| {
             self.registry.grammar_dir = dir;
         };
         self.registry.executor = &self.executor;
@@ -350,11 +350,23 @@ pub const App = struct {
 
     /// The grammars inside a macOS app bundle (tools/make-dmg.sh puts them in
     /// Contents/Resources/grammars, next to Contents/MacOS/cs-zig).
-    fn bundledGrammars(io: Io) ?[]const u8 {
-        if (!builtin.os.tag.isDarwin()) return null;
+    /// Where grammars live when $CS_ZIG_GRAMMARS isn't set: beside the binary
+    /// (zig build installs them to share/cs-zig/grammars; an app bundle keeps
+    /// them in Resources), else the folder the build named, else the per-user
+    /// one tools/fetch-grammars.sh fills. Null keeps `build_dir`.
+    fn bundledGrammars(io: Io, build_dir: []const u8) ?[]const u8 {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const n = std.process.executableDirPath(io, &exe_buf) catch return null;
-        const dir = std.fmt.bufPrint(&bundled_grammars_buf, "{s}/../Resources/grammars", .{exe_buf[0..n]}) catch return null;
+        if (std.process.executableDirPath(io, &exe_buf)) |n| {
+            const rels = [_][]const u8{ "../share/cs-zig/grammars", "../Resources/grammars" };
+            for (rels) |rel| {
+                const dir = std.fmt.bufPrint(&bundled_grammars_buf, "{s}/{s}", .{ exe_buf[0..n], rel }) catch continue;
+                Io.Dir.cwd().access(io, dir, .{}) catch continue;
+                return dir;
+            }
+        } else |_| {}
+        if (build_dir.len > 0) if (Io.Dir.cwd().access(io, build_dir, .{})) |_| return null else |_| {};
+        const home = std.c.getenv("HOME") orelse return null;
+        const dir = std.fmt.bufPrint(&bundled_grammars_buf, "{s}/.local/share/cs-zig/grammars", .{std.mem.span(home)}) catch return null;
         Io.Dir.cwd().access(io, dir, .{}) catch return null;
         return dir;
     }

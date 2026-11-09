@@ -33,8 +33,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const macos = target.result.os.tag.isDarwin();
+    // Tree-sitter grammars: -Dgrammars, $CS_ZIG_GRAMMARS, else the folder
+    // tools/bundle-grammars.sh fills. They are installed beside the binary.
+    const repo_grammars = b.root.joinString(b.allocator, ".grammars") catch @panic("OOM");
     const grammar_dir = b.option([]const u8, "grammars", "Directory of tree-sitter grammars (<lang>/parser)") orelse
-        b.graph.environ_map.get("CS_ZIG_GRAMMARS") orelse "";
+        b.graph.environ_map.get("CS_ZIG_GRAMMARS") orelse
+        if (std.Io.Dir.cwd().access(b.graph.io, repo_grammars, .{})) |_| repo_grammars else |_| "";
     // fontconfig's pkg-config flags bring freetype's along. On macOS freetype
     // isn't named again: dyld refuses a binary that links a dylib twice.
     const libs: []const []const u8 = if (macos) portable_libs[1..] else &(linux_libs ++ portable_libs);
@@ -84,6 +88,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
     // The code font, found by fontconfig next to the binary (fontconfig.zig).
     b.installDirectory(.{ .source_dir = b.path("assets/fonts/fira-code"), .install_dir = .prefix, .install_subdir = "share/cs-zig/fonts" });
+    if (grammar_dir.len > 0) b.installDirectory(.{ .source_dir = .{ .cwd_relative = grammar_dir }, .install_dir = .prefix, .install_subdir = "share/cs-zig/grammars" });
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

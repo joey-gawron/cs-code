@@ -68,7 +68,7 @@ pub const all = [_]LanguageConfig{
     .{ .grammar = "nix", .name = "Nix", .extensions = &.{"nix"}, .line_comment = "# ", .block_comment = c_comments },
     .{ .grammar = "lua", .name = "Lua", .extensions = &.{ "lua", "rockspec" }, .filenames = &.{".luacheckrc"}, .line_comment = "-- ", .block_comment = .{ "--[[ ", " ]]" } },
     .{ .grammar = "toml", .name = "TOML", .extensions = &.{"toml"}, .filenames = &.{ "Cargo.lock", "Pipfile", "poetry.lock", "uv.lock", "pdm.lock", ".cargo/config" }, .line_comment = "# " },
-    .{ .grammar = "yaml", .name = "YAML", .extensions = &.{ "yml", "yaml", "cff" }, .filenames = &.{ ".clang-format", "_clang-format", ".clang-tidy", ".clangd", ".yamllint" }, .line_comment = "# " },
+    .{ .grammar = "yaml", .name = "YAML", .extensions = &.{ "yml", "yaml", "cff" }, .filenames = &.{ ".clang-format", "_clang-format", ".clang-tidy", ".clangd", ".yamllint" }, .line_comment = "# ", .query_last_wins = true },
     .{ .grammar = "html", .name = "HTML", .extensions = &.{ "html", "htm", "xhtml", "shtml" }, .block_comment = xml_comments },
     .{ .grammar = "css", .name = "CSS", .extensions = &.{"css"}, .block_comment = c_comments },
     .{ .grammar = "make", .name = "Makefile", .extensions = &.{ "mk", "mak" }, .filenames = &.{ "Makefile", "makefile", "GNUmakefile", "Makefile.*" }, .line_comment = "# " },

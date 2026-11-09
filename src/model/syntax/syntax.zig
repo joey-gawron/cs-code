@@ -36,6 +36,12 @@ pub const Language = struct {
     query: ?*c.TSQuery,
     capture_colors: []?Color,
     capture_styles: []theme_mod.FontStyle,
+    /// Captures named exactly `keyword`: older queries (C, Rust, Python, ...)
+    /// put `if` and `return` there instead of under `keyword.conditional`
+    /// and `keyword.return`, so the text decides whether it is control flow.
+    capture_plain_keyword: []bool = &.{},
+    /// The theme's colour for control flow (null: not told apart).
+    control_color: ?Color = null,
     /// Predicates per pattern index.
     predicates: [][]Predicate,
     /// When patterns match the same node, the later one wins (Neovim-style
@@ -121,10 +127,12 @@ pub const Registry = struct {
     /// Capture colors for the current theme (main thread: the theme changes there).
     fn applyTheme(self: *Registry, lang: *Language) void {
         const q = lang.query orelse return;
+        lang.control_color = self.theme.syntax.keyword_control;
         for (lang.capture_colors, lang.capture_styles, 0..) |*color, *style, i| {
             var len: u32 = 0;
             const name_ptr = c.ts_query_capture_name_for_id(q, @intCast(i), &len);
-            color.* = theme_mod.colorForCapture(&self.theme.syntax, name_ptr[0..len]);
+            if (i < lang.capture_plain_keyword.len) lang.capture_plain_keyword[i] = std.mem.eql(u8, name_ptr[0..len], "keyword");
+            color.* = theme_mod.colorForCaptureIn(&self.theme.syntax, lang.config.grammar orelse "", name_ptr[0..len]);
             style.* = theme_mod.styleForCapture(&self.theme.syntax_styles, name_ptr[0..len]);
         }
     }
@@ -311,8 +319,10 @@ pub const Loader = struct {
         const capture_count = c.ts_query_capture_count(q);
         lang.capture_colors = try alloc.alloc(?Color, capture_count);
         lang.capture_styles = try alloc.alloc(theme_mod.FontStyle, capture_count);
+        lang.capture_plain_keyword = try alloc.alloc(bool, capture_count);
         @memset(lang.capture_colors, null);
         @memset(lang.capture_styles, .normal);
+        @memset(lang.capture_plain_keyword, false);
 
         const pattern_count = c.ts_query_pattern_count(q);
         lang.predicates = try alloc.alloc([]Predicate, pattern_count);
@@ -896,6 +906,19 @@ pub fn checkPredicates(gpa: Allocator, preds: []const Predicate, rope: *const Ro
     return true;
 }
 
+/// Words that are control flow wherever a query captures them as a plain
+/// `@keyword` (VS Code's keyword.control). Not `in`, `is`, `new`, `async`,
+/// `import`: those colour as other keywords.
+const control_keywords = std.StaticStringMap(void).initComptime(.{
+    .{"if"},      .{"else"},     .{"elif"},   .{"elsif"},   .{"elseif"},  .{"unless"}, .{"for"},   .{"foreach"},
+    .{"while"},   .{"until"},    .{"do"},     .{"loop"},    .{"switch"},  .{"case"},   .{"default"}, .{"match"},
+    .{"when"},    .{"break"},    .{"continue"}, .{"return"}, .{"goto"},   .{"yield"},  .{"await"}, .{"throw"},
+    .{"throws"},  .{"try"},      .{"catch"},  .{"except"},  .{"finally"}, .{"raise"},  .{"defer"}, .{"errdefer"},
+    .{"fallthrough"}, .{"select"}, .{"then"}, .{"fi"},      .{"done"},    .{"esac"},   .{"pass"},  .{"with"},
+    .{"orelse"},  .{"unreachable"}, .{"rescue"}, .{"ensure"}, .{"retry"}, .{"redo"},   .{"next"},  .{"last"},
+});
+const max_control_keyword_len = 11;
+
 pub const HighlightSpan = struct {
     start: usize,
     end: usize,
@@ -1174,10 +1197,14 @@ pub const Syntax = struct {
         const last_wins = lang.last_wins;
         while (c.ts_query_cursor_next_capture(self.cursor, &match, &capture_index)) {
             const cap = match.captures[capture_index];
-            const color = lang.capture_colors[cap.index] orelse continue;
+            var color = lang.capture_colors[cap.index] orelse continue;
             const s = c.ts_node_start_byte(cap.node);
             const e = c.ts_node_end_byte(cap.node);
             if (e <= start or s >= end or s == e) continue;
+            if (lang.control_color) |control| if (lang.capture_plain_keyword[cap.index] and e - s <= max_control_keyword_len) {
+                var word: [max_control_keyword_len]u8 = undefined;
+                if (control_keywords.has(rope.copyRange(s, e, &word))) color = control;
+            };
             // Captures of one node arrive in pattern order: keep the first, or
             // let later ones override it, depending on the query's convention.
             const same = s == last_range[0] and e == last_range[1];
