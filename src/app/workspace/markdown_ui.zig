@@ -266,19 +266,20 @@ const Palette = struct {
         const bg = theme.background;
         const fg = theme.foreground;
         const light = theme.light;
+        const link = if (light) Color.hex(0x006ab1) else Color.hex(0x3794ff);
         return .{
             .fg = fg,
             .muted = theme.list_foreground_dim,
-            .link = if (light) Color.hex(0x006ab1) else Color.hex(0x3794ff),
+            .link = link,
             .code_bg = Color.mix(bg, fg, 0.12),
             .block_bg = if (light) Color.mix(bg, Color.hex(0x000000), 0.04) else bg.darken(0.35),
-            .quote_bar = theme.input_border_focus.withAlpha(0.6),
+            .quote_bar = link.withAlpha(0.7),
             .quote_bg = fg.withAlpha(0.06),
             .rule = fg.withAlpha(0.18),
             .border = fg.withAlpha(0.22),
             .header_bg = fg.withAlpha(0.10),
             .zebra = fg.withAlpha(0.045),
-            .accent = theme.input_border_focus,
+            .accent = if (light) Color.hex(0x0066b8) else Color.hex(0x0078d4),
         };
     }
 };
@@ -328,6 +329,8 @@ pub const View = struct {
     hover_link: i32 = -1,
 
     images: std.StringHashMapUnmanaged(ImageSlot) = .empty,
+    /// The scene the images live in (set when painted; it outlives the workspace).
+    scene: ?*Scene = null,
     /// Grammars a code block asked for that were still loading.
     waiting: std.ArrayList(*const languages.LanguageConfig) = .empty,
 
@@ -350,7 +353,7 @@ pub const View = struct {
         if (self.layout) |*l| l.deinit();
         if (self.source_path) |p| self.gpa.free(p);
         if (self.scroll_to_anchor) |a| self.gpa.free(a);
-        self.releaseImages(null);
+        self.releaseImages(self.scene);
         self.images.deinit(self.gpa);
         self.waiting.deinit(self.gpa);
         self.gpa.destroy(self);
@@ -1610,6 +1613,7 @@ fn remoteDir(path: []const u8) ?[]const u8 {
 /// Draws the preview in `rect` if `ed` is a preview tab's editor.
 pub fn paint(ws: *Workspace, ed: *Editor, rect: Rect, scene: *Scene) bool {
     const v = viewOf(ws, ed) orelse return false;
+    v.scene = scene;
     const theme = ws.theme;
     scene.fill(rect, theme.background);
     scene.pushClip(rect) catch return true;
